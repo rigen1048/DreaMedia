@@ -85,7 +85,7 @@ async def yt_rss(rss_id: str) -> Result[FetchPayload, str]:
     """Fetch + parse a channel RSS feed. Success((videos_dict,)) | Failure(msg)."""
     feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={rss_id}"
     try:
-        async with get_async_client() as client:
+        async with get_async_client(youtube_consent=True) as client:
             response = await client.get(feed_url)
             response.raise_for_status()
             log.info(
