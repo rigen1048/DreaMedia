@@ -128,6 +128,7 @@ async def ani_fetch(base_title: str) -> Result[FetchPayload, str]:
             "published": _iso(media.get("startDate")),
             # Ani-specific scheduling fields:
             "status": media.get("status"),
+            "format": media.get("format"),   # TV | MOVIE | ... (next_sequel event distinguishes)
             "episodes": media.get("episodes"),
             "next_airing": media.get("nextAiringEpisode"),
         }
