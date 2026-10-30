@@ -63,13 +63,22 @@ def _iso(date_dict: Optional[Dict]) -> str:
 
 
 async def _graphql(client, query: str, variables: Dict) -> Optional[Dict]:
-    try:
-        resp = await client.post(ANILIST_URL, json={"query": query, "variables": variables})
-        resp.raise_for_status()
-        return resp.json().get("data")
-    except Exception as e:
-        log.error("AniList request failed: %s", e)
-        return None
+    import asyncio as _asyncio
+
+    for attempt in range(3):
+        try:
+            resp = await client.post(ANILIST_URL, json={"query": query, "variables": variables})
+            if resp.status_code == 429:
+                wait = float(resp.headers.get("Retry-After", 2 * (attempt + 1)))
+                log.warning("AniList rate-limited; retrying in %ss", wait)
+                await _asyncio.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return resp.json().get("data")
+        except Exception as e:
+            log.error("AniList request failed (attempt %s): %s", attempt + 1, e)
+            await _asyncio.sleep(1.5 * (attempt + 1))
+    return None
 
 
 def _relation(media: Dict, kinds: tuple[str, ...]) -> Optional[int]:

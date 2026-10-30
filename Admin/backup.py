@@ -39,9 +39,20 @@ async def run_backup() -> Result[str, str]:
     # Microseconds: same-second backups must not overwrite each other.
     out = backup_dir / f"dreamedia-{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1e6) % 10**6:06d}.dump"
 
+    # Extracted userland binaries (this dev host) need their lib dir;
+    # system/d/docker pg_dump ignores the empty fallback harmlessly.
+    import os
+
+    env = dict(os.environ)
+    # .../usr/lib/postgresql/17/bin/pg_dump → libpq lives in .../usr/lib/x86_64-linux-gnu
+    lib_dir = Path(pg_dump).parents[3] / "x86_64-linux-gnu"
+    if lib_dir.is_dir():
+        env["LD_LIBRARY_PATH"] = f"{lib_dir}:{env.get('LD_LIBRARY_PATH', '')}"
+
     proc = await asyncio.create_subprocess_exec(
         pg_dump, dsn(), "-Fc", "-f", str(out),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
     _, stderr = await proc.communicate()
     if proc.returncode != 0:
