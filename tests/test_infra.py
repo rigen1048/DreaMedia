@@ -128,6 +128,30 @@ async def test_pgstore_roundtrip_and_d9_pause():
         )
 
 
+async def test_locked_vault_claim_released_not_orphaned():
+    """D9: claim_due on a locked-vault user must RELEASE the claim, not
+    orphan it until the stale sweeper (Yt/Ani symmetry)."""
+    user_id = (await auth.login(TEST_USER, "correct horse battery")).unwrap()["user_id"]
+    store = PgStore()
+    added = await store.add_tracking(
+        user_id, "UClocktest", "Lock Test", "https://youtube.com/channel/UClocktest"
+    )
+    assert isinstance(added, Success)
+    await vault.drop(user_id)  # simulate app restart (D9 pause)
+
+    claimed = await store.claim_due()
+    assert not any(s.sub_id == added.unwrap() for s in claimed)  # paused, not processed
+    pool = await db.get_pool()
+    async with pool.acquire() as con:
+        working = await con.fetchval(
+            "SELECT working FROM yt_tracking WHERE channel_id = $1", added.unwrap()
+        )
+        assert working is False  # released immediately, not orphaned
+        await con.execute(
+            "UPDATE yt_tracking SET active = FALSE WHERE channel_id = $1", added.unwrap()
+        )
+
+
 async def test_pgstore_video_dedupe_via_blind_index():
     user_id = (await auth.login(TEST_USER, "correct horse battery")).unwrap()["user_id"]
     store = PgStore()

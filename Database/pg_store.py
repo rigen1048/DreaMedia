@@ -131,7 +131,16 @@ class PgStore:
                 """,
                 now,
             )
-        subs = await self._to_subs(rows)
+        subs, skipped = await self._to_subs(rows, return_skipped=True)
+        # D9: locked-vault users are paused, not crashed — release their
+        # claims immediately so they aren't orphaned for the stale window.
+        if skipped:
+            pool = await get_pool()
+            async with pool.acquire() as con:
+                await con.execute(
+                    "UPDATE yt_tracking SET working = FALSE WHERE channel_id = ANY($1)",
+                    skipped,
+                )
         for r in pl_rows:
             subs.append(PgSubscription(
                 sub_id=r["channel_id"], user_id=r["user_id"], media="yt",
@@ -203,12 +212,14 @@ class PgStore:
             )
         return await self._to_subs(rows)
 
-    async def _to_subs(self, rows) -> List[PgSubscription]:
+    async def _to_subs(self, rows, return_skipped: bool = False):
         due: List[PgSubscription] = []
+        skipped: List[int] = []
         for r in rows:
             key = await vault.get(r["user_id"])
             if key is None:
                 log.debug("vault locked for user %s — skipping (D9)", r["user_id"])
+                skipped.append(r["channel_id"])
                 continue
             words_raw = decrypt(key, r["word_enc"])
             due.append(
@@ -225,7 +236,7 @@ class PgStore:
                     counter=r["counter"],
                 )
             )
-        return due
+        return (due, skipped) if return_skipped else due
 
     async def save_videos(self, sub: PgSubscription, payload: FetchPayload) -> int:
         key = await vault.get(sub.user_id)
