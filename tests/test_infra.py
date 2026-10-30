@@ -24,10 +24,11 @@ TEST_USER = "testuser_infra"
 async def _migrate():
     await db.migrate()
     await settings.seed_defaults()
-    # Idempotent: wipe leftovers from earlier runs (FK cascade cleans children).
+    # Idempotent: this module asserts first-user-is-admin, so start from
+    # an empty users table (dev DB only; FK cascade cleans children).
     pool = await db.get_pool()
     async with pool.acquire() as con:
-        await con.execute("DELETE FROM users WHERE username = $1", TEST_USER)
+        await con.execute("DELETE FROM users")
     yield
     await db.close()
 
@@ -120,17 +121,31 @@ async def test_pgstore_roundtrip_and_d9_pause():
         raw = await con.fetchval(
             "SELECT name_enc FROM yt_channels WHERE id = $1", added.unwrap()
         )
-    assert b"Test Channel" not in bytes(raw)
+        assert b"Test Channel" not in bytes(raw)
+        # Deactivate so later modules' manager runs don't fetch this fake channel.
+        await con.execute(
+            "UPDATE yt_tracking SET active = FALSE WHERE channel_id = $1", added.unwrap()
+        )
 
 
 async def test_pgstore_video_dedupe_via_blind_index():
     user_id = (await auth.login(TEST_USER, "correct horse battery")).unwrap()["user_id"]
     store = PgStore()
-    subs = [s for s in await store.get_due() if s.user_id == user_id]
+    added = await store.add_tracking(
+        user_id, "UCdedupe456", "Dedupe Channel", "https://youtube.com/channel/UCdedupe456"
+    )
+    assert isinstance(added, Success)
+    subs = [s for s in await store.get_due() if s.sub_id == added.unwrap()]
+    assert len(subs) == 1
     payload = ({1: {"id": "v1", "title": "T", "url": "https://youtu.be/v1",
                     "thumbnail": "", "published": "2026-01-01"}},)
     assert await store.save_videos(subs[0], payload) == 1
     assert await store.save_videos(subs[0], payload) == 0  # duplicate rejected
+    pool = await db.get_pool()
+    async with pool.acquire() as con:
+        await con.execute(
+            "UPDATE yt_tracking SET active = FALSE WHERE channel_id = $1", added.unwrap()
+        )
 
 
 # ---------- backup (D13/D26) ----------
