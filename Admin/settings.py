@@ -17,6 +17,7 @@ _DEFAULTS = {
     "backup_dir": ("BACKUP_DIR", "./backups"),
     "backup_keep_latest": ("BACKUP_KEEP_LATEST", "5"),
     "backup_frequency_hours": ("BACKUP_FREQUENCY_HOURS", "24"),
+    "stale_claim_seconds": ("STALE_CLAIM_SECONDS", "3600"),
 }
 
 # key -> (type, floor) — floors are the untouchable part of D2.
@@ -24,6 +25,9 @@ _FLOORS: dict[str, tuple[type, float | None]] = {
     "backup_dir": (str, None),
     "backup_keep_latest": (int, MIN_BACKUPS_KEPT),
     "backup_frequency_hours": (int, 1),
+    # D34: admin-tunable, but never below 5 minutes — a floor keeps crash
+    # recovery from flapping long fetches (yt-dlp runs can take minutes).
+    "stale_claim_seconds": (int, 300),
 }
 
 

@@ -77,6 +77,35 @@ async def test_settings_unknown_key_rejected():
     assert isinstance(await settings.set_value("aggressiveness", "9000"), Failure)
 
 
+async def test_stale_claim_seconds_floor():
+    """D34: admin-tunable, but never below the hardcoded 300s floor."""
+    assert isinstance(await settings.set_value("stale_claim_seconds", "60"), Failure)
+    assert isinstance(await settings.set_value("stale_claim_seconds", "600"), Success)
+    assert await settings.get_typed("stale_claim_seconds") == 600
+    await settings.set_value("stale_claim_seconds", "3600")
+
+
+async def test_backup_scheduler_due_logic(tmp_path):
+    """D33: due when no dumps or newest is older than the frequency."""
+    from Admin import scheduler
+
+    await settings.set_value("backup_dir", str(tmp_path))
+    await settings.set_value("backup_frequency_hours", "24")
+    assert await scheduler.backup_is_due()  # no dumps → due
+
+    made = await backup.run_backup()
+    assert isinstance(made, Success), made
+    assert not await scheduler.backup_is_due()  # fresh dump → not due
+
+    # Age the dump past the frequency → due again.
+    dumps = list(tmp_path.glob("dreamedia-*.dump"))
+    import os, time
+    old = time.time() - 25 * 3600
+    os.utime(dumps[0], (old, old))
+    assert await scheduler.backup_is_due()
+    await settings.set_value("backup_dir", "./backups")
+
+
 # ---------- auth (D27, D9) ----------
 
 async def test_signup_login_and_first_user_is_admin():

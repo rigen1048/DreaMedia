@@ -11,6 +11,7 @@ import time
 
 from returns.result import Failure
 
+from Admin import settings
 from Config.Hardcoded.limits import MANAGER_IDLE_SLEEP_SECONDS, WORKING_STALE_SECONDS
 from Database.ani_store import AniStore
 from Orchestrator.Ani.pipeline import run_subscription
@@ -41,7 +42,8 @@ async def run_forever(store: AniStore | None = None) -> None:
     log.info("ani manager started")
     while True:
         try:
-            await store.release_stale(WORKING_STALE_SECONDS)
+            stale = int(await settings.get_typed("stale_claim_seconds") or WORKING_STALE_SECONDS)
+            await store.release_stale(stale)
             processed = await run_once(store)
             if processed:
                 continue
