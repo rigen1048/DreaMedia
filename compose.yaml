@@ -1,0 +1,23 @@
+# DreaMedia docker app (D6: home-server docker app, not a production server).
+# Postgres only holds ciphertext — per-user keys derive from passwords at
+# login and live only in the app's in-memory vault (D8/D9).
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dreamedia
+      POSTGRES_PASSWORD: dreamedia-local-dev   # overridden by .env in real deployments
+      POSTGRES_DB: dreamedia
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dreamedia"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
