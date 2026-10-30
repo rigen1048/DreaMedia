@@ -160,6 +160,70 @@ class AniStore:
             )
         log.info("ani event: %s entry=%s season=%s tier=%s", kind, entry_id, season_no, tier)
 
+    # ---------------- Access tier (D16 mutations) ----------------
+    async def update_entry(
+        self,
+        user_id: int,
+        entry_id: int,
+        *,
+        label: Optional[str] = None,
+        label_reason: Optional[str] = None,
+        list_kind: Optional[str] = None,
+        notify_release: Optional[bool] = None,
+        active: Optional[bool] = None,
+        last_watched_episode: Optional[int] = None,
+        last_watched_at: Optional[int] = None,
+    ) -> Result[Dict[str, Any], str]:
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                """
+                UPDATE ani_entries SET
+                    label = COALESCE($3, label),
+                    label_reason_enc = COALESCE($4, label_reason_enc),
+                    list = COALESCE($5, list),
+                    notify_release = COALESCE($6, notify_release),
+                    active = COALESCE($7, active),
+                    last_watched_episode = COALESCE($8, last_watched_episode),
+                    last_watched_at = COALESCE($9, last_watched_at)
+                WHERE id = $1 AND user_id = $2
+                """,
+                entry_id, user_id, label,
+                encrypt(key, label_reason) if label_reason else None,
+                list_kind, notify_release, active,
+                last_watched_episode, last_watched_at,
+            )
+        if result.endswith("0"):
+            return Failure("entry not found")
+        return Success({"id": entry_id})
+
+    async def set_season_watched(
+        self, user_id: int, entry_id: int, season_no: int, watched: bool
+    ) -> Result[Dict[str, Any], str]:
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "UPDATE ani_seasons SET watched = $4 WHERE entry_id = $1 AND season_no = $2 "
+                "AND EXISTS (SELECT 1 FROM ani_entries WHERE id = $1 AND user_id = $3)",
+                entry_id, season_no, user_id, watched,
+            )
+        if result.endswith("0"):
+            return Failure("season not found")
+        return Success({"entry_id": entry_id, "season_no": season_no, "watched": watched})
+
+    async def delete_entry(self, user_id: int, entry_id: int) -> Result[Dict[str, Any], str]:
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "DELETE FROM ani_entries WHERE id = $1 AND user_id = $2", entry_id, user_id
+            )
+        if result.endswith("0"):
+            return Failure("entry not found")
+        return Success({"deleted": entry_id})
+
     # ---------------- scheduling ----------------
     async def claim_due(self) -> List[AniDue]:
         now = int(time.time())

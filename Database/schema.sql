@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS yt_channels (
 CREATE TABLE IF NOT EXISTS yt_tracking (
     channel_id    INTEGER PRIMARY KEY REFERENCES yt_channels(id) ON DELETE CASCADE,
     rss_id_enc    BYTEA NOT NULL,
-    rss_hash      BYTEA NOT NULL UNIQUE,   -- blind index; rss_id itself is encrypted (reveals channel identity)
+    rss_hash      BYTEA NOT NULL,            -- blind index (unique per kind; rss_id encrypted — reveals channel)
     kind          TEXT NOT NULL DEFAULT 'tracking' CHECK (kind IN ('tracking', 'wordscan')),
     word_enc      BYTEA,                  -- word-scan terms
     last_seen_enc BYTEA,
@@ -78,7 +78,8 @@ CREATE TABLE IF NOT EXISTS yt_tracking (
     rank          TEXT NOT NULL DEFAULT 'day',
     counter       INTEGER NOT NULL DEFAULT 0,
     active        BOOLEAN NOT NULL DEFAULT TRUE,
-    working       BOOLEAN NOT NULL DEFAULT FALSE
+    working       BOOLEAN NOT NULL DEFAULT FALSE,
+    UNIQUE (rss_hash, kind)              -- same channel may have tracking AND wordscan rows
 );
 CREATE INDEX IF NOT EXISTS idx_yt_tracking_due ON yt_tracking(ts) WHERE active AND NOT working;
 

@@ -60,7 +60,7 @@ async def run_subscription(store: PgStore, sub: PgSubscription) -> Result[str, s
         if isinstance(filtered, Failure):
             msg = filtered.failure()
             if msg == "Same":
-                counter = await store.bump_counter(sub.sub_id, 1)
+                counter = await store.bump_counter(sub.sub_id, 1, sub.kind)
                 log.info("nothing new for %s (counter=%s)", sub.link, counter)
                 return Success("done")
             if isinstance(msg, tuple) and msg[0] == "Not Found":
@@ -77,7 +77,7 @@ async def run_subscription(store: PgStore, sub: PgSubscription) -> Result[str, s
     if sub.kind == "wordscan":
         filtered = filter_words(payload, sub.words)
         if isinstance(filtered, Failure):
-            await store.bump_counter(sub.sub_id, 1)
+            await store.bump_counter(sub.sub_id, 1, sub.kind)
             return Success("done")
         payload = filtered.unwrap()
 
@@ -96,7 +96,7 @@ async def run_subscription(store: PgStore, sub: PgSubscription) -> Result[str, s
             ts, rank = ts_result.unwrap()
             await store.update_schedule(sub, ts=ts, rank=rank, last_seen=latest_id, counter=0)
         else:
-            await store.bump_counter(sub.sub_id, 1)
+            await store.bump_counter(sub.sub_id, 1, sub.kind)
             log.warning("ts prediction failed for %s: %s", sub.link, ts_result.failure())
 
     log.info("done: %s (%s) — %s new video(s), last_seen=%s", sub.link, sub.kind, inserted, latest_id)

@@ -16,6 +16,7 @@ dependencies = [
     "uvicorn[standard]>=0.54.0",
     "strawberry-graphql>=0.339.0",
     "polars>=2.1.0",
+    "python-multipart>=0.0.32",
 ]
 
 [dependency-groups]
