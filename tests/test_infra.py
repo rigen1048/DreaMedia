@@ -184,3 +184,37 @@ async def test_backup_dump_and_retention(tmp_path):
     assert len(dumps) == 2  # retention pruned to the floor-compliant value
     assert all(d.stat().st_size > 0 for d in dumps)
     await settings.set_value("backup_dir", "./backups")
+
+
+async def test_restore_roundtrip_destructive(tmp_path):
+    """Owner requirement: backups must come with a recovery mechanism.
+    dump → mutate → restore → mutation undone. Also: traversal rejected."""
+    from Admin import restore
+
+    await settings.set_value("backup_dir", str(tmp_path))
+    # Ensure the test user exists in the dump (isolated runs start empty).
+    signup = await auth.signup(TEST_USER, "correct horse battery")
+    if not isinstance(signup, Success):
+        await auth.login(TEST_USER, "correct horse battery")
+    made = await backup.run_backup()
+    assert isinstance(made, Success), made
+    backups = await restore.list_backups()
+    assert backups, "no restore points listed"
+
+    # Filename validation: traversal and junk rejected before touching the DB.
+    assert isinstance(await restore.restore_backup("../../etc/passwd"), Failure)
+    assert isinstance(await restore.restore_backup("nope.dump"), Failure)
+
+    # Mutate: wipe the test user (FK cascade takes their channels too).
+    pool = await db.get_pool()
+    async with pool.acquire() as con:
+        await con.execute("DELETE FROM users WHERE username = $1", TEST_USER)
+        assert await con.fetchval("SELECT 1 FROM users WHERE username = $1", TEST_USER) is None
+
+    # Restore: the wiped user must come back.
+    result = await restore.restore_backup(backups[0]["file"])
+    assert isinstance(result, Success), result
+    async with pool.acquire() as con:
+        assert await con.fetchval("SELECT 1 FROM users WHERE username = $1", TEST_USER) == 1
+
+    await settings.set_value("backup_dir", "./backups")
