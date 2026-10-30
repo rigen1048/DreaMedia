@@ -17,7 +17,7 @@ from returns.result import Failure, Result, Success
 from yt_dlp import YoutubeDL
 
 from Model.video import FetchPayload
-from Utility.http import get_privacy_headers
+from Utility.http import get_consent_cookies, get_privacy_headers
 from Utility.logs import log
 
 
@@ -80,6 +80,8 @@ def _video_count(base_url: str) -> Result[int, str]:
             http2=True, headers=get_privacy_headers(), timeout=20.0,
             follow_redirects=True,
         ) as client:
+            for name, value in get_consent_cookies().items():
+                client.cookies.set(name, value, domain=".youtube.com")
             response = client.get(base_url)
             if response.status_code == 200:
                 result = _count_from_html(response.text)
