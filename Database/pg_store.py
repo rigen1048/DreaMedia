@@ -75,9 +75,63 @@ class PgStore:
                 )
         return Success(channel_id)
 
-    async def get_due(self) -> List[PgSubscription]:
-        """Due tracking rows whose owner's vault is unlocked (D9 pause)."""
+    async def claim_due(self) -> List[PgSubscription]:
+        """Atomically claim due rows (working=true) and return them.
+
+        Crash semantics: if the process dies mid-work, the row stays
+        working=true until release_stale() frees it — nothing is ever
+        processed twice, nothing is lost.
+        """
         now = int(time.time())
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            rows = await con.fetch(
+                """
+                UPDATE yt_tracking t SET working = TRUE
+                FROM yt_channels c
+                WHERE c.id = t.channel_id
+                  AND t.active AND NOT t.working
+                  AND c.label != 'reserved'           -- D22 life-phase switch
+                  AND (t.ts IS NULL OR t.ts <= $1)
+                RETURNING t.channel_id, c.user_id, t.rss_id_enc, t.kind,
+                          t.word_enc, t.last_seen_enc, t.ts, t.rank, t.counter
+                """,
+                now,
+            )
+        return await self._to_subs(rows)
+
+    async def release(self, sub_id: int) -> None:
+        """Clear the working flag after a subscription is processed."""
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            await con.execute(
+                "UPDATE yt_tracking SET working = FALSE WHERE channel_id = $1", sub_id
+            )
+
+    async def release_stale(self, stale_seconds: int) -> int:
+        """Free rows stuck working=true longer than stale_seconds (crash recovery)."""
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "UPDATE yt_tracking SET working = FALSE "
+                "WHERE working = TRUE AND ts IS NOT NULL AND ts < $1",
+                int(time.time()) - stale_seconds,
+            )
+        freed = int(result.split()[-1])
+        if freed:
+            log.warning("released %s stale working claim(s)", freed)
+        return freed
+
+    async def next_due_ts(self) -> int | None:
+        """Earliest scheduled ts across active tracking rows (manager sleep)."""
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            return await con.fetchval(
+                "SELECT MIN(ts) FROM yt_tracking WHERE active AND NOT working AND ts IS NOT NULL"
+            )
+
+    async def get_due(self) -> List[PgSubscription]:
+        """Due rows WITHOUT claiming (inspection/tests only)."""
         pool = await get_pool()
         async with pool.acquire() as con:
             rows = await con.fetch(
@@ -87,11 +141,14 @@ class PgStore:
                 FROM yt_tracking t
                 JOIN yt_channels c ON c.id = t.channel_id
                 WHERE t.active AND NOT t.working
-                  AND c.label != 'reserved'           -- D22 life-phase switch
+                  AND c.label != 'reserved'
                   AND (t.ts IS NULL OR t.ts <= $1)
                 """,
-                now,
+                int(time.time()),
             )
+        return await self._to_subs(rows)
+
+    async def _to_subs(self, rows) -> List[PgSubscription]:
         due: List[PgSubscription] = []
         for r in rows:
             key = await vault.get(r["user_id"])

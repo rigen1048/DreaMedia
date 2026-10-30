@@ -31,6 +31,14 @@ MIN_BACKUPS_KEPT: int = 2
 # lifecycle as the vault (D9). HydraWatch's 18-minute cap is not coming back.
 SESSION_TTL_SECONDS: int = 24 * 3600
 
+# Working-claim recovery: if a claimed row stays 'working' longer than
+# this (crash mid-fetch), a sweeper releases it for retry. Crash-safe
+# claiming was the whole point of the working flag (owner Backend.zip).
+WORKING_STALE_SECONDS: int = 3600
+
+# Manager idle cadence when nothing is due.
+MANAGER_IDLE_SLEEP_SECONDS: float = 60.0
+
 # pg_dump lookup order for backups (D13).
 PG_DUMP_CANDIDATES: tuple[str, ...] = (
     "pg_dump",  # on PATH (docker image)

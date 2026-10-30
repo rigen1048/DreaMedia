@@ -1,24 +1,24 @@
-"""Yt pipeline — happy-path orchestration per subscription.
+"""Yt pipeline — happy-path orchestration per subscription (Postgres-backed).
 
 Flow (100% async):
     fetch (through the per-(user, media, kind) queued gate — D4/D5)
     → last_seen filter (not for random)
     → word filter (wordscan only)
     → ts/rank prediction (not for random — rank is user-controlled)
-    → save videos + schedule via the store interface
+    → save videos + schedule
 
-Fetch-level failures return Failure; the caller (future manager) decides
-blacklisting/notifications. Per D15 nothing here ever auto-deletes a
-subscription.
+Failures return Failure; the manager decides blacklisting/notifications.
+Per D15 nothing here ever auto-deletes a subscription.
 """
 from __future__ import annotations
 
+import time
 from typing import Awaitable, Callable, Dict
 
 from returns.result import Failure, Result, Success
 
 from Config.Hardcoded.rank import RANK_INTERVALS
-from Database.store import DevStore, Subscription
+from Database.pg_store import PgStore, PgSubscription
 from Gate.gate import registry as gates
 from Model.video import FetchPayload
 from Orchestrator.Yt.Fetch.yt_playlist import yt_playlist
@@ -38,20 +38,16 @@ FETCHERS: Dict[str, Callable[[str], Awaitable[Result[FetchPayload, str]]]] = {
 }
 
 
-async def run_subscription(
-    store: DevStore, sub_id: int, sub: Subscription
-) -> Result[str, str]:
-    """Run one subscription end-to-end. Returns Success('done') | Failure(msg)."""
+async def run_subscription(store: PgStore, sub: PgSubscription) -> Result[str, str]:
+    """Run one subscription end-to-end. Success('done') | Failure(msg)."""
     await wait_for_internet()
 
     fetcher = FETCHERS.get(sub.kind)
     if fetcher is None:
         return Failure(f"Unknown kind: {sub.kind}")
 
-    # 1. Fetch through this subscription's own gate.
-    result = await gates.submit(
-        (sub.user, "yt", sub.kind), lambda: fetcher(sub.link)
-    )
+    # 1. Fetch through this subscription's own gate (D4/D5).
+    result = await gates.submit((sub.user_id, "yt", sub.kind), lambda: fetcher(sub.link))
     if isinstance(result, Failure):
         log.warning("fetch failed for %s (%s): %s", sub.link, sub.kind, result.failure())
         return Failure(result.failure())
@@ -64,15 +60,15 @@ async def run_subscription(
         if isinstance(filtered, Failure):
             msg = filtered.failure()
             if msg == "Same":
-                counter = await store.bump_counter(sub_id, 1)
+                counter = await store.bump_counter(sub.sub_id, 1)
                 log.info("nothing new for %s (counter=%s)", sub.link, counter)
                 return Success("done")
-            # "Not Found" — last_seen fell out of the feed; take latest.
             if isinstance(msg, tuple) and msg[0] == "Not Found":
+                # last_seen fell out of the feed window; take latest as the new anchor.
                 payload = msg[1]
                 latest = payload[0][min(payload[0])]
-                await store.save_videos(sub.user, ({1: latest},))
-                await store.update_schedule(sub_id, last_seen=latest["id"])
+                await store.save_videos(sub, ({1: latest},))
+                await store.update_schedule(sub, last_seen=latest["id"])
                 return Success("done")
             return Failure(str(msg))
         payload = filtered.unwrap()
@@ -81,75 +77,27 @@ async def run_subscription(
     if sub.kind == "wordscan":
         filtered = filter_words(payload, sub.words)
         if isinstance(filtered, Failure):
-            await store.bump_counter(sub_id, 1)
+            await store.bump_counter(sub.sub_id, 1)
             return Success("done")
         payload = filtered.unwrap()
 
     # 4. Save new videos.
-    inserted = await store.save_videos(sub.user, payload)
+    inserted = await store.save_videos(sub, payload)
     latest_id = payload[0][min(payload[0])]["id"] if payload and payload[0] else None
 
-    # 5. Schedule next check.
+    # 5. Schedule the next check.
     if sub.kind == "random":
         # Rank is user-controlled: next pick = now + rank interval.
-        import time
-
         interval = RANK_INTERVALS.get(sub.rank, RANK_INTERVALS["week"])
-        await store.update_schedule(
-            sub_id, ts=int(time.time()) + interval, last_seen=latest_id
-        )
+        await store.update_schedule(sub, ts=int(time.time()) + interval, last_seen=latest_id)
     else:
         ts_result = ts_proccess(payload)
         if isinstance(ts_result, Success):
             ts, rank = ts_result.unwrap()
-            await store.update_schedule(
-                sub_id, ts=ts, rank=rank, last_seen=latest_id, counter=0
-            )
+            await store.update_schedule(sub, ts=ts, rank=rank, last_seen=latest_id, counter=0)
         else:
-            await store.bump_counter(sub_id, 1)
+            await store.bump_counter(sub.sub_id, 1)
             log.warning("ts prediction failed for %s: %s", sub.link, ts_result.failure())
 
-    log.info(
-        "done: %s (%s) — %s new video(s), last_seen=%s",
-        sub.link, sub.kind, inserted, latest_id,
-    )
+    log.info("done: %s (%s) — %s new video(s), last_seen=%s", sub.link, sub.kind, inserted, latest_id)
     return Success("done")
-
-
-async def run_due(store: DevStore) -> None:
-    """Happy-path manager: drain every due subscription concurrently.
-
-    Concurrency is safe because the gates — not this loop — own rate
-    limiting; each (user, media, kind) queue serializes its own fetches.
-    """
-    import asyncio
-
-    due = await store.get_due()
-    if not due:
-        log.info("nothing due")
-        return
-    await asyncio.gather(
-        *(run_subscription(store, sub_id, sub) for sub_id, sub in due)
-    )
-
-
-if __name__ == "__main__":
-    import asyncio
-
-    async def demo() -> None:
-        store = DevStore()
-        await store.add_subscription(
-            Subscription(
-                user="demo",
-                media="yt",
-                kind="tracking",
-                link="UCX6OQ3DkcsbYNE6H8uQQuVA",  # MrBeast
-            )
-        )
-        await run_due(store)
-        feed = await store.feed("demo")
-        print(f"\nFeed rows: {len(feed)}")
-        for row in feed[:5]:
-            print(f"- {row['title']}  ({row['published']})")
-
-    asyncio.run(demo())
