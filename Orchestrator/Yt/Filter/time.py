@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Tuple
 
 from returns.result import Result, Success, Failure
 
-from Model.rank import RANK_INTERVALS
+from Config.Hardcoded.rank import RANK_INTERVALS
 from Utility.logs import log
 
 
