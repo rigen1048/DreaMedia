@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from strawberry.fastapi import GraphQLRouter
 
-from Admin import settings
+from Admin import scheduler, settings
 from Admin.router import router as admin_router
 from Auth.router import router as auth_router
 from Database import db
@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
     managers = [
         asyncio.create_task(yt_manager.run_forever()),
         asyncio.create_task(ani_manager.run_forever()),
+        asyncio.create_task(scheduler.run_forever()),
     ]
     yield
     for task in managers:

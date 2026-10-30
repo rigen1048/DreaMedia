@@ -15,6 +15,7 @@ import time
 
 from returns.result import Failure
 
+from Admin import settings
 from Config.Hardcoded.limits import MANAGER_IDLE_SLEEP_SECONDS, WORKING_STALE_SECONDS
 from Database.pg_store import PgStore
 from Orchestrator.Yt.pipeline import run_subscription
@@ -47,7 +48,8 @@ async def run_forever(store: PgStore | None = None) -> None:
     log.info("yt manager started")
     while True:
         try:
-            await store.release_stale(WORKING_STALE_SECONDS)
+            stale = int(await settings.get_typed("stale_claim_seconds") or WORKING_STALE_SECONDS)
+            await store.release_stale(stale)
             processed = await run_once(store)
             if processed:
                 continue  # burst: check again immediately
