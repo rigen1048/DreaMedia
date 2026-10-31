@@ -319,7 +319,7 @@ class PgStore:
         async with pool.acquire() as con:
             rows = await con.fetch(
                 """
-                SELECT v.title_enc, v.url_enc, v.thumbnail_enc, v.published_at, v.seen,
+                SELECT v.id, v.channel_id, v.title_enc, v.url_enc, v.thumbnail_enc, v.published_at, v.seen,
                        c.name_enc AS channel_enc
                 FROM yt_videos v
                 JOIN yt_channels c ON c.id = v.channel_id
@@ -331,6 +331,8 @@ class PgStore:
             )
         return [
             {
+                "id": r["id"],
+                "channel_id": r["channel_id"],
                 "title": decrypt(key, r["title_enc"]),
                 "url": decrypt(key, r["url_enc"]),
                 "thumbnail": decrypt(key, r["thumbnail_enc"]),
@@ -381,7 +383,8 @@ class PgStore:
         return {"domains": sorted(domains, key=lambda d: d["key"])}
 
     async def channels_view(self, user_id: int, include_blocked: bool = False) -> List[Dict[str, Any]]:
-        """Settings/management listing. Blocked included on demand (D22)."""
+        """Management listing across ALL subscription kinds (frontend AI P1):
+        kind, active flag, rank/frequency, wordscan terms; blocked on demand (D22)."""
         key = await vault.get(user_id)
         if key is None:
             return []
@@ -390,10 +393,14 @@ class PgStore:
             rows = await con.fetch(
                 """
                 SELECT c.id, c.name_enc, c.url_enc, c.label, c.label_reason_enc,
-                       t.rss_id_enc, t.kind,
-                       d.name_enc AS d_enc, s.name_enc AS s_enc
+                       d.name_enc AS d_enc, s.name_enc AS s_enc,
+                       t.rss_id_enc, t.kind AS t_kind, t.word_enc, t.rank AS t_rank, t.active AS t_active,
+                       p.rank AS p_rank, p.active AS p_active,
+                       r.rank AS r_rank, r.active AS r_active
                 FROM yt_channels c
                 LEFT JOIN yt_tracking t ON t.channel_id = c.id
+                LEFT JOIN yt_playlists p ON p.channel_id = c.id
+                LEFT JOIN yt_randomsubs r ON r.channel_id = c.id
                 LEFT JOIN yt_subdomains s ON s.id = c.subdomain_id
                 LEFT JOIN yt_domains d ON d.id = s.domain_id
                 WHERE c.user_id = $1 AND ($2 OR c.label != 'blocked')
@@ -401,20 +408,32 @@ class PgStore:
                 """,
                 user_id, include_blocked,
             )
-        return [
-            {
+        result = []
+        for r in rows:
+            words_raw = decrypt(key, r["word_enc"]) if r["word_enc"] else None
+            if r["t_kind"]:
+                kind, rank, active = r["t_kind"], r["t_rank"], r["t_active"]
+            elif r["p_rank"] is not None or r["p_active"] is not None:
+                kind, rank, active = "playlist", r["p_rank"], r["p_active"]
+            elif r["r_rank"] is not None or r["r_active"] is not None:
+                kind, rank, active = "random", r["r_rank"], r["r_active"]
+            else:
+                kind, rank, active = None, None, None
+            result.append({
                 "id": r["id"],
                 "name": decrypt(key, r["name_enc"]),
                 "url": decrypt(key, r["url_enc"]),
                 "label": r["label"],
                 "label_reason": decrypt(key, r["label_reason_enc"]),
                 "rss_id": decrypt(key, r["rss_id_enc"]),
-                "kind": r["kind"],
+                "kind": kind,
+                "active": active,
+                "rank": rank,
+                "words": words_raw.split(",") if words_raw else [],
                 "domain": decrypt(key, r["d_enc"]) or "uncategorized",
                 "subdomain": decrypt(key, r["s_enc"]) or "uncategorized",
-            }
-            for r in rows
-        ]
+            })
+        return result
 
     # ---------------- Access tier (mutations, D16/D17/D22) ----------------
     async def set_label(
@@ -551,6 +570,197 @@ class PgStore:
                     channel_id, rank,
                 )
         return Success(channel_id)
+
+
+
+    # ---------------- seen writes + mode switch + active (frontend AI P1) ----------------
+    async def mark_videos_seen(
+        self, user_id: int, video_ids: List[int], seen: bool = True
+    ) -> int:
+        """Single/bulk seen write, ownership-checked. Returns rows changed."""
+        if not video_ids:
+            return 0
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                """
+                UPDATE yt_videos v SET seen = $3
+                FROM yt_channels c
+                WHERE c.id = v.channel_id AND c.user_id = $1 AND v.id = ANY($2)
+                """,
+                user_id, video_ids, seen,
+            )
+        return int(result.split()[-1])
+
+    async def switch_mode(
+        self,
+        user_id: int,
+        channel_id: int,
+        kind: str,
+        words: Optional[List[str]] = None,
+        rank: Optional[str] = None,
+    ) -> Result[Dict[str, Any], str]:
+        """Transactional exclusive mode switch (P1): removes rows from the
+        other subscription tables, upserts into the target one. A channel
+        lives in exactly ONE mode (D30 spirit)."""
+        if kind not in ("tracking", "wordscan", "playlist", "random"):
+            return Failure("kind must be tracking|wordscan|playlist|random")
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            async with con.transaction():
+                owner = await con.fetchval(
+                    "SELECT 1 FROM yt_channels WHERE id = $1 AND user_id = $2",
+                    channel_id, user_id,
+                )
+                if not owner:
+                    return Failure("channel not found")
+                if kind in ("tracking", "wordscan"):
+                    rss_id = await con.fetchval(
+                        "SELECT rss_id_enc FROM yt_tracking WHERE channel_id = $1", channel_id
+                    )
+                    if rss_id is None:
+                        return Failure("no RSS link on this channel to switch into tracking/wordscan")
+                    await con.execute("DELETE FROM yt_playlists WHERE channel_id = $1", channel_id)
+                    await con.execute("DELETE FROM yt_randomsubs WHERE channel_id = $1", channel_id)
+                    await con.execute(
+                        "UPDATE yt_tracking SET kind = $2, word_enc = $3 WHERE channel_id = $1",
+                        channel_id, kind, encrypt(key, ",".join(words)) if words else None,
+                    )
+                elif kind == "playlist":
+                    return Failure("switching to playlist requires re-subscribing with the playlist link")
+                else:  # random
+                    await con.execute("DELETE FROM yt_tracking WHERE channel_id = $1", channel_id)
+                    await con.execute("DELETE FROM yt_playlists WHERE channel_id = $1", channel_id)
+                    await con.execute(
+                        "INSERT INTO yt_randomsubs (channel_id, rank) VALUES ($1, $2) "
+                        "ON CONFLICT (channel_id) DO UPDATE SET rank = EXCLUDED.rank",
+                        channel_id, rank or "week",
+                    )
+        return Success({"id": channel_id, "kind": kind})
+
+    async def set_channel_active(
+        self, user_id: int, channel_id: int, active: bool
+    ) -> Result[Dict[str, Any], str]:
+        """Channel active switch = reserved label (D22). Never touches blocked."""
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "UPDATE yt_channels SET label = $3 WHERE id = $1 AND user_id = $2 "
+                "AND label != 'blocked'",
+                channel_id, user_id, "none" if active else "reserved",
+            )
+        if result.endswith("0"):
+            return Failure("channel not found (or blocked)")
+        return Success({"id": channel_id, "active": active})
+
+    # ---------------- category CRUD (P1) ----------------
+    async def list_categories(self, user_id: int) -> Dict[str, Any]:
+        """All domains/subdomains, including unused ones (sidebar only shows used)."""
+        key = await vault.get(user_id)
+        if key is None:
+            return {"domains": []}
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            rows = await con.fetch(
+                """
+                SELECT d.id AS d_id, d.name_enc AS d_enc, d.active AS d_active,
+                       s.id AS s_id, s.name_enc AS s_enc, s.active AS s_active
+                FROM yt_domains d
+                LEFT JOIN yt_subdomains s ON s.domain_id = d.id
+                WHERE d.user_id = $1
+                ORDER BY d.id, s.id
+                """,
+                user_id,
+            )
+        domains: Dict[int, Dict[str, Any]] = {}
+        for r in rows:
+            entry = domains.setdefault(
+                r["d_id"],
+                {"id": r["d_id"], "name": decrypt(key, r["d_enc"]),
+                 "active": r["d_active"], "subdomains": []},
+            )
+            if r["s_id"] is not None:
+                entry["subdomains"].append(
+                    {"id": r["s_id"], "name": decrypt(key, r["s_enc"]), "active": r["s_active"]}
+                )
+        return {"domains": list(domains.values())}
+
+    async def create_category(
+        self, user_id: int, domain: str, subdomain: Optional[str] = None
+    ) -> Result[Dict[str, Any], str]:
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            s_id = await self._get_or_create_category(con, key, user_id, domain, subdomain)
+        return Success({"domain": domain, "subdomain": subdomain, "subdomain_id": s_id})
+
+    async def rename_category(
+        self,
+        user_id: int,
+        domain: str,
+        new_name: str,
+        subdomain: Optional[str] = None,
+    ) -> Result[Dict[str, Any], str]:
+        """Quick rename: all channels keep their assignment; only the name changes."""
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            if subdomain is None:
+                result = await con.execute(
+                    "UPDATE yt_domains SET name_enc = $3, name_hash = $4 "
+                    "WHERE user_id = $1 AND name_hash = $2",
+                    user_id, index_hash(key, domain.lower()),
+                    encrypt(key, new_name), index_hash(key, new_name.lower()),
+                )
+            else:
+                result = await con.execute(
+                    "UPDATE yt_subdomains s SET name_enc = $4, name_hash = $5 "
+                    "FROM yt_domains d "
+                    "WHERE s.domain_id = d.id AND d.user_id = $1 "
+                    "AND d.name_hash = $2 AND s.name_hash = $3",
+                    user_id, index_hash(key, domain.lower()),
+                    index_hash(key, subdomain.lower()),
+                    encrypt(key, new_name), index_hash(key, new_name.lower()),
+                )
+        if result.endswith("0"):
+            return Failure("category not found")
+        return Success({"renamed": domain if subdomain is None else f"{domain}/{subdomain}", "to": new_name})
+
+    async def delete_category(
+        self, user_id: int, domain: str, subdomain: Optional[str] = None
+    ) -> Result[Dict[str, Any], str]:
+        """Delete a category. Channels under it detach (ON DELETE SET NULL)."""
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            if subdomain is None:
+                result = await con.execute(
+                    "DELETE FROM yt_domains WHERE user_id = $1 AND name_hash = $2",
+                    user_id, index_hash(key, domain.lower()),
+                )
+            else:
+                result = await con.execute(
+                    "DELETE FROM yt_subdomains s USING yt_domains d "
+                    "WHERE s.domain_id = d.id AND d.user_id = $1 "
+                    "AND d.name_hash = $2 AND s.name_hash = $3",
+                    user_id, index_hash(key, domain.lower()),
+                    index_hash(key, subdomain.lower()),
+                )
+        if result.endswith("0"):
+            return Failure("category not found")
+        return Success({"deleted": domain if subdomain is None else f"{domain}/{subdomain}"})
 
 
 def _to_unix(published: Any) -> Optional[int]:

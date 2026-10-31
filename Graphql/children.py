@@ -33,6 +33,8 @@ async def _uid(info) -> int:
 # ---------------- Yt child ----------------
 @strawberry.type
 class YtVideo:
+    id: int
+    channel_id: int
     title: str
     url: str
     thumbnail: str | None
@@ -50,6 +52,9 @@ class YtChannel:
     label_reason: str | None
     rss_id: str | None
     kind: str | None
+    active: bool | None
+    rank: str | None
+    words: list[str]
     domain: str
     subdomain: str
 
@@ -94,6 +99,27 @@ class YtMutation:
         return isinstance(await _yt.set_label(await _uid(info), channel_id, label, reason), Success)
 
     @strawberry.field
+    async def yt_mark_seen(self, info: strawberry.Info, video_ids: list[int], seen: bool = True) -> int:
+        return await _yt.mark_videos_seen(await _uid(info), video_ids, seen)
+
+    @strawberry.field
+    async def yt_switch_mode(
+        self, info: strawberry.Info, channel_id: int, kind: str,
+        words: list[str] | None = None, rank: str | None = None,
+    ) -> bool:
+        from returns.result import Success
+
+        return isinstance(
+            await _yt.switch_mode(await _uid(info), channel_id, kind, words, rank), Success
+        )
+
+    @strawberry.field
+    async def yt_set_active(self, info: strawberry.Info, channel_id: int, active: bool) -> bool:
+        from returns.result import Success
+
+        return isinstance(await _yt.set_channel_active(await _uid(info), channel_id, active), Success)
+
+    @strawberry.field
     async def yt_delete_channel(self, info: strawberry.Info, channel_id: int) -> bool:
         from returns.result import Success
 
@@ -104,6 +130,7 @@ class YtMutation:
 @strawberry.type
 class AniEvent:
     id: int
+    entry_id: int
     season_no: int | None
     kind: str
     tier: str
@@ -130,8 +157,8 @@ class AniEntry:
     list: str
     active: bool
     notify_release: bool
-    last_watched_episode: int | None
-    last_watched_at: int | None
+    canon_only: bool
+    cursor: str
     total_seasons: int
     seasons: list[AniSeason]
 
@@ -145,7 +172,7 @@ class AniQuery:
         events = await _ani.events_feed(await _uid(info), include_seen)
         return [
             AniEvent(
-                id=e["id"], season_no=e["season_no"], kind=e["kind"], tier=e["tier"],
+                id=e["id"], entry_id=e["entry_id"], season_no=e["season_no"], kind=e["kind"], tier=e["tier"],
                 seen=e["seen"], created_at=e["created_at"], payload=json.dumps(e["payload"]),
             )
             for e in events
@@ -153,13 +180,15 @@ class AniQuery:
 
     @strawberry.field
     async def ani_management(self, info: strawberry.Info) -> list[AniEntry]:
+        import json as _json
+
         view = await _ani.management_view(await _uid(info))
         return [
             AniEntry(
                 id=e["id"], title=e["title"], label=e["label"], list=e["list"],
                 active=e["active"], notify_release=e["notify_release"],
-                last_watched_episode=e["last_watched_episode"],
-                last_watched_at=e["last_watched_at"], total_seasons=e["total_seasons"],
+                canon_only=e["canon_only"], cursor=_json.dumps(e["cursor"]),
+                total_seasons=e["total_seasons"],
                 seasons=[AniSeason(**s) for s in e["seasons"]],
             )
             for e in view
@@ -191,6 +220,30 @@ class AniMutation:
         return isinstance(
             await _ani.set_season_watched(await _uid(info), entry_id, season_no, watched), Success
         )
+
+    @strawberry.field
+    async def ani_set_cursor(
+        self, info: strawberry.Info, entry_id: int, season: int,
+        episode: int | None = None, position_seconds: int | None = None,
+    ) -> bool:
+        from returns.result import Success
+
+        return isinstance(
+            await _ani.set_cursor(await _uid(info), entry_id, season, episode, position_seconds),
+            Success,
+        )
+
+    @strawberry.field
+    async def ani_mark_range(self, info: strawberry.Info, entry_id: int, from_season: int, to_season: int) -> bool:
+        from returns.result import Success
+
+        return isinstance(
+            await _ani.mark_range(await _uid(info), entry_id, from_season, to_season), Success
+        )
+
+    @strawberry.field
+    async def ani_events_seen(self, info: strawberry.Info, event_ids: list[int], seen: bool = True) -> int:
+        return await _ani.mark_events_seen(await _uid(info), event_ids, seen)
 
     @strawberry.field
     async def ani_delete_entry(self, info: strawberry.Info, entry_id: int) -> bool:
