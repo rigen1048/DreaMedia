@@ -28,12 +28,20 @@ Frontend/
 
 A page composes small feature components rather than containing API, state model, and every subview in one module. Keep service DTOs distinct from screen view models. TypeScript stays strict and uses no explicit `any`.
 
-## Local development
+## Quick start
 
-Start Postgres/FastAPI using [`../Backend/README.md`](../Backend/README.md), then:
+From the monorepo root, start the database, FastAPI backend, and Vite together:
 
 ```bash
-pnpm install
+chmod +x start.sh
+./start.sh
+```
+
+For a frontend-only development server, start the backend using [`../Backend/README.md`](../Backend/README.md), then:
+
+```bash
+cd Frontend
+pnpm install --frozen-lockfile
 pnpm dev
 ```
 
