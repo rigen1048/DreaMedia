@@ -41,14 +41,17 @@ class PgSubscription:
 class PgStore:
     """Yt-facing Postgres store (Ani store lands with the Ani pipeline)."""
 
-    async def _get_or_create_channel(self, con, key, user_id, name, url) -> int:
-        return await con.fetchval(
-            "INSERT INTO yt_channels (user_id, name_enc, url_enc, url_hash) "
-            "VALUES ($1, $2, $3, $4) "
-            "ON CONFLICT (user_id, url_hash) DO UPDATE SET user_id = EXCLUDED.user_id "
+    async def _get_or_create_channel(self, con, key, user_id, name, url, logo=None) -> int:
+        channel_id = await con.fetchval(
+            "INSERT INTO yt_channels (user_id, name_enc, url_enc, url_hash, logo_enc) "
+            "VALUES ($1, $2, $3, $4, $5) "
+            "ON CONFLICT (user_id, url_hash) DO UPDATE SET "
+            "logo_enc = COALESCE(EXCLUDED.logo_enc, yt_channels.logo_enc) "
             "RETURNING id",
             user_id, encrypt(key, name), encrypt(key, url), index_hash(key, url),
+            encrypt(key, logo) if logo else None,
         )
+        return channel_id
 
     async def add_tracking(
         self,
@@ -58,6 +61,7 @@ class PgStore:
         channel_url: str,
         kind: str = "tracking",
         words: Optional[List[str]] = None,
+        logo: Optional[str] = None,
     ) -> Result[int, str]:
         key = await vault.get(user_id)
         if key is None:
@@ -65,7 +69,7 @@ class PgStore:
         pool = await get_pool()
         async with pool.acquire() as con:
             async with con.transaction():
-                channel_id = await self._get_or_create_channel(con, key, user_id, channel_name, channel_url)
+                channel_id = await self._get_or_create_channel(con, key, user_id, channel_name, channel_url, logo)
                 # yt_tracking.channel_id is PK (owner schema: 1 subscription row
                 # per channel). Re-subscribing with a different kind UPDATES it:
                 # a channel is either tracked wholesale or word-scanned.
@@ -320,7 +324,7 @@ class PgStore:
             rows = await con.fetch(
                 """
                 SELECT v.id, v.channel_id, v.title_enc, v.url_enc, v.thumbnail_enc, v.published_at, v.seen,
-                       c.name_enc AS channel_enc
+                       c.name_enc AS channel_enc, c.logo_enc AS channel_logo_enc
                 FROM yt_videos v
                 JOIN yt_channels c ON c.id = v.channel_id
                 WHERE c.user_id = $1 AND c.label != 'blocked'   -- D22
@@ -339,6 +343,7 @@ class PgStore:
                 "published_at": r["published_at"],
                 "seen": r["seen"],
                 "channel": decrypt(key, r["channel_enc"]),
+                "channel_logo": decrypt(key, r["channel_logo_enc"]),
             }
             for r in rows
         ]
@@ -392,7 +397,7 @@ class PgStore:
         async with pool.acquire() as con:
             rows = await con.fetch(
                 """
-                SELECT c.id, c.name_enc, c.url_enc, c.label, c.label_reason_enc,
+                SELECT c.id, c.name_enc, c.url_enc, c.logo_enc, c.label, c.label_reason_enc,
                        d.name_enc AS d_enc, s.name_enc AS s_enc,
                        t.rss_id_enc, t.kind AS t_kind, t.word_enc, t.rank AS t_rank, t.active AS t_active,
                        p.rank AS p_rank, p.active AS p_active,
@@ -424,6 +429,7 @@ class PgStore:
                 "name": decrypt(key, r["name_enc"]),
                 "url": decrypt(key, r["url_enc"]),
                 "label": r["label"],
+                "logo": decrypt(key, r["logo_enc"]),
                 "label_reason": decrypt(key, r["label_reason_enc"]),
                 "rss_id": decrypt(key, r["rss_id_enc"]),
                 "kind": kind,
@@ -538,7 +544,8 @@ class PgStore:
         return Success({"deleted": channel_id})
 
     async def add_playlist(
-        self, user_id: int, playlist_id: str, channel_name: str, channel_url: str
+        self, user_id: int, playlist_id: str, channel_name: str, channel_url: str,
+        logo: Optional[str] = None,
     ) -> Result[int, str]:
         key = await vault.get(user_id)
         if key is None:
@@ -546,7 +553,7 @@ class PgStore:
         pool = await get_pool()
         async with pool.acquire() as con:
             async with con.transaction():
-                channel_id = await self._get_or_create_channel(con, key, user_id, channel_name, channel_url)
+                channel_id = await self._get_or_create_channel(con, key, user_id, channel_name, channel_url, logo)
                 await con.execute(
                     "INSERT INTO yt_playlists (channel_id, playlist_id) VALUES ($1, $2) "
                     "ON CONFLICT (channel_id) DO UPDATE SET playlist_id = EXCLUDED.playlist_id",
@@ -555,7 +562,8 @@ class PgStore:
         return Success(channel_id)
 
     async def add_random(
-        self, user_id: int, channel_name: str, channel_url: str, rank: str = "week"
+        self, user_id: int, channel_name: str, channel_url: str, rank: str = "week",
+        logo: Optional[str] = None,
     ) -> Result[int, str]:
         key = await vault.get(user_id)
         if key is None:
@@ -563,7 +571,7 @@ class PgStore:
         pool = await get_pool()
         async with pool.acquire() as con:
             async with con.transaction():
-                channel_id = await self._get_or_create_channel(con, key, user_id, channel_name, channel_url)
+                channel_id = await self._get_or_create_channel(con, key, user_id, channel_name, channel_url, logo)
                 await con.execute(
                     "INSERT INTO yt_randomsubs (channel_id, rank) VALUES ($1, $2) "
                     "ON CONFLICT (channel_id) DO UPDATE SET rank = EXCLUDED.rank",

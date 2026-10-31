@@ -26,6 +26,7 @@ from Orchestrator.Ani import manager as ani_manager
 from Orchestrator.Ani.Access.router import router as ani_access_router
 from Orchestrator.Ani.Feed.router import router as ani_feed_router
 from Orchestrator.Yt import manager as yt_manager
+from Orchestrator.Yt.Access.cards_router import router as yt_cards_router
 from Orchestrator.Yt.Access.router import router as yt_access_router
 from Orchestrator.Yt.Feed.router import router as yt_feed_router
 
@@ -65,6 +66,7 @@ app.include_router(notifications_router)
 app.include_router(admin_router)
 app.include_router(yt_feed_router)
 app.include_router(yt_access_router)
+app.include_router(yt_cards_router)
 app.include_router(ani_feed_router)
 app.include_router(ani_access_router)
 

@@ -241,3 +241,14 @@
   color: var(--lime);
   border-color: #646d43;
 }
+
+/* Real thumbnails: cover the box instead of a top-left crop of the
+   480x360 original (the "broken thumbnail" bug — verified computed style). */
+.video-thumb.real-thumb {
+  background-size: cover;
+  background-position: center;
+  background-color: #141510;
+}
+.video-thumb.real-thumb[style*="background-image"] span {
+  display: none;
+}

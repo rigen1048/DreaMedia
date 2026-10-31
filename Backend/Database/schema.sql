@@ -115,6 +115,31 @@ CREATE TABLE IF NOT EXISTS yt_videos (
 );
 CREATE INDEX IF NOT EXISTS idx_yt_videos_channel ON yt_videos(channel_id, seen);
 
+-- ============================ Manual todo cards (D47) ============================
+-- Non-automated: the user creates a card, pastes video links into it,
+-- checks them off. No polling, no ranks, no feeds.
+CREATE TABLE IF NOT EXISTS yt_cards (
+    id            SERIAL PRIMARY KEY,
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name_enc      BYTEA NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS yt_card_items (
+    id            BIGSERIAL PRIMARY KEY,
+    card_id       INTEGER NOT NULL REFERENCES yt_cards(id) ON DELETE CASCADE,
+    video_id      TEXT NOT NULL,               -- YouTube video id (not secret)
+    url_enc       BYTEA NOT NULL,
+    url_hash      BYTEA NOT NULL,
+    title_enc     BYTEA NOT NULL,
+    thumbnail_enc BYTEA,
+    position      INTEGER NOT NULL DEFAULT 0,
+    done          BOOLEAN NOT NULL DEFAULT FALSE,
+    added_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (card_id, url_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_card_items_card ON yt_card_items(card_id, done);
+
 -- ============================ Ani plugin ============================
 CREATE TABLE IF NOT EXISTS ani_domains (
     id            SERIAL PRIMARY KEY,
