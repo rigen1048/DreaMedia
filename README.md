@@ -16,7 +16,7 @@ The backend is the source of truth for PostgreSQL, authentication/session state,
 
 ## Quick start
 
-Requirements: Docker Compose v2, `uv`, Node.js, and `pnpm`.
+Requirements: Docker Compose v2, `uv`, and `bun`.
 
 ```bash
 chmod +x start.sh
@@ -49,8 +49,8 @@ In another terminal, start the frontend:
 
 ```bash
 cd Frontend
-pnpm install --frozen-lockfile
-pnpm dev
+bun install --frozen-lockfile
+bun run dev
 ```
 
 Vite proxies `/auth`, `/notifications`, `/yt`, `/ani`, `/admin`, `/graphql`, and `/health` to `http://127.0.0.1:8000` by default. Set `DREAMEDIA_API_TARGET` if the backend listens elsewhere. Production should serve both behind one origin, or the backend owner should configure credentialed CORS and cookies. See [`Frontend/README.md`](Frontend/README.md) for the frontend module map and checks.
@@ -63,5 +63,5 @@ The UI has three modes: Notifications, Management, and Todo. Keyboard navigation
 
 ```bash
 cd Backend && uv run pytest
-cd ../Frontend && pnpm format:check && pnpm check && pnpm build:static
+cd ../Frontend && bun run format:check && bun run check && bun run build:static
 ```

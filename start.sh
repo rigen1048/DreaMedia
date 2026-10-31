@@ -11,7 +11,7 @@ fail() {
   exit 1
 }
 
-for command_name in docker uv pnpm; do
+for command_name in docker uv bun; do
   command -v "$command_name" >/dev/null 2>&1 || fail "Required command '$command_name' was not found. Install it, then rerun ./start.sh."
 done
 
@@ -55,7 +55,7 @@ fi
 
 printf 'Syncing locked Python and Node dependencies...\n'
 (cd "${BACKEND_DIR}" && uv sync --frozen)
-(cd "${FRONTEND_DIR}" && pnpm install --frozen-lockfile)
+(cd "${FRONTEND_DIR}" && bun install --frozen-lockfile)
 
 printf '\nStarting DreaMedia services.\n'
 printf 'Frontend: http://localhost:3000\n'
@@ -64,7 +64,7 @@ printf 'Press Ctrl+C to stop FastAPI and Vite. PostgreSQL and its data volume wi
 
 (cd "${BACKEND_DIR}" && exec uv run -m App.main) &
 BACKEND_PID=$!
-(cd "${FRONTEND_DIR}" && exec pnpm dev) &
+(cd "${FRONTEND_DIR}" && exec bun run dev) &
 FRONTEND_PID=$!
 
 cleanup() {
