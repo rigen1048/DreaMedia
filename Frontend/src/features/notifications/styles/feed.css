@@ -188,3 +188,21 @@
   border-color: #374b5b;
   background: #20272b;
 }
+
+/* YouTube-style feed rows (D51): real thumbnails + channel icons. */
+.signal-thumb {
+  width: 96px;
+  height: 54px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  background-size: cover;
+  background-position: center;
+  background-color: #141510;
+}
+.signal-avatar-img {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: 0 0 auto;
+}

@@ -10,6 +10,8 @@ export type MediaNotification = {
   source: MediaSource;
   mode: NotificationMode;
   creator: string;
+  channelLogo: string;
+  thumbnail: string;
   title: string;
   summary: string;
   domain: string;
@@ -39,6 +41,7 @@ export type ManagedChannel = {
   id: number;
   name: string;
   url: string;
+  logo: string;
   mode: NotificationMode;
   kind: YtKind | null;
   active: boolean | null;
