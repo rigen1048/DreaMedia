@@ -18,6 +18,13 @@ The backend is the source of truth for PostgreSQL, authentication/session state,
 
 Requirements: Docker Compose v2, `uv`, and `bun`.
 
+## Configuration (root `.env`)
+
+Copy `.env.example` to `.env` at the **repo root** and set
+`DREAMEDIA_PG_PASSWORD` (required, no default). Compose and the app read
+the same variable, so the DB password can never drift. Policy values
+(rate limits, floors) stay hardcoded in `Backend/Config/Hardcoded/`.
+
 ```bash
 chmod +x start.sh
 ./start.sh

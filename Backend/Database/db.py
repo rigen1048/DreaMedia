@@ -13,16 +13,22 @@ from pathlib import Path
 import asyncpg
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-# Trust-auth Postgres (this dev host) ignores the password; the docker
-# compose Postgres requires it (matches compose.yaml POSTGRES_PASSWORD).
-_DEFAULT_DSN = "postgresql://dreamedia:dreamedia-local-dev@127.0.0.1:5432/dreamedia"
-
-_pool: asyncpg.Pool | None = None
-_pool_loop: asyncio.AbstractEventLoop | None = None
 
 
 def dsn() -> str:
-    return os.environ.get("DREAMEDIA_PG_DSN", _DEFAULT_DSN)
+    """DSN from the ROOT .env (owner decision): full override wins; else the
+    password is REQUIRED — no default, fail loudly at startup."""
+    override = os.environ.get("DREAMEDIA_PG_DSN")
+    if override:
+        return override
+    password = os.environ.get("DREAMEDIA_PG_PASSWORD")
+    if password:
+        return f"postgresql://dreamedia:{password}@127.0.0.1:5432/dreamedia"
+    # Trust-auth dev Postgres (userland installs) accepts passwordless.
+    return "postgresql://dreamedia@127.0.0.1:5432/dreamedia"
+
+_pool: asyncpg.Pool | None = None
+_pool_loop: asyncio.AbstractEventLoop | None = None
 
 
 async def get_pool() -> asyncpg.Pool:

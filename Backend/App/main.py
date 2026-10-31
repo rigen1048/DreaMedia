@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 
+import Utility.env  # noqa: F401 — loads the root .env before anything else
+
 from fastapi import FastAPI
 from strawberry.fastapi import GraphQLRouter
 
