@@ -31,7 +31,7 @@ export default defineConfig(({ mode }) => {
     server: {
       host: true,
       allowedHosts: [".manuspre.computer", ".manus.computer", ".manus-asia.computer", ".manuscomputer.ai", ".manusvm.computer", "localhost", "127.0.0.1"],
-      proxy: Object.fromEntries(["/auth", "/admin", "/yt", "/ani", "/graphql", "/health"].map((prefix) => [prefix, backendProxy])),
+      proxy: Object.fromEntries(["/auth", "/notifications", "/admin", "/yt", "/ani", "/graphql", "/health"].map((prefix) => [prefix, backendProxy])),
     },
   };
 });

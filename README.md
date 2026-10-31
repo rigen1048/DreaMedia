@@ -1,17 +1,16 @@
 # DreaMedia
 
-DreaMedia is a media notification and tracking application. The existing Python/FastAPI service owns authentication, encrypted Postgres data, YouTube/Ani ingestion, and every durable mutation. The React client lives in [`frontend/`](frontend/) and communicates only through that API; it has no browser database, Drizzle layer, Express service, or demo-data fallback.
+DreaMedia is a FastAPI/Postgres media-notification and tracking service with a React frontend. The Python backend at repository root remains the authority for sessions, encrypted user data, YouTube/Ani ingestion, notifications, and every durable mutation. The frontend is in [`frontend/`](frontend/) and does not create a second database, Drizzle layer, Express service, demo dataset, or browser persistence layer.
 
-## Repository layout
+## Layout
 
-- `App/`, `Auth/`, `Database/`, `Orchestrator/`, `Graphql/`, `Config/` — existing FastAPI backend and domain code.
-- `compose.yaml` — existing local PostgreSQL service.
-- `frontend/` — React + TypeScript + Vite client with the three user modes: Notifications, Management, and Todo.
-- [`BACKEND_TODO.md`](BACKEND_TODO.md) — frontend contract gaps for backend-owner review. It is not an implementation request and no backend source/schema has been changed in this frontend commit.
+The existing backend remains in `App/`, `Auth/`, `Database/`, `Orchestrator/`, `Graphql/`, and `Config/`. The existing Postgres service remains in `compose.yaml`. The keyboard-first React client is isolated in `frontend/`. Its source is organized around a typed REST layer (`frontend/client/src/lib/api.ts`), centralized TanStack Query reads (`frontend/client/src/lib/mediaQueries.ts`), a view adapter (`frontend/client/src/data/MediaContext.tsx`), and the three requested modes: Notifications, Management, Todo.
+
+[`BACKEND_TODO.md`](BACKEND_TODO.md) records only the remaining backend-owner questions. The upstream pull already implements the frontend contracts for URL resolution, stable feed IDs/read state, channel modes/activity, category CRUD, Ani Canon Only/cursor/ranges, notification history, and cookie logout. No backend source/schema is modified by this frontend integration commit.
 
 ## Run locally
 
-Start the existing Postgres service and FastAPI application following the backend project's established instructions. Then run the frontend separately:
+Start the existing Postgres and FastAPI application using the backend's established workflow. Then run the frontend:
 
 ```bash
 cd frontend
@@ -19,11 +18,11 @@ pnpm install
 pnpm dev
 ```
 
-The Vite development server proxies the API paths (`/auth`, `/yt`, `/ani`, `/admin`, `/graphql`, and `/health`) to `http://127.0.0.1:8000` by default. Set `DREAMEDIA_API_TARGET` if FastAPI runs elsewhere. In production, place the frontend and existing API behind one origin, or configure credentialed CORS/cookie policy in the backend/reverse proxy.
+The Vite server proxies `/auth`, `/notifications`, `/yt`, `/ani`, `/admin`, `/graphql`, and `/health` to `http://127.0.0.1:8000`. Set `DREAMEDIA_API_TARGET` if the API runs elsewhere. For deployment, serve the frontend and FastAPI through one origin, or configure credentialed CORS/cookie policy in the backend/reverse proxy.
 
-## Frontend interaction model
+## Frontend shortcuts
 
-Use `1`, `2`, and `3` for Notifications, Management, and Todo. `Ctrl/Cmd+K` opens the compact mode switcher; `/` focuses page search. The UI only exposes state which the current FastAPI contract can read or write. For example, Ani season watched status and last-watched episode are persisted; current YouTube video seen state is displayed but remains read-only until its backend write route exists.
+Use `1`, `2`, and `3` to move between Notifications, Management, and Todo. `Ctrl/Cmd+K` opens the mode switcher; `/` focuses the current page search. The UI only displays state confirmed by the backend. The Ani Todo deliberately models the backend's forward-only cursor and season-level completion, not an invented arbitrary per-episode checklist.
 
 ## Checks
 
@@ -33,4 +32,4 @@ pnpm check
 pnpm build:static
 ```
 
-The front end's required route manifest is at `frontend/client/public/manus-routes.json`.
+The static output is `frontend/dist/public`; declared page routes live at `frontend/client/public/manus-routes.json`.
