@@ -13,7 +13,9 @@ from pathlib import Path
 import asyncpg
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-_DEFAULT_DSN = "postgresql://dreamedia@127.0.0.1:5432/dreamedia"
+# Trust-auth Postgres (this dev host) ignores the password; the docker
+# compose Postgres requires it (matches compose.yaml POSTGRES_PASSWORD).
+_DEFAULT_DSN = "postgresql://dreamedia:dreamedia-local-dev@127.0.0.1:5432/dreamedia"
 
 _pool: asyncpg.Pool | None = None
 _pool_loop: asyncio.AbstractEventLoop | None = None
