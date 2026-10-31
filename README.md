@@ -11,7 +11,13 @@ DreaMedia/
 └── .gitignore
 ```
 
-The backend remains the source of truth for PostgreSQL, authentication/session state, YouTube and Ani ingestion, notification events, and durable writes. The frontend is a separate package that consumes its typed same-origin REST API through TanStack Query. No second database, frontend-owned schema, Express service, or demo-data persistence is added.
+The backend is the source of truth for PostgreSQL, authentication/session state, YouTube and Ani ingestion, backend messages, and durable writes. The frontend owns no database, schema, or demo persistence.
+
+## Feed and message contract
+
+**Feed and `msg` are separate.** YouTube/Ani Feed data is read through GraphQL at `/graphql` (`ytFeed`, `ytSidebar`, `ytChannels`, `aniEvents`); the frontend does not use REST feed endpoints for this content. Feed seen-state is also changed through the corresponding GraphQL mutations. The top-right bell is for backend-originated HTTP messages only: it reads `/notifications` and acknowledges IDs through `/notifications/seen`. Feed rows are never copied into the bell.
+
+REST remains in use for auth, channel/category management, and Todo progress operations; Ani management metadata also uses the existing REST read model. The backend already has a `Utility.notify.notify()` record helper, but operational call sites still need to wire the alerts that should become bell messages. See [`BACKEND_TODO.md`](BACKEND_TODO.md).
 
 ## Start the backend
 
@@ -31,13 +37,11 @@ Vite proxies `/auth`, `/notifications`, `/yt`, `/ani`, `/admin`, `/graphql`, and
 
 ## Work modes
 
-The UI has three modes: Notifications, Management, and Todo. Keyboard navigation: `1`, `2`, `3`; `Ctrl/Cmd+K` opens the mode switcher; `/` focuses the current page search. The app displays backend-confirmed state only. Ani Todo follows the backend's forward-only cursor and season-level completion model instead of inventing arbitrary per-episode history.
+The UI has three modes: Notifications, Management, and Todo. Keyboard navigation: `1`, `2`, `3`; `Ctrl/Cmd+K` opens the mode switcher; `/` focuses the current page search. Ani Todo follows the backend's forward-only cursor and season-level completion model instead of inventing arbitrary per-episode history.
 
 ## Checks
 
 ```bash
 cd Backend && uv run pytest
-cd ../Frontend && pnpm check && pnpm build:static
+cd ../Frontend && pnpm format:check && pnpm check && pnpm build:static
 ```
-
-Remaining backend owner decisions are listed in [`BACKEND_TODO.md`](BACKEND_TODO.md).

@@ -1,37 +1,33 @@
 import { useEffect, useState } from "react";
 import { Bell, X } from "lucide-react";
-import { useMedia, type BellNotification } from "../../features/media";
+import { useMedia } from "../../features/media";
+import type { BellNotification } from "../../features/media";
 
 type BackendBellProps = {
-  onNavigate: (href: string) => void;
   closeToken: number;
   onOpen: () => void;
 };
 
-export default function BackendBell({ onNavigate, closeToken, onOpen }: BackendBellProps) {
+export default function BackendBell({ closeToken, onOpen }: BackendBellProps) {
   const [trayOpen, setTrayOpen] = useState(false);
   const { bellNotifications, markBellSeen } = useMedia();
-  const unreadCount = bellNotifications.filter((item) => item.unread).length;
+  const unreadMessages = bellNotifications.filter((item) => item.unread);
 
   useEffect(() => setTrayOpen(false), [closeToken]);
 
   const closeTray = () => setTrayOpen(false);
-  const openNotification = async (item: BellNotification) => {
-    closeTray();
+  const acknowledgeMessage = async (item: BellNotification): Promise<void> => {
     if (item.unread) await markBellSeen([item]);
-    if (item.origin === "record") {
-      onNavigate("/notifications");
-      return;
-    }
-    const source = item.source === "youtube" ? "youtube" : "ani";
-    onNavigate(`/track?source=${source}&item=${encodeURIComponent(item.creator)}`);
+  };
+  const acknowledgeAll = async (): Promise<void> => {
+    if (unreadMessages.length) await markBellSeen(unreadMessages);
   };
 
   return (
     <div className="notification-anchor">
       <button
         className={`bell-button ${trayOpen ? "bell-open" : ""}`}
-        aria-label={`Notifications${unreadCount ? `, ${unreadCount} unseen` : ""}`}
+        aria-label={`Backend messages${unreadMessages.length ? `, ${unreadMessages.length} unseen` : ""}`}
         aria-expanded={trayOpen}
         onClick={() => {
           onOpen();
@@ -39,15 +35,15 @@ export default function BackendBell({ onNavigate, closeToken, onOpen }: BackendB
         }}
       >
         <Bell size={18} strokeWidth={1.8} />
-        {unreadCount > 0 && <span className="bell-count">{unreadCount}</span>}
+        {unreadMessages.length > 0 && <span className="bell-count">{unreadMessages.length}</span>}
       </button>
       {trayOpen && (
         <div className="notification-tray compact-tray">
           <div className="tray-header">
-            <strong>Recent</strong>
+            <strong>Messages</strong>
             <button
               className="icon-button small-icon"
-              aria-label="Close notifications"
+              aria-label="Close messages"
               onClick={closeTray}
             >
               <X size={15} />
@@ -58,31 +54,34 @@ export default function BackendBell({ onNavigate, closeToken, onOpen }: BackendB
               <button
                 key={item.id}
                 className={`tray-item ${item.unread ? "is-unread" : ""}`}
-                onClick={() => void openNotification(item)}
+                aria-label={`${item.unread ? "Acknowledge" : "Read"} backend message: ${item.title}`}
+                onClick={() => void acknowledgeMessage(item)}
               >
-                <span className={`source-dot ${item.source === "ani" ? "ani-dot" : "yt-dot"}`} />
+                <span className="source-dot message-dot" />
                 <span className="tray-copy">
                   <strong>{item.creator}</strong>
                   <span>{item.title}</span>
-                  <small>{item.time}</small>
+                  {item.summary && <span>{item.summary}</span>}
+                  <small>
+                    {item.media} · {item.kind} · {item.time}
+                    {item.pushed ? " · delivered" : ""}
+                  </small>
                 </span>
                 {item.unread && <span className="unread-dot" />}
               </button>
             ))}
             {bellNotifications.length === 0 && (
-              <span className="tray-empty">No notifications from the backend.</span>
+              <span className="tray-empty">No messages from the backend.</span>
             )}
           </div>
           <div className="tray-footer">
-            <span>Synced from backend</span>
+            <span>Backend msg · HTTP</span>
             <button
               className="tray-view-all"
-              onClick={() => {
-                closeTray();
-                onNavigate("/notifications");
-              }}
+              disabled={unreadMessages.length === 0}
+              onClick={() => void acknowledgeAll()}
             >
-              Inbox <span>{unreadCount}</span>
+              Mark all seen <span>{unreadMessages.length}</span>
             </button>
           </div>
         </div>

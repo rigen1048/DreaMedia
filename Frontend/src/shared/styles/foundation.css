@@ -343,6 +343,9 @@ select:focus-visible {
 .ani-dot {
   background: var(--violet);
 }
+.message-dot {
+  background: var(--gold);
+}
 .tray-copy {
   min-width: 0;
   display: grid;

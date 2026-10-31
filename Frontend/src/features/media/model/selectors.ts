@@ -1,5 +1,12 @@
-import type { ApiDomain, AniEvent, BackendNotification, YtChannel, YtVideo } from "../api";
-import type { MediaBundle } from "../query/mediaBundle";
+import type {
+  AniEntry,
+  ApiDomain,
+  AniEvent,
+  BackendNotification,
+  YtChannel,
+  YtVideo,
+} from "../api";
+import type { FeedBundle } from "../api/graphqlFeed";
 import type {
   AnimeTrack,
   BellNotification,
@@ -8,7 +15,7 @@ import type {
   ManagedDomain,
   MediaNotification,
   YoutubeTrack,
-} from "../types";
+} from "../model/types";
 import { channelMode, colors, normalizeAnime, normalizeBell, pretty, relTime } from "./normalizers";
 
 export function selectChannels(channels: YtChannel[]): ManagedChannel[] {
@@ -51,7 +58,7 @@ export function selectCategories(categories: ApiDomain[]): Category[] {
   );
 }
 
-export function selectAnime(entries: MediaBundle["entries"]): AnimeTrack[] {
+export function selectAnime(entries: AniEntry[]): AnimeTrack[] {
   return entries.map(normalizeAnime);
 }
 
@@ -132,7 +139,7 @@ function selectAniNotifications(events: AniEvent[], anime: AnimeTrack[]): MediaN
 }
 
 export function selectNotifications(
-  bundle: MediaBundle,
+  bundle: FeedBundle,
   channels: ManagedChannel[],
   anime: AnimeTrack[],
 ): MediaNotification[] {
@@ -142,27 +149,9 @@ export function selectNotifications(
   ].sort((left, right) => right.timestamp - left.timestamp);
 }
 
-export function selectBellNotifications(
-  notifications: BackendNotification[],
-  feed: MediaNotification[],
-): BellNotification[] {
-  return [
-    ...notifications.map(normalizeBell),
-    ...feed.map((item) => ({
-      id: `feed:${item.id}`,
-      backendId: item.backendId,
-      origin: "feed" as const,
-      source: item.source,
-      media: item.source,
-      kind: item.mode,
-      creator: item.creator,
-      title: item.title,
-      summary: item.summary,
-      time: item.time,
-      unread: item.unread,
-      timestamp: item.timestamp,
-    })),
-  ]
+export function selectBellNotifications(notifications: BackendNotification[]): BellNotification[] {
+  return notifications
+    .map(normalizeBell)
     .sort((left, right) => right.timestamp - left.timestamp)
     .slice(0, 30);
 }

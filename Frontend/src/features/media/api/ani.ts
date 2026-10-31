@@ -51,8 +51,6 @@ export type AniEntryPatch = Partial<
 };
 
 export const aniApi = {
-  events: (includeSeen = true) =>
-    request<{ events: AniEvent[] }>(`/ani/feed/events?include_seen=${includeSeen}`),
   management: () => request<{ entries: AniEntry[] }>("/ani/feed/management"),
   track: (title: string, list_kind: AniEntry["list"]) =>
     request<{ ok: true; entry_id: number; seasons: number }>(
@@ -90,7 +88,5 @@ export const aniApi = {
       watched_seasons: number;
       cursor: { season: number; episode: number | null };
     }>(`/ani/access/entries/${entryId}/watched-all`, post({})),
-  markEventsSeen: (event_ids: number[], seen = true) =>
-    request<{ ok: true; changed: number }>("/ani/access/events/seen", post({ event_ids, seen })),
   deleteEntry: (id: number) => request<{ ok: true }>(`/ani/access/entries/${id}/delete`, post({})),
 };

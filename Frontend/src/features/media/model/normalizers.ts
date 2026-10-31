@@ -1,5 +1,5 @@
 import type { AniEntry, AniSeason as ApiAniSeason, BackendNotification } from "../api";
-import type { AnimeSeason, AnimeTrack, BellNotification } from "../types";
+import type { AnimeSeason, AnimeTrack, BellNotification, MediaSource } from "../model/types";
 
 export const colors = ["lime", "violet", "blue", "orange", "gold"];
 
@@ -79,6 +79,13 @@ export function normalizeAnime(entry: AniEntry): AnimeTrack {
   };
 }
 
+function messageSource(media: string): MediaSource | null {
+  const normalized = media.toLowerCase();
+  if (normalized === "ani" || normalized.includes("anime")) return "ani";
+  if (normalized === "yt" || normalized.includes("youtube")) return "youtube";
+  return null;
+}
+
 export function normalizeBell(notification: BackendNotification): BellNotification {
   const payload = notification.payload;
   const findText = (...keys: string[]): string | undefined =>
@@ -86,17 +93,19 @@ export function normalizeBell(notification: BackendNotification): BellNotificati
   const timestamp = new Date(notification.created_at).getTime();
 
   return {
-    id: `record:${notification.id}`,
+    id: `msg:${notification.id}`,
     backendId: notification.id,
-    origin: "record",
-    source: null,
+    source: messageSource(notification.media),
     media: notification.media,
     kind: notification.kind,
     creator: findText("channel", "anime", "title") ?? pretty(notification.media),
-    title: findText("message", "video_title", "event_title", "title") ?? pretty(notification.kind),
+    title:
+      findText("message", "text", "video_title", "event_title", "title") ??
+      pretty(notification.kind),
     summary: findText("detail", "reason", "description") ?? "",
     time: relTime(notification.created_at),
     unread: !notification.seen,
+    pushed: notification.pushed,
     timestamp: Number.isNaN(timestamp) ? 0 : timestamp,
   };
 }

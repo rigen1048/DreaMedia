@@ -32,10 +32,6 @@ export function useAniActions(after: AfterAction) {
       (entry: AnimeTrack) => after(() => api.ani.markAllWatched(entry.backendId)),
       [after],
     ),
-    markAnimeEventsSeen: useCallback(
-      (ids: number[], seen = true) => after(() => api.ani.markEventsSeen(ids, seen)),
-      [after],
-    ),
     deleteAnime: useCallback((id: number) => after(() => api.ani.deleteEntry(id)), [after]),
   };
 }

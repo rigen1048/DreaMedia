@@ -58,10 +58,6 @@ export type SubscribeInput = {
 };
 
 export const youtubeApi = {
-  videos: (limit = 500) => request<{ videos: YtVideo[] }>(`/yt/feed/videos?limit=${limit}`),
-  sidebar: () => request<{ domains: SidebarDomain[] }>("/yt/feed/sidebar"),
-  channels: (includeBlocked = true) =>
-    request<{ channels: YtChannel[] }>(`/yt/feed/channels?include_blocked=${includeBlocked}`),
   categories: () => request<{ domains: ApiDomain[] }>("/yt/access/categories"),
   subscribe: (input: SubscribeInput) =>
     request<{ ok: true; channel_id: number }>("/yt/access/subscribe", post(input)),
@@ -81,8 +77,6 @@ export const youtubeApi = {
     request<{ ok: true }>(`/yt/access/channels/${id}/assign`, post({ domain, subdomain })),
   deleteChannel: (id: number) =>
     request<{ ok: true }>(`/yt/access/channels/${id}/delete`, post({})),
-  markVideosSeen: (video_ids: number[], seen = true) =>
-    request<{ ok: true; changed: number }>("/yt/access/videos/seen", post({ video_ids, seen })),
   setCategoryActive: (domain: string, subdomain: string | null, active: boolean) =>
     request<{ ok: true }>("/yt/access/category/active", post({ domain, subdomain, active })),
   createCategory: (domain: string, subdomain: string | null) =>

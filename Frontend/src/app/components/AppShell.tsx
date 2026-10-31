@@ -40,7 +40,7 @@ export default function AppShell({ children }: AppShellProps) {
             onNavigate={navigate}
             onCloseBell={closeBell}
           />
-          <BackendBell onNavigate={navigate} closeToken={bellCloseToken} onOpen={closeSwitcher} />
+          <BackendBell closeToken={bellCloseToken} onOpen={closeSwitcher} />
           <button
             className="topbar-avatar"
             aria-label="Sign out"
