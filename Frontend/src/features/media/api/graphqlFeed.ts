@@ -49,7 +49,12 @@ type GraphqlAniEvent = {
 
 type GraphqlFeedResponse = {
   ytFeed: GraphqlYtVideo[];
-  ytSidebar: string;
+  ytSidebar: Array<{
+    key: string;
+    name: string;
+    active: boolean;
+    subdomains: Array<{ key: string; name: string; active: boolean }>;
+  }>;
   ytChannels: GraphqlYtChannel[];
   aniEvents: GraphqlAniEvent[];
 };
@@ -66,7 +71,7 @@ const feedQuery = `
       seen
       channel
     }
-    ytSidebar
+    ytSidebar { key name active subdomains { key name active } }
     ytChannels(includeBlocked: $includeBlocked) {
       id
       name
@@ -110,51 +115,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseSidebar(json: string): SidebarDomain[] {
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(json) as unknown;
-  } catch {
-    throw new BackendError("The GraphQL YouTube sidebar was not valid JSON.");
-  }
-  if (!Array.isArray(decoded)) {
-    throw new BackendError("The GraphQL YouTube sidebar was not a domain list.");
-  }
-
-  return decoded.map((domain) => {
-    if (
-      !isRecord(domain) ||
-      typeof domain.key !== "string" ||
-      typeof domain.name !== "string" ||
-      typeof domain.active !== "boolean" ||
-      !Array.isArray(domain.subdomains)
-    ) {
-      throw new BackendError("The GraphQL YouTube sidebar contained an invalid domain.");
-    }
-
-    const subdomains = domain.subdomains.map((subdomain) => {
-      if (
-        !isRecord(subdomain) ||
-        typeof subdomain.key !== "string" ||
-        typeof subdomain.name !== "string" ||
-        typeof subdomain.active !== "boolean"
-      ) {
-        throw new BackendError("The GraphQL YouTube sidebar contained an invalid subdomain.");
-      }
-      return {
-        key: subdomain.key,
-        name: subdomain.name,
-        active: subdomain.active,
-      };
-    });
-
-    return {
-      key: domain.key,
-      name: domain.name,
-      active: domain.active,
-      subdomains,
-    };
-  });
+function parseSidebar(domains: GraphqlFeedResponse["ytSidebar"]): SidebarDomain[] {
+  return domains.map((domain) => ({
+    key: domain.key,
+    name: domain.name,
+    active: domain.active,
+    subdomains: domain.subdomains.map((sub) => ({ key: sub.key, name: sub.name, active: sub.active })),
+  }));
 }
 
 function parsePayload(json: string): Record<string, unknown> {

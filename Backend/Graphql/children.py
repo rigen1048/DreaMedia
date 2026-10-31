@@ -60,6 +60,21 @@ class YtChannel:
 
 
 @strawberry.type
+class YtSidebarSubdomain:
+    key: str
+    name: str
+    active: bool
+
+
+@strawberry.type
+class YtSidebarDomain:
+    key: str
+    name: str
+    active: bool
+    subdomains: list[YtSidebarSubdomain]
+
+
+@strawberry.type
 class YtQuery:
     @strawberry.field
     async def yt_feed(self, info: strawberry.Info, limit: int = 100) -> list[YtVideo]:
@@ -72,10 +87,18 @@ class YtQuery:
         return [YtChannel(**c) for c in channels]
 
     @strawberry.field
-    async def yt_sidebar(self, info: strawberry.Info) -> str:
-        import json
-
-        return json.dumps(await _yt.sidebar(await _uid(info)))
+    async def yt_sidebar(self, info: strawberry.Info) -> list[YtSidebarDomain]:
+        data = await _yt.sidebar(await _uid(info))
+        return [
+            YtSidebarDomain(
+                key=d["key"], name=d["name"], active=d["active"],
+                subdomains=[
+                    YtSidebarSubdomain(key=s["key"], name=s["name"], active=s["active"])
+                    for s in d["subdomains"]
+                ],
+            )
+            for d in data["domains"]
+        ]
 
 
 @strawberry.type
