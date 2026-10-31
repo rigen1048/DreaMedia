@@ -32,7 +32,19 @@ from Orchestrator.Yt.Feed.router import router as yt_feed_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await db.migrate()
+    try:
+        await db.migrate()
+    except Exception as exc:
+        raise RuntimeError(
+            "Database connection/migration failed. Checklist: "
+            "(1) root .env exists with DREAMEDIA_PG_PASSWORD, "
+            "(2) the password matches the password the Postgres volume was "
+            "INITIALIZED with (POSTGRES_PASSWORD only applies on first init — "
+            "changing .env later does nothing; use 'docker compose down -v' "
+            "for a fresh volume), "
+            "(3) Postgres is reachable at the DSN host:port. "
+            f"Original error: {exc}"
+        ) from exc
     await settings.seed_defaults()
     managers = [
         asyncio.create_task(yt_manager.run_forever()),
