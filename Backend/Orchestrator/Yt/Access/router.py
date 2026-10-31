@@ -57,8 +57,11 @@ async def subscribe(body: SubscribeBody, user_id: int = Depends(current_user_id)
         if not playlist_id:
             return {"ok": False, "error": "could not extract a playlist id from that link"}
         info = await asyncio.to_thread(resolve_channel, body.link.split("?")[0])
-        name, url = (info.unwrap().name, info.unwrap().url) if not isinstance(info, Failure) else ("Playlist", body.link)
-        result = await _store.add_playlist(user_id, playlist_id, name, url)
+        if isinstance(info, Failure):
+            name, url, logo = "Playlist", body.link, None
+        else:
+            name, url, logo = info.unwrap().name, info.unwrap().url, info.unwrap().logo
+        result = await _store.add_playlist(user_id, playlist_id, name, url, logo=logo)
     elif body.kind in ("tracking", "wordscan", "random"):
         info = await asyncio.to_thread(resolve_channel, body.link)
         if isinstance(info, Failure):
@@ -67,10 +70,10 @@ async def subscribe(body: SubscribeBody, user_id: int = Depends(current_user_id)
         if body.kind in ("tracking", "wordscan"):
             result = await _store.add_tracking(
                 user_id, resolved.rss_id, resolved.name, resolved.url,
-                kind=body.kind, words=body.words,
+                kind=body.kind, words=body.words, logo=resolved.logo,
             )
         else:
-            result = await _store.add_random(user_id, resolved.name, resolved.url, body.rank)
+            result = await _store.add_random(user_id, resolved.name, resolved.url, body.rank, logo=resolved.logo)
     else:
         return {"ok": False, "error": f"unknown kind: {body.kind}"}
     if isinstance(result, Failure):

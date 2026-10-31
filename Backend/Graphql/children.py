@@ -41,6 +41,7 @@ class YtVideo:
     published_at: int | None
     seen: bool
     channel: str | None
+    channel_logo: str | None
 
 
 @strawberry.type
@@ -48,6 +49,7 @@ class YtChannel:
     id: int
     name: str | None
     url: str | None
+    logo: str | None
     label: str
     label_reason: str | None
     rss_id: str | None
@@ -57,6 +59,27 @@ class YtChannel:
     words: list[str]
     domain: str
     subdomain: str
+
+
+@strawberry.type
+class YtCardItem:
+    id: int
+    video_id: str
+    url: str | None
+    title: str | None
+    thumbnail: str | None
+    done: bool
+    added_at: str
+
+
+@strawberry.type
+class YtCard:
+    id: int
+    name: str | None
+    created_at: str
+    total: int
+    done: int
+    items: list[YtCardItem]
 
 
 @strawberry.type
@@ -85,6 +108,26 @@ class YtQuery:
     async def yt_channels(self, info: strawberry.Info, include_blocked: bool = False) -> list[YtChannel]:
         channels = await _yt.channels_view(await _uid(info), include_blocked)
         return [YtChannel(**c) for c in channels]
+
+    @strawberry.field
+    async def yt_cards(self, info: strawberry.Info) -> list[YtCard]:
+        from Database.card_store import CardStore
+
+        cards = await CardStore().list_cards(await _uid(info))
+        return [
+            YtCard(
+                id=c["id"], name=c["name"], created_at=c["created_at"],
+                total=c["total"], done=c["done"],
+                items=[
+                    YtCardItem(
+                        id=i["id"], video_id=i["video_id"], url=i["url"], title=i["title"],
+                        thumbnail=i["thumbnail"], done=i["done"], added_at=i["added_at"],
+                    )
+                    for i in c["items"]
+                ],
+            )
+            for c in cards
+        ]
 
     @strawberry.field
     async def yt_sidebar(self, info: strawberry.Info) -> list[YtSidebarDomain]:
@@ -141,6 +184,63 @@ class YtMutation:
         from returns.result import Success
 
         return isinstance(await _yt.set_channel_active(await _uid(info), channel_id, active), Success)
+
+    @strawberry.field
+    async def yt_create_card(self, info: strawberry.Info, name: str) -> int:
+        from returns.result import Failure
+
+        from Database.card_store import CardStore
+
+        result = await CardStore().create_card(await _uid(info), name)
+        if isinstance(result, Failure):
+            raise ValueError(result.failure())
+        return result.unwrap()
+
+    @strawberry.field
+    async def yt_add_card_item(self, info: strawberry.Info, card_id: int, link: str) -> int:
+        import asyncio
+
+        from returns.result import Failure
+
+        from Database.card_store import CardStore
+        from Orchestrator.Yt.Fetch.convert import resolve_video
+
+        info_res = await asyncio.to_thread(resolve_video, link)
+        if isinstance(info_res, Failure):
+            raise ValueError(info_res.failure())
+        video = info_res.unwrap()
+        result = await CardStore().add_item(
+            await _uid(info), card_id, video.video_id, video.url, video.title, video.thumbnail
+        )
+        if isinstance(result, Failure):
+            raise ValueError(result.failure())
+        return result.unwrap()
+
+    @strawberry.field
+    async def yt_set_card_item_done(self, info: strawberry.Info, item_id: int, done: bool) -> bool:
+        from returns.result import Success
+
+        from Database.card_store import CardStore
+
+        return isinstance(
+            await CardStore().set_item_done(await _uid(info), item_id, done), Success
+        )
+
+    @strawberry.field
+    async def yt_delete_card(self, info: strawberry.Info, card_id: int) -> bool:
+        from returns.result import Success
+
+        from Database.card_store import CardStore
+
+        return isinstance(await CardStore().delete_card(await _uid(info), card_id), Success)
+
+    @strawberry.field
+    async def yt_delete_card_item(self, info: strawberry.Info, item_id: int) -> bool:
+        from returns.result import Success
+
+        from Database.card_store import CardStore
+
+        return isinstance(await CardStore().delete_item(await _uid(info), item_id), Success)
 
     @strawberry.field
     async def yt_delete_channel(self, info: strawberry.Info, channel_id: int) -> bool:

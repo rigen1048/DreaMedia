@@ -95,3 +95,46 @@ def resolve_channel(link: str) -> Result[ChannelInfo, str]:
             logo=logo,
         )
     )
+
+
+_VIDEO_ID_RE = re.compile(
+    r"(?:youtube\.com/watch\?[^#]*v=|youtu\.be/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})"
+)
+
+
+@dataclass(frozen=True)
+class VideoInfo:
+    video_id: str
+    title: str
+    url: str
+    thumbnail: Optional[str]
+
+
+def parse_video_id(link: str) -> Optional[str]:
+    match = _VIDEO_ID_RE.search(link.strip())
+    return match.group(1) if match else None
+
+
+def resolve_video(link: str) -> Result[VideoInfo, str]:
+    """Resolve a YouTube video link → id/title/thumbnail (for manual cards, D47)."""
+    video_id = parse_video_id(link)
+    if not video_id:
+        return Failure("could not extract a video id from that link")
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    try:
+        with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as e:
+        log.error("video resolve failed for %s: %s", url, e)
+        return Failure("video resolve failed")
+    if not isinstance(info, dict) or not info.get("id"):
+        return Failure("video not found")
+    return Success(
+        VideoInfo(
+            video_id=info["id"],
+            title=info.get("title") or "Untitled",
+            url=url,
+            thumbnail=info.get("thumbnail")
+            or f"https://i.ytimg.com/vi/{info['id']}/hqdefault.jpg",
+        )
+    )
