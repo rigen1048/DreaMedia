@@ -1,35 +1,43 @@
 # DreaMedia
 
-DreaMedia is a FastAPI/Postgres media-notification and tracking service with a React frontend. The Python backend at repository root remains the authority for sessions, encrypted user data, YouTube/Ani ingestion, notifications, and every durable mutation. The frontend is in [`frontend/`](frontend/) and does not create a second database, Drizzle layer, Express service, demo dataset, or browser persistence layer.
+DreaMedia is a media notification and tracking app organized as a two-part monorepo. **`Backend/` and `Frontend/` are siblings**: the frontend is not nested inside the backend.
 
-## Layout
+```text
+DreaMedia/
+├── Backend/       FastAPI service, Postgres access, ingestion, auth, config, tests
+├── Frontend/      React/TypeScript application and frontend toolchain
+├── BACKEND_TODO.md
+├── README.md
+└── .gitignore
+```
 
-The existing backend remains in `App/`, `Auth/`, `Database/`, `Orchestrator/`, `Graphql/`, and `Config/`. The existing Postgres service remains in `compose.yaml`. The keyboard-first React client is isolated in `frontend/`. Its source is organized around a typed REST layer (`frontend/client/src/lib/api.ts`), centralized TanStack Query reads (`frontend/client/src/lib/mediaQueries.ts`), a view adapter (`frontend/client/src/data/MediaContext.tsx`), and the three requested modes: Notifications, Management, Todo.
+The backend remains the source of truth for PostgreSQL, authentication/session state, YouTube and Ani ingestion, notification events, and durable writes. The frontend is a separate package that consumes its typed same-origin REST API through TanStack Query. No second database, frontend-owned schema, Express service, or demo-data persistence is added.
 
-[`BACKEND_TODO.md`](BACKEND_TODO.md) records only the remaining backend-owner questions. The upstream pull already implements the frontend contracts for URL resolution, stable feed IDs/read state, channel modes/activity, category CRUD, Ani Canon Only/cursor/ranges, notification history, and cookie logout. No backend source/schema is modified by this frontend integration commit.
+## Start the backend
 
-## Run locally
+Follow the backend guide in [`Backend/README.md`](Backend/README.md). Backend Python project configuration, lockfile, Compose file, environment example, source modules, and tests live together under `Backend/`.
 
-Start the existing Postgres and FastAPI application using the backend's established workflow. Then run the frontend:
+## Start the frontend
+
+Start FastAPI/Postgres first, then:
 
 ```bash
-cd frontend
+cd Frontend
 pnpm install
 pnpm dev
 ```
 
-The Vite server proxies `/auth`, `/notifications`, `/yt`, `/ani`, `/admin`, `/graphql`, and `/health` to `http://127.0.0.1:8000`. Set `DREAMEDIA_API_TARGET` if the API runs elsewhere. For deployment, serve the frontend and FastAPI through one origin, or configure credentialed CORS/cookie policy in the backend/reverse proxy.
+Vite proxies `/auth`, `/notifications`, `/yt`, `/ani`, `/admin`, `/graphql`, and `/health` to `http://127.0.0.1:8000` by default. Set `DREAMEDIA_API_TARGET` if the backend listens elsewhere. Production should serve both behind one origin, or the backend owner should configure credentialed CORS and cookies. See [`Frontend/README.md`](Frontend/README.md) for the frontend module map and checks.
 
-## Frontend shortcuts
+## Work modes
 
-Use `1`, `2`, and `3` to move between Notifications, Management, and Todo. `Ctrl/Cmd+K` opens the mode switcher; `/` focuses the current page search. The UI only displays state confirmed by the backend. The Ani Todo deliberately models the backend's forward-only cursor and season-level completion, not an invented arbitrary per-episode checklist.
+The UI has three modes: Notifications, Management, and Todo. Keyboard navigation: `1`, `2`, `3`; `Ctrl/Cmd+K` opens the mode switcher; `/` focuses the current page search. The app displays backend-confirmed state only. Ani Todo follows the backend's forward-only cursor and season-level completion model instead of inventing arbitrary per-episode history.
 
 ## Checks
 
 ```bash
-cd frontend
-pnpm check
-pnpm build:static
+cd Backend && uv run pytest
+cd ../Frontend && pnpm check && pnpm build:static
 ```
 
-The static output is `frontend/dist/public`; declared page routes live at `frontend/client/public/manus-routes.json`.
+Remaining backend owner decisions are listed in [`BACKEND_TODO.md`](BACKEND_TODO.md).

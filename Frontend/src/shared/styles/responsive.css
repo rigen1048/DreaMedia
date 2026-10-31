@@ -1,0 +1,460 @@
+/* Responsive */
+@media (max-width: 1120px) {
+  .page-canvas {
+    padding: 28px 25px 46px;
+  }
+  .topbar {
+    padding: 0 25px;
+  }
+  .media-card-grid {
+    gap: 10px;
+  }
+}
+@media (max-width: 900px) {
+  .page-canvas {
+    padding: 25px 20px 40px;
+  }
+  .topbar {
+    padding: 0 20px;
+  }
+  .media-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .anime-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 680px) {
+  .topbar {
+    height: 57px;
+    padding: 0 15px;
+  }
+  .breadcrumb {
+    margin-right: auto;
+    margin-left: 12px;
+    font-size: 10px;
+  }
+  .topbar-actions {
+    gap: 10px;
+  }
+  .notification-tray {
+    position: fixed;
+    top: 62px;
+    right: 10px;
+    width: min(365px, calc(100vw - 20px));
+  }
+  .page-canvas {
+    min-height: calc(100vh - 57px);
+    padding: 23px 15px 38px;
+  }
+  .page-heading-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 13px;
+    margin-bottom: 22px;
+  }
+  .heading-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+  h1 {
+    font-size: 31px;
+  }
+  .source-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 11px;
+    padding-bottom: 10px;
+  }
+  .source-tabs {
+    width: 100%;
+    min-height: 39px;
+  }
+  .source-tab {
+    flex: 1;
+  }
+  .mode-filter-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 0;
+  }
+  .mode-pills {
+    gap: 3px;
+  }
+  .mode-pill {
+    padding: 0 7px;
+    font-size: 8px;
+  }
+  .management-tabs {
+    overflow-x: auto;
+  }
+  .management-tabs button {
+    min-width: max-content;
+    padding: 0 9px;
+  }
+  .panel-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 18px 15px 14px;
+  }
+  .table-search {
+    width: 100%;
+  }
+  .table-search input {
+    width: 100%;
+  }
+  .category-row .status-toggle {
+    gap: 3px;
+    font-size: 8px;
+  }
+  .category-row .switch {
+    transform: scale(0.84);
+    transform-origin: center;
+  }
+  .add-category-row .outline-button {
+    flex: 1;
+  }
+  .tracker-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .media-card-grid {
+    grid-template-columns: 1fr;
+  }
+  .track-art {
+    min-height: 132px;
+  }
+  .anime-art {
+    min-height: 150px;
+  }
+  .detail-title-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .detail-title-copy {
+    min-width: calc(100% - 65px);
+  }
+  .video-todo-row {
+    gap: 7px;
+    padding: 9px 8px;
+  }
+  .video-thumb {
+    width: 57px;
+    height: 39px;
+  }
+  .video-status {
+    display: none;
+  }
+  .video-todo-copy strong {
+    font-size: 9px;
+  }
+  .video-todo-copy span {
+    font-size: 7px;
+  }
+  .play-row {
+    width: 24px;
+    height: 24px;
+  }
+  .anime-hero {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: 14px;
+  }
+  .anime-hero-glyph {
+    width: 58px;
+    height: 65px;
+    font-size: 30px;
+  }
+  .anime-hero-copy {
+    min-width: calc(100% - 78px);
+  }
+  .anime-hero-copy h2 {
+    font-size: 17px;
+  }
+  .anime-title-meta {
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .canon-toggle {
+    margin-left: 74px;
+  }
+  .season-column,
+  .episode-column {
+    padding: 12px;
+  }
+  .season-select-row {
+    gap: 6px;
+    padding: 7px;
+  }
+  .season-row-copy strong {
+    font-size: 8px;
+  }
+  .season-status {
+    font-size: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .mode-topbar {
+    height: 53px;
+    padding: 0 12px;
+  }
+  .mode-topbar .brand-word {
+    display: none;
+  }
+  .mode-nav {
+    gap: 0;
+    margin-left: 11px;
+    margin-right: auto;
+  }
+  .mode-nav-item {
+    min-width: 0;
+    gap: 5px;
+    padding: 0 8px;
+    font-size: 9px;
+  }
+  .mode-nav-item svg {
+    width: 14px;
+    height: 14px;
+  }
+  .mode-nav-item kbd {
+    display: none;
+  }
+  .mode-nav-item.active::after {
+    left: 7px;
+    right: 7px;
+  }
+  .mode-topbar .topbar-actions {
+    gap: 5px;
+  }
+  .quick-switch-button {
+    width: 29px;
+    justify-content: center;
+    padding: 0;
+  }
+  .quick-switch-button span,
+  .quick-switch-button kbd {
+    display: none;
+  }
+  .page-canvas {
+    min-height: calc(100vh - 53px);
+    padding: 17px 13px 34px;
+  }
+  .minimal-heading {
+    margin-bottom: 14px !important;
+  }
+  .minimal-heading h1 {
+    font-size: 20px;
+  }
+  .notification-controls {
+    gap: 8px;
+  }
+  .source-switch button {
+    min-width: 74px;
+    padding: 0 6px;
+    font-size: 9px;
+  }
+  .minimal-search {
+    width: auto;
+    flex: 1;
+  }
+  .filter-switch-row {
+    gap: 6px;
+  }
+  .filter-switch button {
+    padding: 0 7px;
+    font-size: 8px;
+  }
+  .domain-filter-list {
+    gap: 5px;
+  }
+  .domain-filter-group {
+    gap: 2px;
+  }
+  .domain-filter,
+  .subdomain-filter {
+    min-height: 23px;
+    gap: 4px;
+    padding: 0 5px;
+    font-size: 8px;
+  }
+  .signal-row {
+    min-height: 66px;
+    gap: 7px;
+  }
+  .signal-avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 9px;
+  }
+  .signal-title {
+    max-width: calc(100vw - 127px);
+    font-size: 11px;
+  }
+  .signal-bottomline {
+    gap: 6px;
+  }
+  .keyboard-hint {
+    flex-wrap: wrap;
+    gap: 7px 10px;
+  }
+  .keyboard-hint button {
+    margin-left: 0;
+  }
+  .management-page .heading-right {
+    justify-content: flex-end;
+  }
+  .management-page .managed-count {
+    display: none;
+  }
+  .management-page .management-tabs {
+    overflow-x: auto;
+  }
+  .management-page .management-tabs button {
+    min-width: max-content;
+  }
+  .management-page .quick-domain-copy {
+    min-width: 100%;
+  }
+  .track-page .media-track-card {
+    grid-template-columns: 80px minmax(0, 1fr);
+  }
+  .track-page .track-art {
+    min-height: 71px;
+  }
+  .todo-search {
+    width: 116px;
+  }
+  .todo-search input {
+    width: 82px;
+  }
+  .track-page .art-caption {
+    display: none;
+  }
+  .track-page .art-glyph {
+    font-size: 31px;
+    right: 8px;
+  }
+  .track-page .media-card-foot > span:first-child {
+    max-width: 58%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .track-page .anime-art-title {
+    font-size: 8px;
+  }
+  .track-page .anime-grid .status-badge {
+    display: none;
+  }
+  .track-page .anime-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .track-page .anime-title-meta {
+    gap: 5px;
+  }
+  .track-page .canon-toggle {
+    margin-left: 65px;
+  }
+  .track-page .episode-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .compact-tray {
+    top: 39px;
+    right: -32px;
+    width: min(315px, calc(100vw - 20px));
+  }
+}
+
+@media (max-width: 720px) {
+  .heading-right {
+    width: auto;
+    justify-content: flex-end;
+  }
+  .managed-source-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+    padding: 8px 0;
+  }
+  .managed-source-settings {
+    grid-column: 1;
+    grid-row: 2;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    padding-left: 35px;
+  }
+  .managed-source-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+  .source-editor {
+    padding-left: 0;
+  }
+  .add-source-form {
+    grid-template-columns: 1fr 1fr;
+  }
+  .form-heading {
+    flex-direction: column;
+    gap: 3px;
+  }
+  .anime-detail-actions {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+  .track-source-tabs {
+    flex-wrap: wrap;
+  }
+  .track-tabs-end {
+    margin-left: auto;
+  }
+  .backend-sync-status {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 720px) {
+  .editor-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .managed-source-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .managed-source-settings {
+    display: none;
+  }
+  .managed-source-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .category-admin-domain,
+  .category-admin-sub {
+    flex-wrap: wrap;
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+  .category-admin-sub {
+    padding-left: 18px;
+  }
+  .cursor-form,
+  .range-form {
+    align-items: stretch;
+  }
+  .cursor-form label,
+  .range-form label {
+    flex: 1;
+  }
+  .cursor-form input,
+  .range-form select {
+    width: 100%;
+  }
+}
