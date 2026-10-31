@@ -171,8 +171,7 @@ class AniStore:
         list_kind: Optional[str] = None,
         notify_release: Optional[bool] = None,
         active: Optional[bool] = None,
-        last_watched_episode: Optional[int] = None,
-        last_watched_at: Optional[int] = None,
+        canon_only: Optional[bool] = None,
     ) -> Result[Dict[str, Any], str]:
         key = await vault.get(user_id)
         if key is None:
@@ -187,14 +186,13 @@ class AniStore:
                     list = COALESCE($5, list),
                     notify_release = COALESCE($6, notify_release),
                     active = COALESCE($7, active),
-                    last_watched_episode = COALESCE($8, last_watched_episode),
-                    last_watched_at = COALESCE($9, last_watched_at)
+                    canon_only = COALESCE($8, canon_only)
                 WHERE id = $1 AND user_id = $2
                 """,
                 entry_id, user_id, label,
                 encrypt(key, label_reason) if label_reason else None,
                 list_kind, notify_release, active,
-                last_watched_episode, last_watched_at,
+                canon_only,
             )
         if result.endswith("0"):
             return Failure("entry not found")
@@ -302,14 +300,14 @@ class AniStore:
         pool = await get_pool()
         async with pool.acquire() as con:
             rows = await con.fetch(
-                "SELECT e.id, e.season_no, e.kind, e.tier, e.payload_enc, e.seen, e.created_at "
+                "SELECT e.id, e.entry_id, e.season_no, e.kind, e.tier, e.payload_enc, e.seen, e.created_at "
                 "FROM ani_events e JOIN ani_entries a ON a.id = e.entry_id "
                 "WHERE a.user_id = $1 AND ($2 OR NOT e.seen) ORDER BY e.created_at DESC",
                 user_id, include_seen,
             )
         return [
             {
-                "id": r["id"], "season_no": r["season_no"], "kind": r["kind"],
+                "id": r["id"], "entry_id": r["entry_id"], "season_no": r["season_no"], "kind": r["kind"],
                 "tier": r["tier"], "seen": r["seen"], "created_at": r["created_at"].isoformat(),
                 "payload": json.loads(decrypt(key, r["payload_enc"]) or "{}"),
             }
@@ -325,9 +323,10 @@ class AniStore:
         async with pool.acquire() as con:
             rows = await con.fetch(
                 """
-                SELECT a.id, a.title_enc, a.label, a.list, a.active, a.notify_release,
-                       a.last_watched_episode, a.last_watched_at,
-                       s.season_no, s.status, s.episodes_total, s.episodes_aired, s.state, s.watched
+                SELECT a.id, a.title_enc, a.cover_enc, a.label, a.list, a.active, a.notify_release,
+                       a.canon_only, a.cursor_season, a.cursor_episode, a.cursor_position_seconds,
+                       s.season_no, s.title_enc AS s_title_enc, s.status, s.episodes_total,
+                       s.episodes_aired, s.state, s.watched, s.start_date, s.release_date
                 FROM ani_entries a
                 LEFT JOIN ani_seasons s ON s.entry_id = a.id
                 WHERE a.user_id = $1 AND a.label != 'blocked'
@@ -341,24 +340,134 @@ class AniStore:
                 r["id"],
                 {
                     "id": r["id"], "title": decrypt(key, r["title_enc"]),
+                    "cover": decrypt(key, r["cover_enc"]),
                     "label": r["label"], "list": r["list"], "active": r["active"],
                     "notify_release": r["notify_release"],
-                    "last_watched_episode": r["last_watched_episode"],
-                    "last_watched_at": r["last_watched_at"],
+                    "canon_only": r["canon_only"],
+                    "cursor": {
+                        "season": r["cursor_season"], "episode": r["cursor_episode"],
+                        "position_seconds": r["cursor_position_seconds"],
+                    },
                     "seasons": [], "total_seasons": 0,
                 },
             )
             if r["season_no"] is not None:
                 entry["seasons"].append(
                     {
-                        "season_no": r["season_no"], "status": r["status"],
+                        "season_no": r["season_no"], "title": decrypt(key, r["s_title_enc"]),
+                        "status": r["status"],
                         "episodes_total": r["episodes_total"], "episodes_aired": r["episodes_aired"],
                         "state": r["state"], "watched": r["watched"],
+                        "start_date": r["start_date"], "release_date": r["release_date"],
                     }
                 )
         for entry in entries.values():
             entry["total_seasons"] = len(entry["seasons"])
         return list(entries.values())
+
+
+
+    # ---------------- seen events (frontend AI P1) ----------------
+    async def mark_events_seen(self, user_id: int, event_ids: List[int], seen: bool = True) -> int:
+        """Bulk seen write on the events feed, ownership-checked."""
+        if not event_ids:
+            return 0
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                """
+                UPDATE ani_events e SET seen = $3
+                FROM ani_entries a
+                WHERE a.id = e.entry_id AND a.user_id = $1 AND e.id = ANY($2)
+                """,
+                user_id, event_ids, seen,
+            )
+        return int(result.split()[-1])
+
+    # ---------------- D44 cursor (linear, fragmentation rejected) ----------------
+    async def set_cursor(
+        self,
+        user_id: int,
+        entry_id: int,
+        season: int,
+        episode: Optional[int] = None,
+        position_seconds: Optional[int] = None,
+    ) -> Result[Dict[str, Any], str]:
+        """Move the watch cursor. Linear-forward only: the new cursor must be
+        >= the old one in (season, episode) order — fragmented watching is
+        rejected by design (D44)."""
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            row = await con.fetchrow(
+                "SELECT cursor_season, cursor_episode FROM ani_entries WHERE id = $1 AND user_id = $2",
+                entry_id, user_id,
+            )
+            if row is None:
+                return Failure("entry not found")
+            season_exists = await con.fetchval(
+                "SELECT 1 FROM ani_seasons WHERE entry_id = $1 AND season_no = $2",
+                entry_id, season,
+            )
+            if not season_exists:
+                return Failure(f"season {season} not in this entry's chain")
+            old = (row["cursor_season"] or 0, row["cursor_episode"] or 0)
+            new = (season, episode or 0)
+            if new < old:
+                return Failure(
+                    f"cursor may only move forward (currently s{old[0]}e{old[1]}, rejected s{new[0]}e{new[1]})"
+                )
+            await con.execute(
+                "UPDATE ani_entries SET cursor_season = $3, cursor_episode = $4, "
+                "cursor_position_seconds = $5 WHERE id = $1 AND user_id = $2",
+                entry_id, user_id, season, episode, position_seconds,
+            )
+        return Success({"season": season, "episode": episode, "position_seconds": position_seconds})
+
+    async def mark_range(
+        self, user_id: int, entry_id: int, from_season: int, to_season: int
+    ) -> Result[Dict[str, Any], str]:
+        """'I watched from season X to season Y' in one action (D44/D43
+        Easy Completion): flags every season in the range watched and moves
+        the cursor to the end of to_season."""
+        if from_season > to_season:
+            return Failure("from_season must be <= to_season")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            async with con.transaction():
+                owner = await con.fetchval(
+                    "SELECT 1 FROM ani_entries WHERE id = $1 AND user_id = $2", entry_id, user_id
+                )
+                if not owner:
+                    return Failure("entry not found")
+                result = await con.execute(
+                    "UPDATE ani_seasons SET watched = TRUE "
+                    "WHERE entry_id = $1 AND season_no BETWEEN $2 AND $3",
+                    entry_id, from_season, to_season,
+                )
+                last_ep = await con.fetchval(
+                    "SELECT episodes_total FROM ani_seasons WHERE entry_id = $1 AND season_no = $2",
+                    entry_id, to_season,
+                )
+                await con.execute(
+                    "UPDATE ani_entries SET cursor_season = $3, cursor_episode = $4, "
+                    "cursor_position_seconds = NULL WHERE id = $1 AND user_id = $2",
+                    entry_id, user_id, to_season, last_ep,
+                )
+        return Success({
+            "watched_seasons": int(result.split()[-1]),
+            "cursor": {"season": to_season, "episode": last_ep},
+        })
+
+    async def mark_all_watched(self, user_id: int, entry_id: int) -> Result[Dict[str, Any], str]:
+        """Easy Completion: watched them all (D43)."""
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            max_season = await con.fetchval(
+                "SELECT MAX(season_no) FROM ani_seasons WHERE entry_id = $1", entry_id
+            )
+        if max_season is None:
+            return Failure("entry has no seasons")
+        return await self.mark_range(user_id, entry_id, 1, max_season)
 
 
 def _aired(video: Dict[str, Any]) -> int:

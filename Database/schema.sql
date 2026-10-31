@@ -147,8 +147,11 @@ CREATE TABLE IF NOT EXISTS ani_entries (
     list          TEXT NOT NULL DEFAULT 'watching' CHECK (list IN ('watchlist', 'confirmed', 'watching')),
     notify_release BOOLEAN NOT NULL DEFAULT FALSE,  -- D20
     active        BOOLEAN NOT NULL DEFAULT TRUE,    -- "watched S1, loved it, not continuing"
-    last_watched_episode INTEGER,
-    last_watched_at BIGINT,
+    -- D44 linear cursor (fragmented watching unsupported by design):
+    cursor_season   INTEGER,
+    cursor_episode  INTEGER,
+    cursor_position_seconds INTEGER,      -- in-episode timestamp xx:xx:xx
+    canon_only      BOOLEAN NOT NULL DEFAULT FALSE,  -- D43 label flag (display only)
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (user_id, anilist_id)
 );
