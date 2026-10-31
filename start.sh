@@ -2,6 +2,12 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# Root .env is the single source of deployment facts (owner decision).
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  set -a; source "${ROOT_DIR}/.env"; set +a
+fi
+: "${DREAMEDIA_PG_PASSWORD:?Set DREAMEDIA_PG_PASSWORD in ${ROOT_DIR}/.env (see .env.example)}"
 BACKEND_DIR="${ROOT_DIR}/Backend"
 FRONTEND_DIR="${ROOT_DIR}/Frontend"
 COMPOSE_FILE="${ROOT_DIR}/compose.yaml"

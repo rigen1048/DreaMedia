@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: dreamedia
-      POSTGRES_PASSWORD: dreamedia-local-dev   # overridden by .env in real deployments
+      POSTGRES_PASSWORD: ${DREAMEDIA_PG_PASSWORD:?Set DREAMEDIA_PG_PASSWORD in the root .env}
       POSTGRES_DB: dreamedia
     volumes:
       - pgdata:/var/lib/postgresql/data
