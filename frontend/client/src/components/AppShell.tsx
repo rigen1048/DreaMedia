@@ -15,8 +15,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [switcherQuery, setSwitcherQuery] = useState("");
   const [switcherIndex, setSwitcherIndex] = useState(0);
-  const { notifications, logout, syncError, refresh } = useMedia();
-  const unreadCount = notifications.filter((item) => item.unread).length;
+  const { bellNotifications, logout, markBellSeen, syncError, refresh } = useMedia();
+  const unreadCount = bellNotifications.filter((item) => item.unread).length;
   const activeMode = location.startsWith("/management") ? "Management" : location.startsWith("/track") ? "Todo" : "Notifications";
   const options = useMemo(() => modes.filter((mode) => mode.label.toLowerCase().includes(switcherQuery.toLowerCase())), [switcherQuery]);
 
@@ -36,11 +36,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }, [setLocation]);
 
   const navigate = (href: string) => { setLocation(href); setSwitcherOpen(false); setTrayOpen(false); setSwitcherIndex(0); };
-  const openNotification = (id: string) => {
-    const item = notifications.find((notice) => notice.id === id);
+  const openNotification = async (id: string) => {
+    const item = bellNotifications.find((notice) => notice.id === id);
     setTrayOpen(false);
-    if (item?.source === "youtube") setLocation(`/track?source=youtube&item=${encodeURIComponent(item.creator)}`);
-    else setLocation("/track?source=ani");
+    if (!item) return;
+    if (item.unread) await markBellSeen([item]);
+    if (item.origin === "record") { setLocation("/notifications"); return; }
+    if (item.source === "youtube") setLocation(`/track?source=youtube&item=${encodeURIComponent(item.creator)}`);
+    else setLocation(`/track?source=ani&item=${encodeURIComponent(item.creator)}`);
   };
 
   return <div className="app-frame">
@@ -48,7 +51,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <nav className="mode-nav" aria-label="Main modes">{modes.map(({ href, label, key, icon: Icon }) => <button key={href} className={`mode-nav-item ${activeMode === label ? "active" : ""}`} onClick={() => navigate(href)} aria-current={activeMode === label ? "page" : undefined}><Icon size={15} strokeWidth={1.8} /><span>{label}</span><kbd>{key}</kbd></button>)}</nav>
       <div className="topbar-actions"><button className="quick-switch-button" onClick={() => { setSwitcherOpen(true); setSwitcherQuery(""); setSwitcherIndex(0); }} aria-label="Quick switch"><Command size={14} /><span>Jump to</span><kbd>⌘/Ctrl K</kbd></button>
         <div className="notification-anchor"><button className={`bell-button ${trayOpen ? "bell-open" : ""}`} aria-label={`Notifications${unreadCount ? `, ${unreadCount} unseen` : ""}`} aria-expanded={trayOpen} onClick={() => { setTrayOpen(!trayOpen); setSwitcherOpen(false); }}><Bell size={18} strokeWidth={1.8} />{unreadCount > 0 && <span className="bell-count">{unreadCount}</span>}</button>
-          {trayOpen && <div className="notification-tray compact-tray"><div className="tray-header"><strong>Recent</strong><button className="icon-button small-icon" aria-label="Close notifications" onClick={() => setTrayOpen(false)}><X size={15} /></button></div><div className="tray-list">{notifications.slice(0, 5).map((item) => <button key={item.id} className={`tray-item ${item.unread ? "is-unread" : ""}`} onClick={() => openNotification(item.id)}><span className={`source-dot ${item.source === "ani" ? "ani-dot" : "yt-dot"}`} /><span className="tray-copy"><strong>{item.creator}</strong><span>{item.title}</span><small>{item.time}</small></span>{item.unread && <span className="unread-dot" />}</button>)}</div><div className="tray-footer"><span>Synced from backend</span><button className="tray-view-all" onClick={() => navigate("/notifications")}>Inbox <span>{unreadCount}</span></button></div></div>}
+          {trayOpen && <div className="notification-tray compact-tray"><div className="tray-header"><strong>Recent</strong><button className="icon-button small-icon" aria-label="Close notifications" onClick={() => setTrayOpen(false)}><X size={15} /></button></div><div className="tray-list">{bellNotifications.slice(0, 5).map((item) => <button key={item.id} className={`tray-item ${item.unread ? "is-unread" : ""}`} onClick={() => { void openNotification(item.id); }}><span className={`source-dot ${item.source === "ani" ? "ani-dot" : "yt-dot"}`} /><span className="tray-copy"><strong>{item.creator}</strong><span>{item.title}</span><small>{item.time}</small></span>{item.unread && <span className="unread-dot" />}</button>)}{bellNotifications.length === 0 && <span className="tray-empty">No notifications from the backend.</span>}</div><div className="tray-footer"><span>Synced from backend</span><button className="tray-view-all" onClick={() => navigate("/notifications")}>Inbox <span>{unreadCount}</span></button></div></div>}
         </div><button className="topbar-avatar" aria-label="Sign out" title="Sign out" onClick={() => void logout()}><LogOut size={13} /></button>
       </div>
     </header>

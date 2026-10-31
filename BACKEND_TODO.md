@@ -1,18 +1,22 @@
-# Backend TODO — frontend contract review
+# Backend follow-ups — reviewed against pulled upstream
 
-No backend source code or schema has been changed. The frontend consumes the supplied FastAPI API as it exists; the tasks below are proposals for backend-owner review.
+The user requested a backend TODO for review and explicitly asked that backend implementation remain their team's responsibility. On 2026-10-31 the existing GitHub `main` was pulled through upstream commit `b8f2aeb70ad028fc86b0e6b7877a31a937ba2c98` (“Frontend contract acceptance…”). That upstream commit implements URL resolution, read/write IDs, seen state, mode switching, channel activity, category CRUD, Ani cursor/range/Canon fields, and logout-cookie handling. This task did not author or modify those backend changes.
 
-| Priority | Requested backend work | Why the frontend needs it |
+## Remaining contract questions
+
+| Priority | Follow-up | Current behavior / frontend handling |
 |---|---|---|
-| P1 | Resolve pasted YouTube channel URLs (`/@handle`, `/featured`, `/videos`) and playlist URLs in `POST /yt/access/subscribe`, returning canonical channel ID/name/URL or playlist ID. | The current route requires `kind`, `link`, `channel_name`, and `channel_url`; Track/Wordscan need a channel ID, and Playlist needs a list ID. |
-| P1 | Add stable `video_id` and `channel_id` to `GET /yt/feed/videos`; add one/bulk ownership-checked `POST` for `yt_videos.seen`. | The current feed returns `seen` but omits IDs and has no write route, so the YouTube Todo list is read-only. |
-| P1 | Extend `GET /yt/feed/channels` to report all four subscription modes plus `active`, rank/frequency, and Wordscan terms. | The current view only joins `yt_tracking`; Playlist/Random rows can return `kind: null`, and active/rule values are absent. |
-| P1 | Add a safe ownership-checked subscription mode/rules update and separate channel active/inactive endpoint. Make switching modes transactional so stale rows are not left across `yt_tracking`, `yt_playlists`, and `yt_randomsubs`. | Existing `POST /subscribe` adds/updates mode-specific rows but does not provide a unified, exclusive type-switch or active-state API. |
-| P1 | Add domain/subdomain list-all (including unused), create, rename, and delete routes. | Current sidebar only exposes categories associated with channels; assignment can create categories and category activation exists, but no standalone CRUD or quick rename exists. |
-| P1 | Add `entry_id` to `GET /ani/feed/events` and an ownership-checked seen-state mutation. | Current Ani events have `seen` but cannot be marked seen through REST and cannot reliably link back to the tracked anime. |
-| P1 | Persist an independent Ani `canon_only` preference and expose it in management reads and entry updates. | The current `label` field is lifecycle state (`none/completed/blocked`) and should not be repurposed as a canon preference. |
-| P1 | Fix `POST /auth/logout` to read the `dreamedia` session cookie instead of a query parameter. | The frontend can clear its own session view and browser cookie, but the current handler cannot invalidate the server-side token from a normal cookie-authenticated request. |
-| P2 | Extend Ani management reads with season title and cover/release metadata. | Current management response has counts, state, and watched flags, but omits display metadata. |
-| P2 | Decide whether per-episode watched records belong in the backend model/API. | Current Anime API supports season-level watched and entry-level `last_watched_episode` only. The frontend uses those existing semantics. |
+| P2 | Add a backend producer for rows in the `/notifications` history table, or define whether the bell should only aggregate YouTube/Ani source feeds. | The pulled backend exposes `GET /notifications` and `POST /notifications/seen`, but a repository search found no code inserting into `notifications`. The frontend bell therefore also includes real feed items and shows any history records that do exist. |
+| P2 | Decide whether arbitrary per-episode watched history is desired. | The current API deliberately models a forward-only `(season, episode, position_seconds)` cursor, season-level watched flags, ranges, and Complete All. The frontend uses that contract and does not claim out-of-order per-episode checkboxes. |
+| P2 | Define category-level notification-type configuration if it is still required. | Current category APIs support active/inactive, create, rename, delete, and assignment. Notification modes belong to channel subscriptions; there is no separate category notification-type field or endpoint. The frontend does not fake one. |
 
-The UI currently supports existing API operations only: auth, notification/feed reads, YouTube subscribe, channel labels/assignment/delete, category activation, Ani tracking, entry updates, season watched state, and entry deletion. Missing writes are not represented as locally persisted changes.
+## Pulled endpoints used by the frontend
+
+- YouTube URL intake and server-side resolution: `POST /yt/access/subscribe` with `{kind, link, words?, rank?}`; accepted channel handles/URLs and playlist URLs are resolved by the backend.
+- YouTube feed identity/read state: `GET /yt/feed/videos`, `GET /yt/feed/sidebar`, `GET /yt/feed/channels`; `POST /yt/access/videos/seen`.
+- YouTube management: `POST /yt/access/channels/{id}/mode`, `/active`, `/label`, `/assign`, and `/delete`; `GET /yt/access/categories`; `POST /yt/access/categories`, `/categories/rename`, `/categories/delete`, and `/category/active`.
+- Notification history: `GET /notifications`; `POST /notifications/seen`.
+- Ani events and tracking: `GET /ani/feed/events`, `GET /ani/feed/management`; `POST /ani/access/events/seen`, `/track`, `/entries/{id}`, `/entries/{id}/cursor`, `/entries/{id}/range`, `/entries/{id}/watched-all`, `/entries/{id}/seasons/{season_no}/watched`, and `/entries/{id}/delete`.
+- Auth: `POST /auth/login`, `/signup`, `/logout`; logout reads and invalidates the `dreamedia` cookie.
+
+The original DreaMedia FastAPI/Postgres service remains authoritative. No duplicate database, mock fallback, or backend schema is added by this frontend.
