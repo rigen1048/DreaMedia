@@ -23,9 +23,7 @@ _store = PgStore()
 
 class SubscribeBody(BaseModel):
     kind: str                      # tracking | wordscan | playlist | random
-    link: str                      # rss_id | playlist_id | channel_url
-    channel_name: str
-    channel_url: str
+    link: str                      # ANY accepted link — we resolve it (P1)
     words: Optional[List[str]] = None
     rank: str = "week"             # random only
 
@@ -48,20 +46,113 @@ class CategoryActiveBody(BaseModel):
 
 @router.post("/subscribe")
 async def subscribe(body: SubscribeBody, user_id: int = Depends(current_user_id)):
-    if body.kind in ("tracking", "wordscan"):
-        result = await _store.add_tracking(
-            user_id, body.link, body.channel_name, body.channel_url,
-            kind=body.kind, words=body.words,
-        )
-    elif body.kind == "playlist":
-        result = await _store.add_playlist(user_id, body.link, body.channel_name, body.channel_url)
-    elif body.kind == "random":
-        result = await _store.add_random(user_id, body.channel_name, body.channel_url, body.rank)
+    """Link-only subscribe (P1): we resolve channel handles/URLs ourselves.
+    Playlist subs paste a playlist link; everything else is a channel link."""
+    import asyncio
+
+    from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
+
+    if body.kind == "playlist":
+        playlist_id = parse_playlist_id(body.link)
+        if not playlist_id:
+            return {"ok": False, "error": "could not extract a playlist id from that link"}
+        info = await asyncio.to_thread(resolve_channel, body.link.split("?")[0])
+        name, url = (info.unwrap().name, info.unwrap().url) if not isinstance(info, Failure) else ("Playlist", body.link)
+        result = await _store.add_playlist(user_id, playlist_id, name, url)
+    elif body.kind in ("tracking", "wordscan", "random"):
+        info = await asyncio.to_thread(resolve_channel, body.link)
+        if isinstance(info, Failure):
+            return {"ok": False, "error": info.failure()}
+        resolved = info.unwrap()
+        if body.kind in ("tracking", "wordscan"):
+            result = await _store.add_tracking(
+                user_id, resolved.rss_id, resolved.name, resolved.url,
+                kind=body.kind, words=body.words,
+            )
+        else:
+            result = await _store.add_random(user_id, resolved.name, resolved.url, body.rank)
     else:
         return {"ok": False, "error": f"unknown kind: {body.kind}"}
     if isinstance(result, Failure):
         return {"ok": False, "error": result.failure()}
     return {"ok": True, "channel_id": result.unwrap()}
+
+
+class SeenBody(BaseModel):
+    video_ids: List[int]
+    seen: bool = True
+
+
+class SwitchModeBody(BaseModel):
+    kind: str
+    words: Optional[List[str]] = None
+    rank: Optional[str] = None
+
+
+class ActiveBody(BaseModel):
+    active: bool
+
+
+class CategoryBody(BaseModel):
+    domain: str
+    subdomain: Optional[str] = None
+
+
+class RenameBody(BaseModel):
+    domain: str
+    new_name: str
+    subdomain: Optional[str] = None
+
+
+@router.post("/videos/seen")
+async def mark_seen(body: SeenBody, user_id: int = Depends(current_user_id)):
+    changed = await _store.mark_videos_seen(user_id, body.video_ids, body.seen)
+    return {"ok": True, "changed": changed}
+
+
+@router.post("/channels/{channel_id}/mode")
+async def switch_mode(channel_id: int, body: SwitchModeBody, user_id: int = Depends(current_user_id)):
+    result = await _store.switch_mode(user_id, channel_id, body.kind, body.words, body.rank)
+    if isinstance(result, Failure):
+        return {"ok": False, "error": result.failure()}
+    return {"ok": True, **result.unwrap()}
+
+
+@router.post("/channels/{channel_id}/active")
+async def set_active(channel_id: int, body: ActiveBody, user_id: int = Depends(current_user_id)):
+    result = await _store.set_channel_active(user_id, channel_id, body.active)
+    if isinstance(result, Failure):
+        return {"ok": False, "error": result.failure()}
+    return {"ok": True, **result.unwrap()}
+
+
+@router.get("/categories")
+async def list_categories(user_id: int = Depends(current_user_id)):
+    return await _store.list_categories(user_id)
+
+
+@router.post("/categories")
+async def create_category(body: CategoryBody, user_id: int = Depends(current_user_id)):
+    result = await _store.create_category(user_id, body.domain, body.subdomain)
+    if isinstance(result, Failure):
+        return {"ok": False, "error": result.failure()}
+    return {"ok": True, **result.unwrap()}
+
+
+@router.post("/categories/rename")
+async def rename_category(body: RenameBody, user_id: int = Depends(current_user_id)):
+    result = await _store.rename_category(user_id, body.domain, body.new_name, body.subdomain)
+    if isinstance(result, Failure):
+        return {"ok": False, "error": result.failure()}
+    return {"ok": True, **result.unwrap()}
+
+
+@router.post("/categories/delete")
+async def delete_category(body: CategoryBody, user_id: int = Depends(current_user_id)):
+    result = await _store.delete_category(user_id, body.domain, body.subdomain)
+    if isinstance(result, Failure):
+        return {"ok": False, "error": result.failure()}
+    return {"ok": True, **result.unwrap()}
 
 
 @router.post("/channels/{channel_id}/label")

@@ -26,7 +26,23 @@ class EntryUpdateBody(BaseModel):
     list_kind: Optional[str] = None
     notify_release: Optional[bool] = None    # D20 manual activation
     active: Optional[bool] = None            # "loved S1, not continuing"
-    last_watched_episode: Optional[int] = None
+    canon_only: Optional[bool] = None        # D43 display flag (no filler data)
+
+
+class CursorBody(BaseModel):
+    season: int
+    episode: Optional[int] = None
+    position_seconds: Optional[int] = None   # in-episode xx:xx:xx (D44)
+
+
+class RangeBody(BaseModel):
+    from_season: int
+    to_season: int
+
+
+class EventsSeenBody(BaseModel):
+    event_ids: list[int]
+    seen: bool = True
 
 
 class WatchedBody(BaseModel):
@@ -51,14 +67,11 @@ async def track(body: TrackBody, user_id: int = Depends(current_user_id)):
 
 @router.post("/entries/{entry_id}")
 async def update_entry(entry_id: int, body: EntryUpdateBody, user_id: int = Depends(current_user_id)):
-    import time
-
     result = await _store.update_entry(
         user_id, entry_id,
         label=body.label, label_reason=body.label_reason,
         list_kind=body.list_kind, notify_release=body.notify_release,
-        active=body.active, last_watched_episode=body.last_watched_episode,
-        last_watched_at=int(time.time()) if body.last_watched_episode is not None else None,
+        active=body.active, canon_only=body.canon_only,
     )
     if isinstance(result, Failure):
         return {"ok": False, "error": result.failure()}
@@ -81,3 +94,37 @@ async def delete_entry(entry_id: int, user_id: int = Depends(current_user_id)):
     if isinstance(result, Failure):
         return {"ok": False, "error": result.failure()}
     return {"ok": True, **result.unwrap()}
+
+
+@router.post("/entries/{entry_id}/cursor")
+async def set_cursor(entry_id: int, body: CursorBody, user_id: int = Depends(current_user_id)):
+    """D44 linear cursor: forward-only, fragmentation rejected by the store."""
+    result = await _store.set_cursor(
+        user_id, entry_id, body.season, body.episode, body.position_seconds
+    )
+    if isinstance(result, Failure):
+        return {"ok": False, "error": result.failure()}
+    return {"ok": True, **result.unwrap()}
+
+
+@router.post("/entries/{entry_id}/range")
+async def mark_range(entry_id: int, body: RangeBody, user_id: int = Depends(current_user_id)):
+    """'I watched from season X to Y' in one action (D43 Easy Completion)."""
+    result = await _store.mark_range(user_id, entry_id, body.from_season, body.to_season)
+    if isinstance(result, Failure):
+        return {"ok": False, "error": result.failure()}
+    return {"ok": True, **result.unwrap()}
+
+
+@router.post("/entries/{entry_id}/watched-all")
+async def mark_all(entry_id: int, user_id: int = Depends(current_user_id)):
+    result = await _store.mark_all_watched(user_id, entry_id)
+    if isinstance(result, Failure):
+        return {"ok": False, "error": result.failure()}
+    return {"ok": True, **result.unwrap()}
+
+
+@router.post("/events/seen")
+async def mark_events_seen(body: EventsSeenBody, user_id: int = Depends(current_user_id)):
+    changed = await _store.mark_events_seen(user_id, body.event_ids, body.seen)
+    return {"ok": True, "changed": changed}

@@ -1,7 +1,7 @@
 """Auth endpoints (D27): signup, login, logout. Cookie-based sessions."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Cookie, Response
 from pydantic import BaseModel
 from returns.result import Failure
 
@@ -44,7 +44,7 @@ async def login(body: Credentials, response: Response):
 
 
 @router.post("/logout")
-async def logout(response: Response, dreamedia: str | None = None):
+async def logout(response: Response, dreamedia: str | None = Cookie(default=None)):
     if dreamedia:
         await auth.logout(dreamedia)
     response.delete_cookie("dreamedia", path="/")
