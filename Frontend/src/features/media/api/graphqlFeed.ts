@@ -19,12 +19,14 @@ type GraphqlYtVideo = {
   publishedAt: number | null;
   seen: boolean;
   channel: string | null;
+  channelLogo: string | null;
 };
 
 type GraphqlYtChannel = {
   id: number;
   name: string | null;
   url: string | null;
+  logo: string | null;
   label: YtChannel["label"];
   labelReason: string | null;
   rssId: string | null;
@@ -70,12 +72,14 @@ const feedQuery = `
       publishedAt
       seen
       channel
+      channelLogo
     }
     ytSidebar { key name active subdomains { key name active } }
     ytChannels(includeBlocked: $includeBlocked) {
       id
       name
       url
+      logo
       label
       labelReason
       rssId
@@ -148,6 +152,7 @@ export const graphqlFeedApi = {
         title: video.title,
         url: video.url,
         thumbnail: video.thumbnail,
+        channel_logo: video.channelLogo,
         published_at: video.publishedAt,
         seen: video.seen,
         channel: video.channel,
@@ -157,6 +162,7 @@ export const graphqlFeedApi = {
         id: channel.id,
         name: channel.name,
         url: channel.url,
+        logo: channel.logo,
         label: channel.label,
         label_reason: channel.labelReason,
         rss_id: channel.rssId,

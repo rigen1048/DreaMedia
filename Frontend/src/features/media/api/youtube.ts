@@ -8,6 +8,7 @@ export type YtVideo = {
   title: string | null;
   url: string | null;
   thumbnail: string | null;
+  channel_logo?: string | null;
   published_at: number | null;
   seen: boolean;
   channel: string | null;
@@ -17,6 +18,7 @@ export type YtChannel = {
   id: number;
   name: string | null;
   url: string | null;
+  logo: string | null;
   label: "none" | "reserved" | "blocked";
   label_reason: string | null;
   rss_id: string | null;
