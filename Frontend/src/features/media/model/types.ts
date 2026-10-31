@@ -23,7 +23,6 @@ export type MediaNotification = {
 export type BellNotification = {
   id: string;
   backendId: number;
-  origin: "record" | "feed";
   source: MediaSource | null;
   media: string;
   kind: string;
@@ -32,6 +31,7 @@ export type BellNotification = {
   summary: string;
   time: string;
   unread: boolean;
+  pushed: boolean;
   timestamp: number;
 };
 

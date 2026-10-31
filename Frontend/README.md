@@ -1,6 +1,12 @@
 # Frontend
 
-`Frontend/` is a peer of `Backend/`, not a subdirectory of it. This package owns presentation and browser interactions only. It reads and writes durable state through the backend's REST API and uses TanStack Query for fetching, polling, mutation feedback, and cache invalidation.
+`Frontend/` is a peer of `Backend/`, not a subdirectory of it. It owns presentation and browser interactions only. Durable data, schema, auth, feed generation, and message production remain backend-owned.
+
+## Feed and msg
+
+**Feed data and backend `msg` are different lanes.** The YouTube/Ani Feed reads through the `/graphql` supergraph (`ytFeed`, `ytSidebar`, `ytChannels`, `aniEvents`); Feed seen-state uses GraphQL mutations. The Frontend does not call REST feed endpoints to populate user-facing Feed rows.
+
+The top-right bell displays only explicit backend-originated messages from HTTP `GET /notifications`; acknowledgements use `POST /notifications/seen`. Feed rows are not converted into messages. REST is used for auth, channel/category management, and Todo state changes. Ani management metadata remains on its existing REST view because it provides richer Todo fields.
 
 ## Source map
 
@@ -13,14 +19,14 @@ Frontend/
     ├── app/                 Application composition, routes, providers, shell, shortcuts
     ├── features/
     │   ├── auth/            Login and session flows
-    │   ├── notifications/   Feed, category/mode filters, notification bell
+    │   ├── notifications/   GraphQL Feed, category/mode filters, HTTP-message bell
     │   ├── management/      Channel intake, source rows, category controls
     │   ├── todo/            YouTube queues and Ani progress tracking
-    │   └── media/           DTOs, selectors, state adapter and query bundle
-    └── shared/              HTTP transport, query keys, reusable controls/styles
+    │   └── media/           DTOs, protocol clients, selectors, queries and state adapter
+    └── shared/              HTTP/GraphQL transport, query keys, reusable controls/styles
 ```
 
-A page should compose small feature components rather than containing API, state model, and every subview in one module. Keep service DTOs distinct from screen view models. TypeScript stays strict and uses no explicit `any`.
+A page composes small feature components rather than containing API, state model, and every subview in one module. Keep service DTOs distinct from screen view models. TypeScript stays strict and uses no explicit `any`.
 
 ## Local development
 

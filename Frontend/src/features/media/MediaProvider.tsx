@@ -2,8 +2,14 @@ import { createContext, useCallback, useContext, useMemo, type ReactNode } from 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BackendError } from "../../shared/api/http";
 import { mediaQueryKeys } from "../../shared/query/mediaKeys";
-import { api } from "./api";
 import { useMediaActions } from "./useMediaActions";
+import {
+  emptyFeedBundle,
+  emptyManagementBundle,
+  fetchBackendMessages,
+  fetchFeedBundle,
+  fetchManagementBundle,
+} from "./query/mediaQueries";
 import {
   selectAnime,
   selectBellNotifications,
@@ -13,7 +19,6 @@ import {
   selectNotifications,
   selectYoutubeTracks,
 } from "./model/selectors";
-import { emptyMediaBundle, fetchMediaBundle } from "./query/mediaBundle";
 import type { MediaContextValue } from "./types";
 
 const MediaContext = createContext<MediaContextValue | null>(null);
@@ -22,61 +27,91 @@ function asMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Backend request failed.";
 }
 
+function isUnauthorized(error: unknown): boolean {
+  return error instanceof BackendError && error.status === 401;
+}
+
 type MediaProviderProps = {
   children: ReactNode;
 };
 
 export function MediaProvider({ children }: MediaProviderProps) {
   const queryClient = useQueryClient();
-  const query = useQuery({
-    queryKey: mediaQueryKeys.all,
-    queryFn: fetchMediaBundle,
+  const feedQuery = useQuery({
+    queryKey: mediaQueryKeys.feed(),
+    queryFn: fetchFeedBundle,
     refetchInterval: 30_000,
+    retry: false,
   });
-  const raw = query.data ?? emptyMediaBundle;
-  const authenticationError = query.error instanceof BackendError && query.error.status === 401;
-  const authStatus: MediaContextValue["authStatus"] = query.isLoading
-    ? "loading"
-    : authenticationError
-      ? "unauthenticated"
-      : query.isError
+  const managementQuery = useQuery({
+    queryKey: mediaQueryKeys.management(),
+    queryFn: fetchManagementBundle,
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const messagesQuery = useQuery({
+    queryKey: mediaQueryKeys.messages(),
+    queryFn: fetchBackendMessages,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+
+  const errors = [feedQuery.error, managementQuery.error, messagesQuery.error];
+  const firstError = errors.find((error): error is Error => error instanceof Error) ?? null;
+  const hasUnauthorizedError = errors.some(isUnauthorized);
+  const hasData =
+    feedQuery.data !== undefined ||
+    managementQuery.data !== undefined ||
+    messagesQuery.data !== undefined;
+  const isLoading = feedQuery.isPending || managementQuery.isPending || messagesQuery.isPending;
+  const hasError = firstError !== null;
+
+  const authStatus: MediaContextValue["authStatus"] = hasUnauthorizedError
+    ? "unauthenticated"
+    : !hasData && isLoading
+      ? "loading"
+      : !hasData && hasError
         ? "error"
         : "ready";
 
+  const refetchFeed = feedQuery.refetch;
+  const refetchManagement = managementQuery.refetch;
+  const refetchMessages = messagesQuery.refetch;
   const refresh = useCallback(async (): Promise<void> => {
-    await query.refetch();
-  }, [query]);
+    await Promise.all([refetchFeed(), refetchManagement(), refetchMessages()]);
+  }, [refetchFeed, refetchManagement, refetchMessages]);
 
   const invalidate = useCallback(async (): Promise<void> => {
     await queryClient.invalidateQueries({ queryKey: mediaQueryKeys.all });
-    await query.refetch();
-  }, [query, queryClient]);
+  }, [queryClient]);
 
   const reset = useCallback((): void => {
-    queryClient.setQueryData(mediaQueryKeys.all, emptyMediaBundle);
     queryClient.removeQueries({ queryKey: mediaQueryKeys.all });
   }, [queryClient]);
 
   const actions = useMediaActions({ invalidate, reset });
-  const channels = useMemo(() => selectChannels(raw.channels), [raw.channels]);
-  const domains = useMemo(() => selectDomains(raw.categories), [raw.categories]);
-  const categories = useMemo(() => selectCategories(raw.categories), [raw.categories]);
-  const anime = useMemo(() => selectAnime(raw.entries), [raw.entries]);
+  const feed = feedQuery.data ?? emptyFeedBundle;
+  const management = managementQuery.data ?? emptyManagementBundle;
+  const messages = messagesQuery.data ?? [];
+  const channels = useMemo(() => selectChannels(feed.channels), [feed.channels]);
+  const domains = useMemo(() => selectDomains(management.categories), [management.categories]);
+  const categories = useMemo(
+    () => selectCategories(management.categories),
+    [management.categories],
+  );
+  const anime = useMemo(() => selectAnime(management.entries), [management.entries]);
   const youtubeTracks = useMemo(
-    () => selectYoutubeTracks(channels, raw.videos),
-    [channels, raw.videos],
+    () => selectYoutubeTracks(channels, feed.videos),
+    [channels, feed.videos],
   );
   const notifications = useMemo(
-    () => selectNotifications(raw, channels, anime),
-    [anime, channels, raw],
+    () => selectNotifications(feed, channels, anime),
+    [anime, channels, feed],
   );
-  const bellNotifications = useMemo(
-    () => selectBellNotifications(raw.bell, notifications),
-    [notifications, raw.bell],
-  );
+  const bellNotifications = useMemo(() => selectBellNotifications(messages), [messages]);
+  const authError = authStatus === "error" && firstError ? asMessage(firstError) : null;
+  const syncError = authStatus === "ready" && firstError ? asMessage(firstError) : null;
   const username = null;
-  const authError = authenticationError ? null : query.isError ? asMessage(query.error) : null;
-  const syncError = authStatus === "ready" && query.isError ? asMessage(query.error) : null;
 
   const value = useMemo<MediaContextValue>(
     () => ({

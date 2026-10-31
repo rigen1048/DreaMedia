@@ -46,10 +46,6 @@ export function useYoutubeActions({ after, invalidate }: YoutubeActionOptions) {
       [after],
     ),
     deleteChannel: useCallback((id: number) => after(() => api.yt.deleteChannel(id)), [after]),
-    markVideosSeen: useCallback(
-      (ids: number[], seen = true) => after(() => api.yt.markVideosSeen(ids, seen)),
-      [after],
-    ),
     setCategoryActive: useCallback(
       (domain: string, subdomain: string | null, active: boolean) =>
         after(() => api.yt.setCategoryActive(domain, subdomain, active)),

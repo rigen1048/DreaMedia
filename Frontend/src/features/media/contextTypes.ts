@@ -40,7 +40,6 @@ export type MediaContextValue = {
   createCategory: (domain: string, subdomain: string | null) => Promise<void>;
   renameCategory: (domain: string, newName: string, subdomain: string | null) => Promise<void>;
   deleteCategory: (domain: string, subdomain: string | null) => Promise<void>;
-  markNotificationSeen: (ids: number[], seen?: boolean) => Promise<void>;
   markBellSeen: (items: BellNotification[], seen?: boolean) => Promise<void>;
   markFeedSeen: (items: MediaNotification[], seen?: boolean) => Promise<void>;
   trackAnime: (title: string, list: AniEntry["list"]) => Promise<void>;
