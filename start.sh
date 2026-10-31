@@ -1,89 +1,86 @@
 #!/usr/bin/env bash
+# DreaMedia dev launcher — UX-first, HydraWatch style.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-
-# Root .env is the single source of deployment facts (owner decision).
-if [[ -f "${ROOT_DIR}/.env" ]]; then
-  set -a; source "${ROOT_DIR}/.env"; set +a
-fi
-: "${DREAMEDIA_PG_PASSWORD:?Set DREAMEDIA_PG_PASSWORD in ${ROOT_DIR}/.env (see .env.example)}"
 BACKEND_DIR="${ROOT_DIR}/Backend"
 FRONTEND_DIR="${ROOT_DIR}/Frontend"
-COMPOSE_FILE="${ROOT_DIR}/compose.yaml"
 
-fail() {
-  printf 'DreaMedia: %s\n' "$1" >&2
+LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+LOCAL_IP=${LOCAL_IP:-127.0.0.1}
+HOSTNAME=$(hostname 2>/dev/null || echo localhost)
+
+# ---- friendly checks -------------------------------------------------------
+need() { command -v "$1" >/dev/null 2>&1 || { echo "✗ Missing '$1' — install it and rerun ./start.sh"; exit 1; }; }
+need uv
+need bun
+need docker
+
+if [[ ! -f "${ROOT_DIR}/.env" ]]; then
+  echo "✗ No .env at the repo root."
+  echo "  Fix: cp .env.example .env  → then set DREAMEDIA_PG_PASSWORD"
   exit 1
-}
-
-for command_name in docker uv bun; do
-  command -v "$command_name" >/dev/null 2>&1 || fail "Required command '$command_name' was not found. Install it, then rerun ./start.sh."
-done
-
-DOCKER=(docker)
-if ! docker info >/dev/null 2>&1; then
-  if command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
-    DOCKER=(sudo docker)
-  else
-    fail "Docker is unavailable or this user cannot access it. Start Docker or grant this user Docker access."
-  fi
+fi
+set -a; source "${ROOT_DIR}/.env"; set +a
+if [[ -z "${DREAMEDIA_PG_PASSWORD:-}" ]]; then
+  echo "✗ DREAMEDIA_PG_PASSWORD is empty in .env (it's required — see .env.example)"
+  exit 1
 fi
 
-"${DOCKER[@]}" compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required (docker compose)."
-[[ -f "${COMPOSE_FILE}" ]] || fail "Root Compose file not found: ${COMPOSE_FILE}"
+echo "=================================================="
+echo "🐴 DreaMedia is starting..."
+echo ""
+echo "   On this machine : http://localhost:3000"
+echo "   From your WiFi  : http://${LOCAL_IP}:3000"
+echo "   Backend API     : http://localhost:8000/health"
+echo "   GraphQL         : http://localhost:8000/graphql"
+echo ""
+echo "   Tip: bookmark http://${HOSTNAME}:3000"
+echo "=================================================="
 
-if [[ ! -f "${BACKEND_DIR}/.env" ]]; then
-  cp "${BACKEND_DIR}/.env.example" "${BACKEND_DIR}/.env"
-  printf 'Created Backend/.env from Backend/.env.example.\n'
+if command -v qrencode >/dev/null 2>&1; then
+  qrencode -t ansiutf8 "http://${LOCAL_IP}:3000" || true
+else
+  echo "(tip: install qrencode for a QR code here)"
 fi
+echo ""
 
-compose() {
-  "${DOCKER[@]}" compose --project-directory "${ROOT_DIR}" -f "${COMPOSE_FILE}" "$@"
-}
-
-printf 'Starting PostgreSQL from root compose.yaml...\n'
-compose up -d db
-
-ready=false
-for _ in {1..60}; do
-  if compose exec -T db pg_isready -U dreamedia -d dreamedia >/dev/null 2>&1; then
-    ready=true
-    break
-  fi
+# ---- postgres --------------------------------------------------------------
+echo "→ Starting Postgres..."
+docker compose up -d db
+echo "→ Waiting for Postgres to accept connections..."
+for _ in $(seq 1 30); do
+  if docker compose exec -T db pg_isready -U dreamedia >/dev/null 2>&1; then break; fi
   sleep 1
 done
 
-if [[ "${ready}" != true ]]; then
-  compose logs db >&2 || true
-  fail "PostgreSQL did not become ready within 60 seconds."
-fi
+# ---- backend ---------------------------------------------------------------
+echo "→ Syncing backend deps (uv)..."
+(cd "${BACKEND_DIR}" && uv sync -q)
+echo "→ Starting backend on :8000..."
+(cd "${BACKEND_DIR}" && nohup uv run uvicorn App.main:app --host 0.0.0.0 --port 8000 \
+  > "${ROOT_DIR}/.backend.log" 2>&1 & echo $! > "${ROOT_DIR}/.backend.pid")
 
-printf 'Syncing locked Python and Node dependencies...\n'
-(cd "${BACKEND_DIR}" && uv sync --frozen)
-(cd "${FRONTEND_DIR}" && bun install --frozen-lockfile)
-
-printf '\nStarting DreaMedia services.\n'
-printf 'Frontend: http://localhost:3000\n'
-printf 'Backend:  http://127.0.0.1:8000/health\n'
-printf 'Press Ctrl+C to stop FastAPI and Vite. PostgreSQL and its data volume will remain running.\n\n'
-
-(cd "${BACKEND_DIR}" && exec uv run -m App.main) &
-BACKEND_PID=$!
-(cd "${FRONTEND_DIR}" && exec bun run dev) &
-FRONTEND_PID=$!
+# ---- frontend --------------------------------------------------------------
+echo "→ Installing frontend deps (bun)..."
+(cd "${FRONTEND_DIR}" && bun install --silent)
+echo "→ Starting frontend on :3000..."
 
 cleanup() {
-  local exit_code=$?
-  trap - EXIT INT TERM
-  kill "${BACKEND_PID}" "${FRONTEND_PID}" 2>/dev/null || true
-  wait "${BACKEND_PID}" 2>/dev/null || true
-  wait "${FRONTEND_PID}" 2>/dev/null || true
-  exit "${exit_code}"
+  echo ""
+  echo "→ Stopping backend (pid $(cat "${ROOT_DIR}/.backend.pid" 2>/dev/null || echo '?'))..."
+  kill "$(cat "${ROOT_DIR}/.backend.pid" 2>/dev/null)" 2>/dev/null || true
+  rm -f "${ROOT_DIR}/.backend.pid"
+  echo "→ Postgres left running (stop it with: docker compose down)"
 }
+trap cleanup EXIT INT TERM
 
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+sleep 3
+if command -v xdg-open >/dev/null 2>&1; then
+  xdg-open "http://localhost:3000" >/dev/null 2>&1 || true
+fi
 
-wait -n "${BACKEND_PID}" "${FRONTEND_PID}"
+echo ""
+echo "✓ Done. Logs below (Ctrl+C stops the frontend + backend)."
+echo "=================================================="
+cd "${FRONTEND_DIR}" && exec bun run dev
