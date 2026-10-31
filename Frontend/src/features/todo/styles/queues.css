@@ -1,0 +1,348 @@
+/* Tracking */
+.track-page .page-heading-row {
+  margin-bottom: 25px;
+}
+.tracking-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #a4a69a;
+  font-size: 10px;
+}
+.track-source-tabs {
+  display: flex;
+  align-items: stretch;
+  min-height: 44px;
+  gap: 17px;
+  margin-bottom: 23px;
+  border-bottom: 1px solid var(--line);
+}
+.track-source-tabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+  border: 0;
+  padding: 0 7px;
+  background: transparent;
+  color: #87897e;
+  font-size: 10px;
+}
+.track-source-tabs > button.active {
+  color: var(--text);
+}
+.track-source-tabs > button.active::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--lime);
+}
+.track-source-tabs > button.active svg {
+  color: var(--lime);
+}
+.track-source-tabs > button > span:last-child {
+  display: inline-grid;
+  min-width: 17px;
+  height: 17px;
+  place-items: center;
+  padding: 0 4px;
+  border-radius: 5px;
+  color: #96988c;
+  background: #292a23;
+  font-size: 8px;
+}
+.track-tabs-end {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+.tracker-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 15px;
+}
+.tracker-section-heading .eyebrow {
+  font-size: 8px;
+}
+.tracker-section-heading h2 {
+  margin: 6px 0 0;
+  font-size: 19px;
+  letter-spacing: -0.65px;
+}
+.tracker-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #86887d;
+  font-size: 9px;
+}
+.media-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 13px;
+}
+.media-track-card {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid #38392f;
+  border-radius: 12px;
+  background: #1e1f19;
+  text-align: left;
+  transition:
+    transform 0.18s,
+    border 0.18s,
+    box-shadow 0.18s;
+}
+.media-track-card:hover {
+  transform: translateY(-3px);
+  border-color: #555747;
+  box-shadow: 0 12px 28px #0003;
+}
+.track-art {
+  min-height: 150px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 13px;
+  background: #30332a;
+}
+.track-art::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.55;
+  background:
+    radial-gradient(ellipse at 80% 22%, #ddff7a55, transparent 42%),
+    linear-gradient(135deg, transparent 35%, #0006);
+}
+.track-art::after {
+  content: "";
+  width: 170px;
+  height: 170px;
+  position: absolute;
+  right: -62px;
+  bottom: -93px;
+  border: 1px solid #ffffff22;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 18px #ffffff08,
+    0 0 0 39px #ffffff06;
+}
+.art-1::before {
+  background:
+    radial-gradient(ellipse at 75% 20%, #bea9ff77, transparent 44%),
+    linear-gradient(145deg, #3b334c, #25251f 75%);
+}
+.art-2::before {
+  background:
+    radial-gradient(ellipse at 75% 20%, #83cfff65, transparent 44%),
+    linear-gradient(145deg, #293a42, #25251f 75%);
+}
+.art-glyph {
+  position: absolute;
+  z-index: 1;
+  top: 35px;
+  right: 24px;
+  color: #ffffffdd;
+  font:
+    700 74px/1 "Space Grotesk",
+    sans-serif;
+  opacity: 0.84;
+  text-shadow: 0 8px 25px #0006;
+  transform: rotate(-5deg);
+}
+.art-platform,
+.art-caption,
+.art-arrow {
+  position: relative;
+  z-index: 2;
+}
+.art-platform {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #eeeee6;
+  font:
+    700 8px "Space Grotesk",
+    sans-serif;
+  letter-spacing: 1px;
+}
+.art-platform svg {
+  color: var(--lime);
+}
+.art-caption {
+  color: #c5c8b8;
+  font-size: 8px;
+}
+.art-caption i {
+  color: #a6c866;
+  font-style: normal;
+}
+.art-arrow {
+  align-self: flex-end;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #ffffff36;
+  border-radius: 50%;
+  color: white;
+}
+.media-card-content {
+  padding: 12px 13px 10px;
+}
+.media-card-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.media-card-title > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.media-card-title strong {
+  overflow: hidden;
+  color: #e8e9df;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.media-card-title > div span {
+  color: #84867b;
+  font-size: 8px;
+}
+.media-card-title > div span i {
+  color: #55574e;
+  font-style: normal;
+}
+.track-progress-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.track-progress-line > span {
+  height: 3px;
+  flex: 1;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #383a30;
+}
+.track-progress-line > span i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--lime);
+}
+.track-progress-line small {
+  color: #83857a;
+  font-size: 8px;
+  white-space: nowrap;
+}
+.media-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  margin-top: 11px;
+  padding-top: 9px;
+  border-top: 1px solid #2b2c24;
+}
+.media-card-foot > span:first-child,
+.open-detail {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #85877c;
+  font-size: 8px;
+  white-space: nowrap;
+}
+.media-card-foot > span:first-child svg {
+  color: #a7a99b;
+}
+.open-detail {
+  color: #c8ca91;
+}
+.media-track-card:hover .open-detail {
+  color: var(--lime);
+}
+.anime-art {
+  min-height: 162px;
+  background: linear-gradient(135deg, #433c2e, #22231d);
+}
+.anime-art::before {
+  background:
+    radial-gradient(ellipse at 75% 20%, #f3be6980, transparent 48%),
+    linear-gradient(145deg, #59472e, #24251f 80%);
+}
+.anime-art-1::before {
+  background:
+    radial-gradient(ellipse at 75% 20%, #e9876b77, transparent 45%),
+    linear-gradient(145deg, #51312b, #25241f 80%);
+}
+.anime-art-2::before {
+  background:
+    radial-gradient(ellipse at 75% 20%, #b8d6a077, transparent 45%),
+    linear-gradient(145deg, #35443b, #25241f 80%);
+}
+.anime-art-meta {
+  z-index: 2;
+  color: #f0dfc2;
+  font:
+    700 7px "Space Grotesk",
+    sans-serif;
+  letter-spacing: 1px;
+}
+.anime-art-meta i {
+  color: var(--lime);
+  font-style: normal;
+  margin: 0 3px;
+}
+.anime-art-title {
+  z-index: 2;
+  max-width: 75%;
+  margin: auto 0 5px;
+  color: #faf7eb;
+  font:
+    600 16px/1.15 "Space Grotesk",
+    sans-serif;
+  letter-spacing: -0.5px;
+  text-shadow: 0 2px 10px #0008;
+}
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 19px;
+  padding: 0 6px;
+  border: 1px solid #47483d;
+  border-radius: 4px;
+  color: #a7a89d;
+  background: #292a23;
+  font-size: 8px;
+}
+.status-badge.releasing {
+  border-color: #5b5032;
+  color: #e4c375;
+  background: #302a1d;
+}
+.status-badge.completed {
+  border-color: #475331;
+  color: var(--lime);
+  background: #282d1e;
+}
+.status-badge.watching {
+  border-color: #4d425f;
+  color: var(--violet);
+  background: #2b2533;
+}

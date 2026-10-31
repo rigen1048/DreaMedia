@@ -1,0 +1,112 @@
+/* Todo rows map exactly to available backend read/write granularity */
+.track-source-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.track-source-tabs > button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #888a7f;
+  background: transparent;
+  font-size: 9px;
+}
+.track-source-tabs > button.active {
+  border-color: #3d402f;
+  color: #e0e1d7;
+  background: #25261f;
+}
+.track-source-tabs > button > span:last-child {
+  color: #74766b;
+  font-size: 8px;
+}
+.track-tabs-end {
+  margin-left: auto;
+}
+.anime-detail-actions {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  margin: 9px 0 13px;
+}
+.anime-detail-actions label {
+  display: grid;
+  gap: 4px;
+  color: #898b80;
+  font-size: 8px;
+}
+.anime-detail-actions input {
+  width: 112px;
+}
+.anime-detail-actions .quiet-action {
+  min-height: 31px;
+  border-color: #36372f;
+}
+.danger-action {
+  color: #d89881 !important;
+}
+.todo-search {
+  min-width: 126px;
+}
+
+/* Backend-supported controls */
+.canon-toggle {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  height: 31px;
+  padding: 0 8px;
+  border: 1px solid #36372e;
+  border-radius: 6px;
+  color: #b8baae !important;
+  background: #1c1d17;
+  font-size: 9px !important;
+}
+.canon-toggle input {
+  width: 13px !important;
+  height: 13px !important;
+  accent-color: var(--lime);
+}
+.cursor-form,
+.range-form {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #34352c;
+  border-radius: 7px;
+  background: #1d1e18;
+}
+.cursor-form > span,
+.range-form > span {
+  flex: 1 0 100%;
+  color: #8b8d81;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+}
+.cursor-form label,
+.range-form label {
+  display: grid;
+  gap: 4px;
+  color: #96988d;
+  font-size: 8px;
+}
+.cursor-form input,
+.range-form select {
+  width: 86px;
+  height: 27px;
+  padding: 0 6px;
+  border: 1px solid #3a3b31;
+  border-radius: 5px;
+  color: #dedfd5;
+  background: #171813;
+  font-size: 9px;
+}

@@ -1,0 +1,297 @@
+/* Anime detail */
+.anime-hero {
+  min-height: 150px;
+  display: flex;
+  align-items: center;
+  gap: 17px;
+  position: relative;
+  overflow: hidden;
+  padding: 19px 22px;
+  margin-bottom: 20px;
+  border: 1px solid #484333;
+  border-radius: 12px;
+  background:
+    radial-gradient(ellipse at 85% 20%, #d5a85e26, transparent 38%),
+    linear-gradient(110deg, #30291f, #211f19);
+}
+.anime-hero::after {
+  content: "";
+  width: 220px;
+  height: 220px;
+  position: absolute;
+  top: -115px;
+  right: 28px;
+  border: 1px solid #f5d89e16;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 24px #f5d89e07,
+    0 0 0 50px #f5d89e05;
+}
+.anime-hero-glyph {
+  width: 78px;
+  height: 92px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  border: 1px solid #efda9d4c;
+  border-radius: 14px;
+  color: #f1d59b;
+  background: linear-gradient(145deg, #dfb86036, #fff2d208);
+  font:
+    500 40px "Space Grotesk",
+    sans-serif;
+}
+.anime-hero-copy {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+}
+.anime-hero-copy .eyebrow {
+  color: #b6a582;
+  font-size: 8px;
+}
+.anime-hero-copy .eyebrow i {
+  color: var(--lime);
+  font-style: normal;
+  padding: 0 3px;
+}
+.anime-hero-copy h2 {
+  margin: 7px 0 8px;
+  color: #f0e9d8;
+  font-size: 23px;
+  line-height: 1.1;
+  letter-spacing: -0.7px;
+}
+.anime-title-meta {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #9c998e;
+  font-size: 8px;
+}
+.anime-title-meta > span:not(.status-badge) {
+  padding-left: 9px;
+  border-left: 1px solid #554d3e;
+}
+.canon-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  position: relative;
+  z-index: 2;
+  padding: 8px 10px;
+  border: 1px solid #645d4b;
+  border-radius: 7px;
+  color: #d3c8ad;
+  background: #2d2a22aa;
+  font-size: 9px;
+}
+.canon-toggle:hover,
+.canon-toggle.active {
+  border-color: #bba767;
+  color: #f4df9e;
+  background: #3a3424;
+}
+.canon-toggle.active .canon-check {
+  border-color: #e5d08d;
+  background: #e5d08d;
+}
+.anime-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+.season-column,
+.episode-column {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #34352c;
+  border-radius: 10px;
+  background: #1e1f19;
+}
+.season-section-head {
+  align-items: center;
+}
+.season-list {
+  overflow: hidden;
+  border: 1px solid #33342b;
+  border-radius: 8px;
+}
+.season-select-row {
+  width: 100%;
+  min-height: 57px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid #2e2f27;
+  color: #888a80;
+  background: #1b1c17;
+  text-align: left;
+}
+.season-select-row:last-child {
+  border-bottom: 0;
+}
+.season-select-row:hover {
+  background: #24251f;
+}
+.season-select-row.active {
+  background: #292a22;
+  color: #d8d9cf;
+  box-shadow: inset 2px 0 var(--lime);
+}
+.season-index {
+  width: 27px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid #3d3e34;
+  border-radius: 6px;
+  color: #b6b7ac;
+  background: #24251e;
+  font:
+    600 8px "Space Grotesk",
+    sans-serif;
+}
+.season-row-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  flex: 1;
+}
+.season-row-copy strong {
+  overflow: hidden;
+  color: #d1d2c8;
+  font-size: 9px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.season-row-copy span {
+  color: #77796f;
+  font-size: 8px;
+}
+.season-row-copy i {
+  color: #55574d;
+  font-style: normal;
+  padding: 0 2px;
+}
+.season-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 19px;
+  padding: 0 6px;
+  border: 1px solid #43443a;
+  border-radius: 4px;
+  color: #9b9d91;
+  background: #282921;
+  font-size: 7px;
+  white-space: nowrap;
+}
+.season-completed {
+  border-color: #4b5736;
+  color: #bcd66d;
+  background: #292d21;
+}
+.season-releasing {
+  border-color: #5c5035;
+  color: #e1c474;
+  background: #302a20;
+}
+.season-planned {
+  border-color: #4a4255;
+  color: #c0afd8;
+  background: #292530;
+}
+.episode-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.episode-panel-head .eyebrow {
+  font-size: 8px;
+}
+.episode-panel-head h3 {
+  margin: 5px 0 0;
+  font-size: 14px;
+  letter-spacing: -0.3px;
+}
+.episode-progress-card {
+  padding: 12px;
+  border: 1px solid #35372c;
+  border-radius: 8px;
+  background: #22231c;
+}
+.episode-progress-card > div:first-child {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.episode-progress-card > div:first-child > span,
+.episode-counter > span {
+  color: #85877c;
+  font-size: 8px;
+}
+.episode-progress-card strong {
+  font:
+    600 18px "Space Grotesk",
+    sans-serif;
+}
+.episode-progress-card strong small {
+  color: #85877c;
+  font:
+    400 9px "DM Sans",
+    sans-serif;
+}
+.episode-grid-header .eyebrow {
+  font-size: 8px;
+}
+.episode-chip.completed {
+  border-color: #60713a;
+  color: #1b1c16;
+  background: var(--lime);
+  font-weight: 700;
+}
+.complete-season-button {
+  width: 100%;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 10px;
+  border: 1px solid #596638;
+  border-radius: 7px;
+  color: var(--lime);
+  background: #2a2d20;
+  font-size: 9px;
+}
+.complete-season-button:hover {
+  background: #333923;
+}
+.complete-season-button.is-done {
+  border-color: #42443a;
+  color: #929489;
+  background: #24251e;
+}
+
+/* Backend-supported controls */
+.anime-cover {
+  width: 52px;
+  height: 68px;
+  flex: 0 0 auto;
+  border: 1px solid #45463a;
+  border-radius: 8px;
+  background: center / cover #25261f;
+}
+.anime-art {
+  background-position: center;
+  background-size: cover;
+}

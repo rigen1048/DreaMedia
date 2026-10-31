@@ -1,0 +1,227 @@
+/* Management and Todo: reduce framing and enlarge the working surface */
+.management-page,
+.track-page {
+  max-width: 1020px;
+}
+.management-page .management-tabs {
+  margin: 0 0 12px;
+  padding: 3px;
+  border-radius: 7px;
+}
+.management-page .management-tabs button {
+  height: 29px;
+  gap: 6px;
+  font-size: 9px;
+}
+.management-page .management-panel {
+  border-radius: 8px;
+}
+.management-page .panel-heading {
+  align-items: center;
+  min-height: 46px;
+  padding: 8px 13px;
+}
+.management-page .panel-heading h2 {
+  margin: 0;
+  font-size: 13px;
+}
+.management-page .panel-heading p,
+.management-page .panel-heading .eyebrow {
+  display: none;
+}
+.management-page .table-search {
+  height: 29px;
+  min-width: 160px;
+}
+.management-page .management-table th {
+  height: 28px;
+}
+.management-page .management-table td {
+  height: 50px;
+}
+.management-page .channel-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+.management-page .quick-domain-card {
+  margin: 10px 12px;
+  padding: 8px;
+  border-radius: 7px;
+}
+.management-page .category-row {
+  min-height: 47px;
+}
+.management-page .add-category-row {
+  padding: 10px 12px;
+}
+.management-page .panel-footnote {
+  min-height: 32px;
+}
+.track-page .track-source-tabs {
+  min-height: 36px;
+  margin: 0 0 13px;
+}
+.todo-search {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px;
+  border: 1px solid #303129;
+  border-radius: 6px;
+  color: #77796e;
+  background: #1a1b16;
+}
+.todo-search:focus-within {
+  border-color: #646d43;
+}
+.todo-search input {
+  width: 118px;
+  border: 0;
+  outline: 0;
+  color: #e3e4da;
+  background: transparent;
+  font-size: 9px;
+}
+.todo-search input::placeholder {
+  color: #73756a;
+}
+.track-page .tracker-section-heading {
+  align-items: center;
+  margin: 0 0 8px;
+}
+.track-page .tracker-section-heading h2 {
+  margin: 0;
+  color: #dfe0d6;
+  font-size: 13px;
+  letter-spacing: -0.15px;
+}
+.track-page .tracker-count {
+  color: #77796e;
+}
+.track-page .media-card-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  border-top: 1px solid #2c2d25;
+}
+.track-page .media-track-card {
+  display: grid;
+  grid-template-columns: 122px minmax(0, 1fr);
+  align-items: stretch;
+  border: 0;
+  border-bottom: 1px solid #2c2d25;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.track-page .media-track-card:hover {
+  transform: none;
+  border-color: #3c3e33;
+  background: #1b1c17;
+  box-shadow: none;
+}
+.track-page .track-art {
+  min-height: 77px;
+  height: 100%;
+  padding: 8px;
+  border-radius: 5px;
+}
+.track-page .track-art::after {
+  width: 100px;
+  height: 100px;
+  right: -42px;
+  bottom: -61px;
+}
+.track-page .art-platform {
+  font-size: 7px;
+}
+.track-page .art-platform svg {
+  width: 13px;
+}
+.track-page .art-glyph {
+  top: 19px;
+  right: 16px;
+  font-size: 39px;
+}
+.track-page .art-caption {
+  max-width: 94px;
+  overflow: hidden;
+  font-size: 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.track-page .anime-art {
+  min-height: 77px;
+}
+.track-page .anime-glyph {
+  top: 6px;
+  right: 10px;
+  font-size: 47px;
+}
+.track-page .anime-art-meta {
+  font-size: 6px;
+}
+.track-page .anime-art-title {
+  max-width: 82%;
+  margin-bottom: 2px;
+  font-size: 10px;
+}
+.track-page .media-card-content {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 8px 12px;
+}
+.track-page .media-card-title strong {
+  font-size: 11px;
+}
+.track-page .track-progress-line {
+  margin-top: 7px;
+}
+.track-page .media-card-foot {
+  margin-top: 6px;
+  padding-top: 5px;
+}
+.track-page .track-footer-note {
+  display: none;
+}
+.track-page .anime-hero {
+  min-height: 112px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+}
+.track-page .anime-hero-glyph {
+  width: 52px;
+  height: 61px;
+  font-size: 28px;
+  border-radius: 9px;
+}
+.track-page .anime-hero-copy h2 {
+  margin: 5px 0;
+  font-size: 18px;
+}
+.track-page .season-column,
+.track-page .episode-column {
+  padding: 12px;
+  border-radius: 8px;
+}
+.track-page .season-list {
+  border-radius: 6px;
+}
+.track-page .episode-grid {
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 4px;
+}
+.track-page .episode-chip {
+  min-height: 26px;
+}
+.track-page .watchlist-summary {
+  min-height: 70px;
+  margin-bottom: 13px;
+  padding: 9px 12px;
+}
+.track-page .video-todo-row {
+  min-height: 59px;
+}

@@ -1,0 +1,144 @@
+/* Management */
+.management-page .page-heading-row {
+  margin-bottom: 24px;
+}
+.management-tabs {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 16px;
+  padding: 5px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: #1b1c17;
+}
+.management-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: #919389;
+  background: transparent;
+  font-size: 10px;
+}
+.management-tabs button:hover {
+  color: var(--text);
+}
+.management-tabs button.active {
+  border-color: #3c3e32;
+  color: var(--text);
+  background: #282920;
+}
+.management-tabs button.active svg {
+  color: var(--lime);
+}
+.management-tabs button span {
+  display: inline-grid;
+  min-width: 19px;
+  height: 18px;
+  place-items: center;
+  padding: 0 4px;
+  border-radius: 5px;
+  color: #96988c;
+  background: #32332b;
+  font-size: 8px;
+}
+.management-panel {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #1d1e18;
+}
+.panel-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 22px 22px 18px;
+}
+.panel-heading .eyebrow {
+  font-size: 8px;
+}
+.panel-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 7px 0 5px;
+  font-size: 18px;
+  letter-spacing: -0.5px;
+}
+.panel-heading p {
+  margin: 0;
+  color: #85877c;
+  font-size: 10px;
+}
+.panel-count {
+  min-width: 20px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  color: #a6a89c;
+  background: #2a2b24;
+  font:
+    600 9px "DM Sans",
+    sans-serif;
+}
+.table-search {
+  min-width: 175px;
+  height: 33px;
+}
+.table-search input {
+  width: 125px;
+}
+.mode-select {
+  min-width: 87px;
+}
+.mode-cell {
+  min-width: 150px;
+}
+.mode-edit {
+  display: grid;
+  gap: 5px;
+}
+.status-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: #a8aa9e;
+  font-size: 9px;
+}
+.switch {
+  width: 25px;
+  height: 14px;
+  position: relative;
+  border-radius: 9px;
+  background: #42443b;
+  transition: 0.18s;
+}
+.switch::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  border-radius: 50%;
+  background: #bbbdb1;
+  transition: 0.18s;
+}
+.switch.on {
+  background: #708633;
+}
+.switch.on::after {
+  left: 13px;
+  background: var(--lime);
+}
+.add-category-row .outline-button {
+  min-height: 33px;
+  font-size: 9px;
+}

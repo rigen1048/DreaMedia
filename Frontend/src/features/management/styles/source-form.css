@@ -1,0 +1,33 @@
+/* Add source dialog */
+.modal-heading .eyebrow {
+  font-size: 8px;
+}
+.modal-actions .outline-button {
+  min-height: 36px;
+}
+.modal-actions .primary-button {
+  height: 36px;
+}
+
+/* Backend-supported controls */
+.editor-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(118px, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+.editor-grid label,
+.wide-label {
+  width: auto !important;
+}
+.wide-label {
+  flex: 1 0 100%;
+  max-width: 330px;
+}
+.source-editor .form-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+}

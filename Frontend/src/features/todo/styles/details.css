@@ -1,0 +1,243 @@
+/* Detail panes */
+.detail-workspace {
+  animation: tray-in 0.18s ease-out;
+}
+.detail-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 1px 0 18px;
+  color: #75776d;
+  font-size: 9px;
+}
+.detail-breadcrumb button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: #a6a89d;
+  font-size: 9px;
+}
+.detail-breadcrumb button:hover {
+  color: var(--lime);
+}
+.detail-breadcrumb > span:last-child {
+  color: #d7d8ce;
+}
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-bottom: 17px;
+}
+.detail-channel-mark {
+  width: 47px;
+  height: 47px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #536034;
+  border-radius: 13px;
+  color: #171813;
+  background: linear-gradient(140deg, #e2ff79, #819738);
+  font:
+    700 22px "Space Grotesk",
+    sans-serif;
+}
+.detail-title-copy {
+  display: grid;
+  gap: 3px;
+  flex: 1;
+}
+.detail-title-copy .eyebrow {
+  font-size: 8px;
+}
+.detail-title-copy h2 {
+  margin: 0;
+  font-size: 19px;
+  letter-spacing: -0.6px;
+}
+.detail-title-copy > span:last-child {
+  color: #898b80;
+  font-size: 9px;
+}
+.progress-track {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: #3c3e32;
+}
+.progress-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--lime);
+  transition: width 0.25s;
+}
+.video-todo-heading,
+.season-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.video-todo-heading .eyebrow,
+.season-section-head .eyebrow {
+  font-size: 8px;
+}
+.video-todo-heading h3,
+.season-section-head h3 {
+  margin: 5px 0 0;
+  font-size: 16px;
+  letter-spacing: -0.4px;
+}
+.video-todo-heading h3 span,
+.season-section-head h3 span {
+  display: inline-grid;
+  min-width: 18px;
+  height: 17px;
+  place-items: center;
+  margin-left: 4px;
+  border-radius: 4px;
+  color: #a6a89c;
+  background: #2a2b24;
+  font:
+    600 8px "DM Sans",
+    sans-serif;
+}
+.video-todo-list {
+  border: 1px solid #33342b;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #1d1e18;
+}
+.video-todo-row {
+  min-height: 75px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #2c2d25;
+  transition: background 0.15s;
+}
+.video-todo-row:last-child {
+  border-bottom: 0;
+}
+.video-todo-row:hover {
+  background: #24251e;
+}
+.video-todo-row.completed {
+  background: #1b1c17;
+}
+.todo-check {
+  width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid #56584b;
+  border-radius: 6px;
+  color: transparent;
+  background: #22231d;
+}
+.todo-check:hover {
+  border-color: var(--lime);
+}
+.todo-check.checked {
+  border-color: #788b41;
+  color: #171813;
+  background: var(--lime);
+}
+.video-thumb {
+  width: 84px;
+  height: 48px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 6px;
+}
+.video-thumb::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(125deg, transparent, #14151088);
+}
+.video-thumb span {
+  z-index: 1;
+  color: #ffffffd9;
+  font:
+    700 22px "Space Grotesk",
+    sans-serif;
+  opacity: 0.9;
+}
+.video-thumb i {
+  position: absolute;
+  z-index: 2;
+  right: 4px;
+  bottom: 3px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  color: white;
+  background: #1113;
+  font:
+    500 7px "DM Sans",
+    sans-serif;
+  font-style: normal;
+}
+.video-todo-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  flex: 1;
+}
+.video-todo-copy strong {
+  overflow: hidden;
+  color: #dedfd6;
+  font-size: 10px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.video-todo-row.completed .video-todo-copy strong {
+  color: #8e9085;
+  text-decoration: line-through;
+  text-decoration-color: #67695e;
+}
+.video-todo-copy span {
+  color: #7f8177;
+  font-size: 8px;
+}
+.video-todo-copy span i {
+  color: #55574d;
+  font-style: normal;
+  padding: 0 3px;
+}
+.video-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #93958a;
+  font-size: 8px;
+  white-space: nowrap;
+}
+.video-status.done {
+  color: #adca60;
+}
+.play-row {
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #3a3b32;
+  border-radius: 50%;
+  color: #aaa;
+  background: transparent;
+}
+.play-row:hover {
+  color: var(--lime);
+  border-color: #646d43;
+}
