@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { useMedia, type ManagedChannel, type ManagedDomain } from "../media";
+import { api } from "../media/api";
 import { ChannelEditor } from "./ChannelEditor";
 import { errorMessage, modeLabel, type ChannelLabel } from "./model";
 
@@ -76,6 +77,21 @@ export function ChannelRow({ channel, onError }: ChannelRowProps) {
             <option value="reserved">Reserved</option>
             <option value="blocked">Blocked</option>
           </select>
+          {channel.kind === "random" && (
+            <button
+              className="quiet-action"
+              disabled={busy}
+              title="Replace the current random feed with a fresh pick now (D53)"
+              onClick={() =>
+                void run(async () => {
+                  const result = await api.yt.refreshRandom(channel.id);
+                  if (!result.ok) throw new Error(result.error ?? "Refresh failed.");
+                })
+              }
+            >
+              Refresh
+            </button>
+          )}
           <button className="quiet-action" onClick={() => setOpen((value) => !value)}>
             Edit
           </button>
