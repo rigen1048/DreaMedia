@@ -31,6 +31,7 @@ class AniDue:
     state: str
     watched: bool
     next_check_ts: Optional[int]
+    claim_token: Optional[int] = None   # claimed_at at claim time — release must match
 
 
 class AniStore:
@@ -244,7 +245,7 @@ class AniStore:
                   AND e.active AND NOT s.working
                   AND (s.next_check_ts IS NULL OR s.next_check_ts <= $1)
                 RETURNING s.entry_id, s.season_no, e.user_id, e.title_enc,
-                          s.next_check_ts,
+                          s.next_check_ts, s.claimed_at,
                           (SELECT st.state FROM ani_seasons st
                             WHERE st.entry_id = s.entry_id AND st.season_no = s.season_no) AS state,
                           (SELECT st.watched FROM ani_seasons st
@@ -257,7 +258,7 @@ class AniStore:
             key = await vault.get(r["user_id"])
             if key is None:
                 # D9 pause: release the claim so it isn't orphaned.
-                await self.release(r["entry_id"], r["season_no"])
+                await self.release(r["entry_id"], r["season_no"], r["claimed_at"])
                 continue
             due.append(
                 AniDue(
@@ -267,17 +268,29 @@ class AniStore:
                     state=r["state"] or "unknown",
                     watched=bool(r["watched"]),
                     next_check_ts=r["next_check_ts"],
+                    claim_token=r["claimed_at"],
                 )
             )
         return due
 
-    async def release(self, entry_id: int, season_no: int) -> None:
+    async def release(self, entry_id: int, season_no: int,
+                      claim_token: Optional[int] = None) -> None:
+        """With claim_token, only THAT claim is cleared — a late-finishing old
+        worker cannot clear a newer worker's claim (2026 review fix)."""
         pool = await get_pool()
         async with pool.acquire() as con:
-            await con.execute(
-                "UPDATE ani_schedule SET working = FALSE WHERE entry_id = $1 AND season_no = $2",
-                entry_id, season_no,
-            )
+            if claim_token is None:
+                await con.execute(
+                    "UPDATE ani_schedule SET working = FALSE WHERE entry_id = $1 AND season_no = $2",
+                    entry_id, season_no,
+                )
+            else:
+                await con.execute(
+                    "UPDATE ani_schedule SET working = FALSE "
+                    "WHERE entry_id = $1 AND season_no = $2 "
+                    "AND claimed_at IS NOT DISTINCT FROM $3",
+                    entry_id, season_no, claim_token,
+                )
 
     async def release_stale(self, stale_seconds: int) -> int:
         pool = await get_pool()

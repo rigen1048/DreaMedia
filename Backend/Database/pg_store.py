@@ -36,6 +36,7 @@ class PgSubscription:
     ts: Optional[int] = None
     rank: str = "day"
     counter: int = 0
+    claim_token: Optional[int] = None   # claimed_at at claim time — release must match
 
 
 class PgStore:
@@ -105,7 +106,7 @@ class PgStore:
                   AND c.label != 'reserved'           -- D22 life-phase switch
                   AND (t.ts IS NULL OR t.ts <= $1)
                 RETURNING t.channel_id, c.user_id, t.rss_id_enc, t.kind,
-                          t.word_enc, t.last_seen_enc, t.ts, t.rank, t.counter
+                          t.word_enc, t.last_seen_enc, t.ts, t.rank, t.counter, t.claimed_at, t.claimed_at
                 """,
                 now,
             )
@@ -119,7 +120,7 @@ class PgStore:
                   AND c.label != 'reserved'
                   AND (p.ts IS NULL OR p.ts <= $1)
                 RETURNING p.channel_id, c.user_id, p.playlist_id, p.last_seen,
-                          p.ts, p.rank, p.counter
+                          p.ts, p.rank, p.counter, p.claimed_at, p.claimed_at
                 """,
                 now,
             )
@@ -131,7 +132,7 @@ class PgStore:
                   AND r.active AND NOT r.working
                   AND c.label != 'reserved'
                   AND (r.ts IS NULL OR r.ts <= $1)
-                RETURNING r.channel_id, c.user_id, c.url_enc, r.ts, r.rank
+                RETURNING r.channel_id, c.user_id, c.url_enc, r.ts, r.rank, r.claimed_at
                 """,
                 now,
             )
@@ -150,6 +151,7 @@ class PgStore:
                 sub_id=r["channel_id"], user_id=r["user_id"], media="yt",
                 kind="playlist", link=r["playlist_id"], last_seen=r["last_seen"],
                 ts=r["ts"], rank=r["rank"], counter=r["counter"],
+                claim_token=r.get("claimed_at"),
             ))
         for r in rnd_rows:
             key = await vault.get(r["user_id"])
@@ -159,18 +161,27 @@ class PgStore:
             subs.append(PgSubscription(
                 sub_id=r["channel_id"], user_id=r["user_id"], media="yt",
                 kind="random", link=decrypt(key, r["url_enc"]) or "", last_seen=None,
-                ts=r["ts"], rank=r["rank"],
+                ts=r["ts"], rank=r["rank"], claim_token=r.get("claimed_at"),
             ))
         return subs
 
-    async def release(self, sub_id: int) -> None:
-        """Clear the working flag after a subscription is processed (all tables)."""
+    async def release(self, sub_id: int, claim_token: Optional[int] = None) -> None:
+        """Clear the working flag after processing. With claim_token (claimed_at
+        at claim time) only THAT claim is cleared — an old worker finishing late
+        cannot clear a newer worker's claim (2026 review fix)."""
         pool = await get_pool()
         async with pool.acquire() as con:
             for table in ("yt_tracking", "yt_playlists", "yt_randomsubs"):
-                await con.execute(
-                    f"UPDATE {table} SET working = FALSE WHERE channel_id = $1", sub_id
-                )
+                if claim_token is None:
+                    await con.execute(
+                        f"UPDATE {table} SET working = FALSE WHERE channel_id = $1", sub_id
+                    )
+                else:
+                    await con.execute(
+                        f"UPDATE {table} SET working = FALSE "
+                        "WHERE channel_id = $1 AND claimed_at IS NOT DISTINCT FROM $2",
+                        sub_id, claim_token,
+                    )
 
     async def release_stale(self, stale_seconds: int) -> int:
         """Free claims older than the stale window — keyed on claimed_at so a
@@ -242,6 +253,7 @@ class PgStore:
                     words=words_raw.split(",") if words_raw else [],
                     ts=r["ts"],
                     rank=r["rank"],
+                    claim_token=r.get("claimed_at"),
                     counter=r["counter"],
                 )
             )

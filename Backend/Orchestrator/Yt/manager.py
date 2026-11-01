@@ -15,6 +15,8 @@ import time
 
 from returns.result import Failure
 
+from Admin.restore import restore_in_progress
+
 from Admin import settings
 from Config.Hardcoded.limits import MANAGER_IDLE_SLEEP_SECONDS, WORKING_STALE_SECONDS
 from Database.pg_store import PgStore
@@ -24,6 +26,9 @@ from Utility.logs import log
 
 async def run_once(store: PgStore) -> int:
     """One pass: claim everything due, run it, release claims. Returns count."""
+    if restore_in_progress():
+        log.warning("restore in progress — yt manager idling this pass")
+        return 0
     subs = await store.claim_due()
     if not subs:
         return 0
@@ -36,7 +41,7 @@ async def run_once(store: PgStore) -> int:
         except Exception:
             log.exception("sub %s crashed", sub.sub_id)
         finally:
-            await store.release(sub.sub_id)
+            await store.release(sub.sub_id, sub.claim_token)
 
     await asyncio.gather(*(_run(sub) for sub in subs))
     return len(subs)
