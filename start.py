@@ -153,6 +153,9 @@ def restore_latest(backup_dir: Path, env) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="DreaMedia launcher (D52)")
     parser.add_argument("--fresh", action="store_true", help="backup only, no restore (clean slate)")
+    parser.add_argument("--dev", action="store_true",
+                        help="dev mode: local uvicorn + bun dev in the foreground "
+                             "(default: full docker stack — db, backend, frontend)")
     args = parser.parse_args()
 
     env = load_env()
@@ -181,9 +184,12 @@ def main() -> None:
     print(f"   GraphQL         : http://localhost:8000/graphql")
     print("=" * 50)
 
-    for tool in ("uv", "bun", "docker"):
-        if not shutil.which(tool):
-            sys.exit(f"✗ Missing '{tool}' — install it and rerun.")
+    if not shutil.which("docker"):
+        sys.exit("✗ Missing 'docker' — install it and rerun.")
+    if args.dev:
+        for tool in ("uv", "bun"):
+            if not shutil.which(tool):
+                sys.exit(f"✗ Missing '{tool}' (needed for --dev) — install it and rerun.")
 
     backup_dir = Path(env.get("BACKUP_DIR", str(ROOT / "backups")))
     keep = int(env.get("BACKUP_KEEP_LATEST", "5"))
@@ -210,7 +216,21 @@ def main() -> None:
     else:
         restore_latest(backup_dir, env)
 
-    # 5. backend deps + process
+    # 5. app services
+    if not args.dev:
+        # Default: the whole app runs in containers (D6 docker app).
+        print("→ Building + starting backend and frontend containers...")
+        run(["docker", "compose", "up", "-d", "--build", "backend", "frontend"], cwd=ROOT)
+        print()
+        print("=" * 50)
+        print(f"🐴 DreaMedia is up: http://localhost:3000"
+              + (f"  (LAN: http://{lan_ip()}:3000)" if bind == "0.0.0.0" else ""))
+        print("   logs   : docker compose logs -f")
+        print("   stop   : docker compose down")
+        print("=" * 50)
+        return
+
+    # --dev: local processes instead of containers
     print("→ Syncing backend deps (uv)...")
     run(["uv", "sync", "-q"], cwd=BACKEND)
     print(f"→ Starting backend on {bind}:8000...")
