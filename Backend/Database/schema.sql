@@ -1,5 +1,5 @@
 -- DreaMedia schema (D3: Postgres; D8/D9: per-user encrypted content).
--- Convention: columns ending _enc are bytea ciphertext (XChaCha20-Poly1305)
+-- Convention: columns ending _enc are bytea ciphertext (XSalsa20-Poly1305)
 -- encrypted with the owning user's password-derived key. The server never
 -- holds those keys on disk (D9 vault).
 
