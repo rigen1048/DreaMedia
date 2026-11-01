@@ -44,3 +44,14 @@ PG_DUMP_CANDIDATES: tuple[str, ...] = (
     "pg_dump",  # on PATH (docker image)
     "/opt/data/opt/pgsql/usr/lib/postgresql/17/bin/pg_dump",  # this dev host
 )
+
+
+# Retry backoff (2026 review: failed fetches stayed due → tight retry loop).
+# After a failure or no-new-content pass, ts = now + backoff(counter):
+# 1st miss ~1h, doubling each consecutive miss, capped at ~31 days.
+BACKOFF_BASE_SECONDS = 3600
+BACKOFF_CAP_SECONDS = 2678400
+
+
+def backoff_seconds(counter: int) -> int:
+    return min(BACKOFF_BASE_SECONDS * (2 ** max(counter - 1, 0)), BACKOFF_CAP_SECONDS)

@@ -105,7 +105,7 @@ async def test_ani_stale_claim_recovery():
     pool = await db.get_pool()
     async with pool.acquire() as con:
         await con.execute(
-            "UPDATE ani_schedule SET working = TRUE, next_check_ts = $1 "
+            "UPDATE ani_schedule SET working = TRUE, next_check_ts = $1, claimed_at = $1 "
             "WHERE entry_id IN (SELECT id FROM ani_entries WHERE user_id = $2)",
             int(time.time()) - 7200,
             user_id,

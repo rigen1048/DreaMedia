@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS yt_tracking (
     counter       INTEGER NOT NULL DEFAULT 0,
     active        BOOLEAN NOT NULL DEFAULT TRUE,
     working       BOOLEAN NOT NULL DEFAULT FALSE,
+    claimed_at    BIGINT,                -- set on claim; stale sweep keys on this, not ts
     UNIQUE (rss_hash, kind)              -- same channel may have tracking AND wordscan rows
 );
 CREATE INDEX IF NOT EXISTS idx_yt_tracking_due ON yt_tracking(ts) WHERE active AND NOT working;
@@ -91,7 +92,8 @@ CREATE TABLE IF NOT EXISTS yt_playlists (
     rank          TEXT NOT NULL DEFAULT 'day',
     counter       INTEGER NOT NULL DEFAULT 0,
     active        BOOLEAN NOT NULL DEFAULT TRUE,
-    working       BOOLEAN NOT NULL DEFAULT FALSE
+    working       BOOLEAN NOT NULL DEFAULT FALSE,
+    claimed_at    BIGINT
 );
 
 CREATE TABLE IF NOT EXISTS yt_randomsubs (
@@ -204,6 +206,7 @@ CREATE TABLE IF NOT EXISTS ani_schedule (
     season_no     INTEGER NOT NULL,
     next_check_ts BIGINT,
     working       BOOLEAN NOT NULL DEFAULT FALSE,
+    claimed_at    BIGINT,
     PRIMARY KEY (entry_id, season_no)
 );
 CREATE INDEX IF NOT EXISTS idx_ani_schedule_due ON ani_schedule(next_check_ts) WHERE NOT working;
@@ -219,6 +222,8 @@ CREATE TABLE IF NOT EXISTS ani_events (
                       'episode_postponed', 'next_sequel', 'release_confirmed',
                       'release_changed')),
     tier          TEXT NOT NULL CHECK (tier IN ('awaited', 'unwatched')),  -- D21
+    event_hash    BYTEA UNIQUE,          -- deterministic identity (random nonces
+                                         -- make ciphertext dedupe impossible)
     payload_enc   BYTEA NOT NULL,
     seen          BOOLEAN NOT NULL DEFAULT FALSE,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()

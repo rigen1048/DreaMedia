@@ -17,6 +17,8 @@ from typing import Awaitable, Callable, Dict
 
 from returns.result import Failure, Result, Success
 
+from Config.Hardcoded.limits import backoff_seconds
+
 from Config.Hardcoded.rank import RANK_INTERVALS
 from Database.pg_store import PgStore, PgSubscription
 from Gate.gate import registry as gates
@@ -50,6 +52,10 @@ async def run_subscription(store: PgStore, sub: PgSubscription) -> Result[str, s
     result = await gates.submit((sub.user_id, "yt", sub.kind), lambda: fetcher(sub.link))
     if isinstance(result, Failure):
         log.warning("fetch failed for %s (%s): %s", sub.link, sub.kind, result.failure())
+        # Backoff: without this the row stays due and retries in a tight loop
+        # (2026 review repro: failed fetch → ts unchanged → immediately re-due).
+        counter = await store.bump_counter(sub.sub_id, 1, sub.kind)
+        await store.update_schedule(sub, ts=int(time.time()) + backoff_seconds(max(counter or 1, 1)))
         return Failure(result.failure())
 
     payload = result.unwrap()
@@ -61,6 +67,11 @@ async def run_subscription(store: PgStore, sub: PgSubscription) -> Result[str, s
             msg = filtered.failure()
             if msg == "Same":
                 counter = await store.bump_counter(sub.sub_id, 1, sub.kind)
+                # Schedule the next check instead of staying immediately due
+                # (2026 review: 'Same' returned without advancing ts).
+                await store.update_schedule(
+                    sub, ts=int(time.time()) + backoff_seconds(max(counter or 1, 1))
+                )
                 log.info("nothing new for %s (counter=%s)", sub.link, counter)
                 return Success("done")
             if isinstance(msg, tuple) and msg[0] == "Not Found":
@@ -77,7 +88,10 @@ async def run_subscription(store: PgStore, sub: PgSubscription) -> Result[str, s
     if sub.kind == "wordscan":
         filtered = filter_words(payload, sub.words)
         if isinstance(filtered, Failure):
-            await store.bump_counter(sub.sub_id, 1, sub.kind)
+            counter = await store.bump_counter(sub.sub_id, 1, sub.kind)
+            await store.update_schedule(
+                sub, ts=int(time.time()) + backoff_seconds(max(counter or 1, 1))
+            )
             return Success("done")
         payload = filtered.unwrap()
 
