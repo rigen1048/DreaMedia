@@ -2,7 +2,7 @@
 
 - Key derivation: Argon2id from (password, username-salt) — derived at
   login, held only in the in-memory vault, never on disk.
-- Cipher: XChaCha20-Poly1305 (PyNaCl/libsodium) — AEAD, 192-bit nonce,
+- Cipher: XSalsa20-Poly1305 (PyNaCl/libsodium) — AEAD, 192-bit nonce,
   no nonce-reuse concerns.
 - Postgres stores only ciphertext; a sibling browsing the DB sees
   garbage without the user's password.
@@ -16,7 +16,7 @@ from argon2.low_level import Type, hash_secret_raw
 from nacl import secret, utils
 
 KEY_SIZE = secret.SecretBox.KEY_SIZE          # 32
-NONCE_SIZE = secret.SecretBox.NONCE_SIZE      # 24 (XChaCha20)
+NONCE_SIZE = secret.SecretBox.NONCE_SIZE      # 24 (XSalsa20)
 
 _ARGON2_TIME = 3
 _ARGON2_MEMORY = 65536   # 64 MiB

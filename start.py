@@ -121,6 +121,7 @@ def main() -> None:
     if access not in ("wifi", "computer"):
         sys.exit("✗ ACCESS must be 'wifi' or 'computer' (see .env.example)")
     bind = "0.0.0.0" if access == "wifi" else "127.0.0.1"
+    env.setdefault("ACCESS_HOST", bind)  # compose publish binding (D54)
 
     # Password stability: warning only (never enforcement).
     pass_sha = hashlib.sha256(env["DREAMEDIA_PG_PASSWORD"].encode()).hexdigest()

@@ -75,6 +75,25 @@ def _count_from_html(html: str) -> Result[int, str]:
 
 
 def _video_count(base_url: str) -> Result[int, str]:
+    # PRIMARY: yt-dlp flat extraction of /videos — one request, no per-item
+    # fetches, playlist_count is authoritative (806 for MrBeast, verified).
+    # The HTML scrape path returns bogus tiny counts on current YouTube
+    # (it produced Success(1) → every random pick was the newest video).
+    ydl_opts = {
+        "quiet": True, "extract_flat": "in_playlist", "no_warnings": True,
+    }
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            result = ydl.extract_info(f"{base_url}/videos", download=False)
+            if result:
+                entries = list(result.get("entries") or [])
+                count = int(result.get("playlist_count") or len(entries))
+                if count > 0:
+                    return Success(count)
+    except Exception as e:
+        log.error("yt-dlp count error: %s", e)
+
+    # FALLBACK: HTML scrape (brittle — YouTube moves its metadata rows).
     try:
         with httpx.Client(
             http2=True, headers=get_privacy_headers(), timeout=20.0,
@@ -89,20 +108,6 @@ def _video_count(base_url: str) -> Result[int, str]:
                     return result
     except Exception as e:
         log.error("HTML count request failed: %s", e)
-
-    ydl_opts = {
-        "quiet": True, "extract_flat": "in_playlist",
-        "playlist_items": "0", "no_warnings": True,
-    }
-    try:
-        with YoutubeDL(ydl_opts) as ydl:
-            result = ydl.extract_info(f"{base_url}/videos", download=False)
-            if result:
-                count = int(result.get("playlist_count") or len(result.get("entries") or []))
-                if count > 0:
-                    return Success(count)
-    except Exception as e:
-        log.error("yt-dlp count error: %s", e)
     return Failure("Could not determine video count")
 
 
