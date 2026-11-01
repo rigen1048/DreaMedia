@@ -183,6 +183,21 @@ async def category_active(body: CategoryActiveBody, user_id: int = Depends(curre
     return {"ok": True, **result.unwrap()}
 
 
+@router.post("/random/{channel_id}/refresh")
+async def random_refresh(channel_id: int, user_id: int = Depends(current_user_id)):
+    """D53: replace the current random feed with a fresh pick NOW,
+    schedule adjusted from today."""
+    from Orchestrator.Yt.pipeline import run_subscription
+
+    result = await _store.refresh_random(user_id, channel_id)
+    if isinstance(result, Failure):
+        return {"ok": False, "error": result.failure()}
+    run = await run_subscription(_store, result.unwrap())
+    if isinstance(run, Failure):
+        return {"ok": False, "error": f"refresh fetched nothing: {run.failure()}"}
+    return {"ok": True, "refreshed": channel_id}
+
+
 @router.post("/channels/{channel_id}/delete")
 async def delete(channel_id: int, user_id: int = Depends(current_user_id)):
     result = await _store.delete_channel(user_id, channel_id)

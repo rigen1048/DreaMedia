@@ -349,6 +349,32 @@ class PgStore:
         ]
 
 
+    async def refresh_random(self, user_id: int, channel_id: int) -> Result[PgSubscription, str]:
+        """D53 manual random refresh: clear this channel's random feed and
+        reschedule from today. Returns the sub for an immediate pipeline run."""
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            row = await con.fetchrow(
+                "SELECT r.rank, c.url_enc FROM yt_randomsubs r "
+                "JOIN yt_channels c ON c.id = r.channel_id "
+                "WHERE r.channel_id = $1 AND c.user_id = $2",
+                channel_id, user_id,
+            )
+            if row is None:
+                return Failure("no random subscription on this channel")
+            await con.execute("DELETE FROM yt_videos WHERE channel_id = $1", channel_id)
+            await con.execute(
+                "UPDATE yt_randomsubs SET ts = $2, working = FALSE WHERE channel_id = $1",
+                channel_id, int(time.time()),
+            )
+        return Success(PgSubscription(
+            sub_id=channel_id, user_id=user_id, media="yt", kind="random",
+            link=decrypt(key, row["url_enc"]) or "", last_seen=None, rank=row["rank"],
+        ))
+
     # ---------------- Feed tier (reads for the frontend, D16/D22) ----------------
     async def sidebar(self, user_id: int) -> Dict[str, Any]:
         """Domain → subdomains tree for the requesting user (D22: reserved

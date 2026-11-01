@@ -73,6 +73,11 @@ export const youtubeApi = {
       `/yt/access/channels/${id}/active`,
       post({ active }),
     ),
+  refreshRandom: (channelId: number) =>
+    request<{ ok: boolean; refreshed?: number; error?: string }>(
+      `/yt/access/random/${channelId}/refresh`,
+      { method: "POST" },
+    ),
   setChannelLabel: (id: number, label: YtChannel["label"], reason?: string) =>
     request<{ ok: true }>(`/yt/access/channels/${id}/label`, post({ label, reason })),
   assignChannel: (id: number, domain: string, subdomain: string | null) =>
