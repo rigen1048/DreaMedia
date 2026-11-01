@@ -21,10 +21,19 @@ from typing import Any, Dict, List
 from returns.result import Failure, Result, Success
 
 from Admin import settings
-from Admin.backup import _find_pg_dump
+from Admin.backup import _find_pg_dump, run_backup
 from Config.Hardcoded.limits import PG_DUMP_CANDIDATES
 from Database.db import dsn
 from Utility.logs import log
+
+# Global restore gate (2026 review: in-place restore with live writers is a
+# known-acknowledged hazard — now it actually pauses them). Managers check
+# restore_in_progress() each pass; the API middleware 503s mutations.
+_restore_active = False
+
+
+def restore_in_progress() -> bool:
+    return _restore_active
 
 _DUMP_RE = re.compile(r"^dreamedia-\d{8}-\d{6}-\d{6}\.dump$")
 
@@ -74,15 +83,38 @@ async def restore_backup(filename: str) -> Result[str, str]:
     if lib_dir.is_dir():
         env["LD_LIBRARY_PATH"] = f"{lib_dir}:{env.get('LD_LIBRARY_PATH', '')}"
 
-    log.warning("RESTORE started: %s (destructive)", filename)
-    proc = await asyncio.create_subprocess_exec(
-        pg_restore, "-d", dsn(), "--clean", "--if-exists", str(target),
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env=env,
-    )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        log.error("RESTORE failed: %s", stderr.decode()[-500:])
-        return Failure(f"pg_restore failed: {stderr.decode()[-400:]}")
+    # 1. Pre-restore snapshot — the tested rollback path (2026 review).
+    snapshot = await run_backup()
+    if isinstance(snapshot, Failure):
+        return Failure(f"pre-restore snapshot failed, restore refused: {snapshot.failure()}")
+    log.warning("pre-restore snapshot: %s", snapshot.unwrap())
+
+    # 2. Pause workers + writers for the restore window.
+    global _restore_active
+    _restore_active = True
+    log.warning("RESTORE started: %s (destructive; workers paused)", filename)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            pg_restore, "-d", dsn(), "--clean", "--if-exists", str(target),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            # 3. Roll back from the snapshot so the db is never left partial.
+            log.error("RESTORE failed: %s — rolling back from snapshot", stderr.decode()[-300:])
+            rb = await asyncio.create_subprocess_exec(
+                pg_restore, "-d", dsn(), "--clean", "--if-exists", snapshot.unwrap(),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+            _, rb_err = await rb.communicate()
+            if rb.returncode == 0:
+                log.warning("ROLLBACK complete: pre-restore state recovered")
+                return Failure(f"pg_restore failed (rollback ok): {stderr.decode()[-300:]}")
+            log.critical("ROLLBACK FAILED: %s", rb_err.decode()[-300:])
+            return Failure(f"pg_restore failed AND rollback failed: {stderr.decode()[-200:]}")
+    finally:
+        _restore_active = False
     log.warning("RESTORE complete: %s", filename)
     return Success(filename)

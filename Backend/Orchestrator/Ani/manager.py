@@ -11,6 +11,8 @@ import time
 
 from returns.result import Failure
 
+from Admin.restore import restore_in_progress
+
 from Admin import settings
 from Config.Hardcoded.limits import MANAGER_IDLE_SLEEP_SECONDS, WORKING_STALE_SECONDS
 from Database.ani_store import AniStore
@@ -19,6 +21,9 @@ from Utility.logs import log
 
 
 async def run_once(store: AniStore) -> int:
+    if restore_in_progress():
+        log.warning("restore in progress — ani manager idling this pass")
+        return 0
     due = await store.claim_due()
     if not due:
         return 0
@@ -31,7 +36,7 @@ async def run_once(store: AniStore) -> int:
         except Exception:
             log.exception("ani sub entry=%s s%s crashed", d.entry_id, d.season_no)
         finally:
-            await store.release(d.entry_id, d.season_no)
+            await store.release(d.entry_id, d.season_no, d.claim_token)
 
     await asyncio.gather(*(_run(d) for d in due))
     return len(due)

@@ -61,6 +61,23 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="DreaMedia", version="0.1.0", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def _restore_gate(request, call_next):
+    """During an admin restore, mutations are refused (503) and reads pass.
+    In-place restore with live writers is a corruption risk (2026 review)."""
+    from Admin.restore import restore_in_progress
+
+    if restore_in_progress() and request.method not in ("GET", "HEAD", "OPTIONS"):
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "restore in progress — try again shortly"},
+        )
+    return await call_next(request)
+
+
 app.include_router(auth_router)
 app.include_router(notifications_router)
 app.include_router(admin_router)
