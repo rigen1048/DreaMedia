@@ -92,7 +92,7 @@ async def test_stale_claim_recovery():
     async with pool.acquire() as con:
         # Simulate a crashed worker: working=true with an ancient ts.
         await con.execute(
-            "UPDATE yt_tracking SET working = TRUE, ts = $1 WHERE channel_id IN "
+            "UPDATE yt_tracking SET working = TRUE, ts = $1, claimed_at = $1 WHERE channel_id IN "
             "(SELECT id FROM yt_channels WHERE user_id = $2)",
             int(time.time()) - 7200,
             user_id,

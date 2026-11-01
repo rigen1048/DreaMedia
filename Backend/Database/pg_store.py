@@ -98,7 +98,7 @@ class PgStore:
         async with pool.acquire() as con:
             rows = await con.fetch(
                 """
-                UPDATE yt_tracking t SET working = TRUE
+                UPDATE yt_tracking t SET working = TRUE, claimed_at = EXTRACT(EPOCH FROM NOW())::BIGINT
                 FROM yt_channels c
                 WHERE c.id = t.channel_id
                   AND t.active AND NOT t.working
@@ -112,7 +112,7 @@ class PgStore:
             # Playlist + RandomSub tables: same claim discipline, plaintext ids.
             pl_rows = await con.fetch(
                 """
-                UPDATE yt_playlists p SET working = TRUE
+                UPDATE yt_playlists p SET working = TRUE, claimed_at = EXTRACT(EPOCH FROM NOW())::BIGINT
                 FROM yt_channels c
                 WHERE c.id = p.channel_id
                   AND p.active AND NOT p.working
@@ -125,7 +125,7 @@ class PgStore:
             )
             rnd_rows = await con.fetch(
                 """
-                UPDATE yt_randomsubs r SET working = TRUE
+                UPDATE yt_randomsubs r SET working = TRUE, claimed_at = EXTRACT(EPOCH FROM NOW())::BIGINT
                 FROM yt_channels c
                 WHERE c.id = r.channel_id
                   AND r.active AND NOT r.working
@@ -173,15 +173,20 @@ class PgStore:
                 )
 
     async def release_stale(self, stale_seconds: int) -> int:
-        """Free rows stuck working=true longer than stale_seconds (crash recovery)."""
+        """Free claims older than the stale window — keyed on claimed_at so a
+        crash after claiming a NEW row (ts still NULL) is recovered too, and
+        covering ALL subscription tables (2026 review: both holes reproduced)."""
+        cutoff = int(time.time()) - stale_seconds
         pool = await get_pool()
+        freed = 0
         async with pool.acquire() as con:
-            result = await con.execute(
-                "UPDATE yt_tracking SET working = FALSE "
-                "WHERE working = TRUE AND ts IS NOT NULL AND ts < $1",
-                int(time.time()) - stale_seconds,
-            )
-        freed = int(result.split()[-1])
+            for table in ("yt_tracking", "yt_playlists", "yt_randomsubs"):
+                result = await con.execute(
+                    f"UPDATE {table} SET working = FALSE "
+                    "WHERE working = TRUE AND claimed_at IS NOT NULL AND claimed_at < $1",
+                    cutoff,
+                )
+                freed += int(result.split()[-1])
         if freed:
             log.warning("released %s stale working claim(s)", freed)
         return freed
@@ -367,7 +372,8 @@ class PgStore:
                 return Failure("no random subscription on this channel")
             await con.execute("DELETE FROM yt_videos WHERE channel_id = $1", channel_id)
             await con.execute(
-                "UPDATE yt_randomsubs SET ts = $2, working = FALSE WHERE channel_id = $1",
+                "UPDATE yt_randomsubs SET ts = $2, working = FALSE, claimed_at = NULL "
+                "WHERE channel_id = $1",
                 channel_id, int(time.time()),
             )
         return Success(PgSubscription(

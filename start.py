@@ -67,11 +67,32 @@ def db_running(env) -> bool:
     return result.returncode == 0
 
 
+def pgdata_volume_exists() -> bool:
+    """A named pgdata volume = a PREVIOUS install with data. A stopped db is
+    NOT a first run — tearing it down would destroy data (critical review)."""
+    result = subprocess.run(
+        ["docker", "volume", "ls", "--format", "{{.Name}}"],
+        capture_output=True, text=True,
+    )
+    return any(name.endswith("_pgdata") for name in result.stdout.split())
+
+
 def backup(backup_dir: Path, keep: int, env) -> Path | None:
     backup_dir.mkdir(parents=True, exist_ok=True)
     if not db_running(env):
-        print("→ No running database to back up (first run or already down).")
-        return None
+        if not pgdata_volume_exists():
+            print("→ No pgdata volume: genuine first run, nothing to back up.")
+            return None
+        # Stopped but populated: bring it up and back up — never assume empty.
+        print("→ Database is stopped but a pgdata volume exists — starting it to back up...")
+        run(["docker", "compose", "up", "-d", "db"], cwd=ROOT)
+        for _ in range(30):
+            if db_running(env):
+                break
+            time.sleep(1)
+        if not db_running(env):
+            sys.exit("✗ Cannot start the existing database for backup. "
+                     "Refusing to tear down data I cannot back up.")
     stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{int(time.time() * 1e6) % 10**6:06d}"
     out = backup_dir / f"dreamedia-{stamp}.dump"
     print(f"→ Backing up Postgres → {out}")
@@ -84,6 +105,12 @@ def backup(backup_dir: Path, keep: int, env) -> Path | None:
         out.unlink(missing_ok=True)
         print(f"  ✗ BACKUP FAILED: {result.stderr.decode()[-300:]}")
         sys.exit("  Refusing to wipe without a working backup. Fix the backup, then rerun.")
+    # Validate the dump is a real archive before it becomes our only lifeline.
+    check = subprocess.run(["docker", "compose", "exec", "-T", "db", "pg_restore", "-l"],
+                           cwd=ROOT, input=out.read_bytes(), capture_output=True, env=env)
+    if check.returncode != 0:
+        out.unlink(missing_ok=True)
+        sys.exit(f"✗ Backup file failed validation (pg_restore -l). Refusing to wipe.")
     print("  ✓ backup ok")
     keep = max(keep, 2)  # hardcoded floor (D2)
     dumps = sorted(backup_dir.glob("dreamedia-*.dump"), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -94,10 +121,19 @@ def backup(backup_dir: Path, keep: int, env) -> Path | None:
 
 def restore_latest(backup_dir: Path, env) -> None:
     dumps = sorted(backup_dir.glob("dreamedia-*.dump"), key=lambda p: p.stat().st_mtime, reverse=True)
-    if not dumps:
+    latest = None
+    for candidate in dumps:
+        check = subprocess.run(["docker", "compose", "exec", "-T", "db", "pg_restore", "-l"],
+                               cwd=ROOT, input=candidate.read_bytes(), capture_output=True, env=env)
+        if check.returncode == 0:
+            latest = candidate
+            break
+        print(f"  ⚠ skipping invalid dump: {candidate.name}")
+    if latest is None:
+        if dumps:
+            sys.exit("✗ All dumps are invalid. NOT starting against an empty database.")
         print("→ No dump to restore; starting empty.")
         return
-    latest = dumps[0]
     print(f"→ Auto-restoring {latest.name} (D52)...")
     with latest.open("rb") as fh:
         result = subprocess.run(
@@ -106,9 +142,12 @@ def restore_latest(backup_dir: Path, env) -> None:
             cwd=ROOT, stdin=fh, stderr=subprocess.PIPE, env=env,
         )
     if result.returncode != 0:
-        print(f"  ⚠ restore reported issues: {result.stderr.decode()[-300:]}")
-    else:
-        print("  ✓ restore complete")
+        # A failed restore can leave the db empty or partial — do NOT start.
+        sys.exit(
+            "RESTORE FAILED: " + result.stderr.decode()[-300:] + "\n"
+            "  Not starting against an empty/partial database. Fix and rerun."
+        )
+    print("  ✓ restore complete")
 
 
 def main() -> None:

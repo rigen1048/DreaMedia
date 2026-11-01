@@ -12,10 +12,11 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import asyncpg
 from returns.result import Failure, Result, Success
 
 from Database import vault
-from Database.crypto import decrypt, encrypt
+from Database.crypto import decrypt, encrypt, index_hash
 from Database.db import get_pool
 from Model.video import FetchPayload
 from Utility.logs import log
@@ -144,20 +145,28 @@ class AniStore:
         if key is None:
             return
         blob = encrypt(key, json.dumps(payload, default=str))
+        # Deterministic event identity — ciphertext can never dedupe because
+        # every encrypt() uses a fresh random nonce (2026 review repro: 2 rows).
+        event_hash = index_hash(
+            key,
+            f"{entry_id}|{season_no}|{kind}|"
+            + json.dumps(payload, sort_keys=True, default=str),
+        )
         pool = await get_pool()
         async with pool.acquire() as con:
             exists = await con.fetchval(
-                "SELECT 1 FROM ani_events WHERE entry_id = $1 AND season_no IS NOT DISTINCT FROM $2 "
-                "AND kind = $3 AND payload_enc = $4 AND NOT seen",
-                entry_id, season_no, kind, blob,
+                "SELECT 1 FROM ani_events WHERE event_hash = $1", event_hash,
             )
             if exists:
                 return
-            await con.execute(
-                "INSERT INTO ani_events (entry_id, season_no, kind, tier, payload_enc) "
-                "VALUES ($1, $2, $3, $4, $5)",
-                entry_id, season_no, kind, tier, blob,
-            )
+            try:
+                await con.execute(
+                    "INSERT INTO ani_events (entry_id, season_no, kind, tier, event_hash, payload_enc) "
+                    "VALUES ($1, $2, $3, $4, $5, $6)",
+                    entry_id, season_no, kind, tier, event_hash, blob,
+                )
+            except asyncpg.UniqueViolationError:
+                return
         log.info("ani event: %s entry=%s season=%s tier=%s", kind, entry_id, season_no, tier)
 
     # ---------------- Access tier (D16 mutations) ----------------
@@ -229,7 +238,7 @@ class AniStore:
         async with pool.acquire() as con:
             rows = await con.fetch(
                 """
-                UPDATE ani_schedule s SET working = TRUE
+                UPDATE ani_schedule s SET working = TRUE, claimed_at = EXTRACT(EPOCH FROM NOW())::BIGINT
                 FROM ani_entries e
                 WHERE e.id = s.entry_id
                   AND e.active AND NOT s.working
@@ -275,7 +284,7 @@ class AniStore:
         async with pool.acquire() as con:
             result = await con.execute(
                 "UPDATE ani_schedule SET working = FALSE "
-                "WHERE working = TRUE AND next_check_ts IS NOT NULL AND next_check_ts < $1",
+                "WHERE working = TRUE AND claimed_at IS NOT NULL AND claimed_at < $1",
                 int(time.time()) - stale_seconds,
             )
         freed = int(result.split()[-1])

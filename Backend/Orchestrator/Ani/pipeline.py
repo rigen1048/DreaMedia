@@ -54,9 +54,11 @@ async def run_subscription(store: AniStore, due: AniDue) -> Result[str, str]:
 
     now = int(time.time())
 
-    # 2. Refresh cache, then load the stored row (holds anilist_id mapping).
-    await store.refresh_seasons(due.user_id, due.entry_id, payload)
+    # 2. Load the stored row BEFORE refreshing the cache — refreshing first
+    # would overwrite next_airing_at and the later comparison would always be
+    # equal, so next_episode_date could never fire (2026 review finding).
     stored = await store.get_season(due.entry_id, due.season_no)
+    await store.refresh_seasons(due.user_id, due.entry_id, payload)
     if stored is None:
         return Failure(f"season row vanished: entry={due.entry_id} s{due.season_no}")
     fresh = _find_season(payload, stored["anilist_id"])

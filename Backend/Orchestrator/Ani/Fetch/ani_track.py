@@ -99,14 +99,19 @@ async def ani_fetch(base_title: str) -> Result[FetchPayload, str]:
         start_id = results[0]["id"]
         log.info("AniList match: %s", results[0]["title"].get("userPreferred"))
 
-        # Walk to the earliest prequel.
+        # Walk to the earliest prequel. A FAILED fetch mid-walk must abort the
+        # whole track — otherwise a truncated chain commits as "complete"
+        # (2026 review finding; `or {}` used to hide the failure).
         current_id = start_id
         visited: set[int] = set()
         while current_id not in visited:
             visited.add(current_id)
-            media = (await _graphql(client, _MEDIA_QUERY, {"id": current_id}) or {}).get("Media")
+            raw = await _graphql(client, _MEDIA_QUERY, {"id": current_id})
+            if raw is None:
+                return Failure("relation fetch failed while walking the prequel chain")
+            media = raw.get("Media")
             if not media:
-                break
+                return Failure(f"prequel media {current_id} missing")
             prequel = _relation(media, ("PREQUEL", "PREQUEL_TO"))
             if not prequel:
                 break
@@ -117,9 +122,12 @@ async def ani_fetch(base_title: str) -> Result[FetchPayload, str]:
         visited.clear()
         while current_id and current_id not in visited:
             visited.add(current_id)
-            media = (await _graphql(client, _MEDIA_QUERY, {"id": current_id}) or {}).get("Media")
+            raw = await _graphql(client, _MEDIA_QUERY, {"id": current_id})
+            if raw is None:
+                return Failure("relation fetch failed while walking the sequel chain")
+            media = raw.get("Media")
             if not media:
-                break
+                return Failure(f"sequel media {current_id} missing")
             seasons.append(media)
             current_id = _relation(media, ("SEQUEL", "SEQUEL_TO"))
 
