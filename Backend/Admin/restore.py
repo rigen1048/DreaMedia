@@ -79,9 +79,13 @@ async def restore_backup(filename: str) -> Result[str, str]:
         return Failure("pg_restore not found")
 
     env = dict(os.environ)
-    lib_dir = Path(pg_restore).parents[3] / "x86_64-linux-gnu"
-    if lib_dir.is_dir():
-        env["LD_LIBRARY_PATH"] = f"{lib_dir}:{env.get('LD_LIBRARY_PATH', '')}"
+    # Debian bundles libpq beside a versioned binary; only add the path when
+    # the layout actually has it (Homebrew, /usr/bin symlinks, containers).
+    parts = Path(pg_restore).resolve().parents
+    if len(parts) > 3:
+        lib_dir = parts[3] / "x86_64-linux-gnu"
+        if lib_dir.is_dir():
+            env["LD_LIBRARY_PATH"] = f"{lib_dir}:{env.get('LD_LIBRARY_PATH', '')}"
 
     # 1. Pre-restore snapshot — the tested rollback path (2026 review).
     snapshot = await run_backup()

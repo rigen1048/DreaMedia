@@ -44,10 +44,46 @@ def load_env() -> dict[str, str]:
 def run(cmd: list[str], *, cwd: Path | None = None, check: bool = True, quiet: bool = False) -> subprocess.CompletedProcess:
     if not quiet:
         print(f"  $ {' '.join(cmd)}")
+    # env=None inherits this process' environment, which includes the
+    # ACCESS_HOST exported in main() — compose needs it to bind ports.
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if check and result.returncode != 0:
         sys.exit(f"✗ failed: {' '.join(cmd)}\n{result.stderr[-600:]}")
     return result
+
+
+def compose_ps(env) -> None:
+    """Print the stack state — used when something refuses to come up."""
+    result = subprocess.run(
+        ["docker", "compose", "ps", "-a"], cwd=ROOT, capture_output=True, text=True, env=env,
+    )
+    print(result.stdout.strip() or "  (no containers)")
+
+
+def compose_logs(env, tail: int = 25) -> None:
+    result = subprocess.run(
+        ["docker", "compose", "logs", "--no-color", "--tail", str(tail)],
+        cwd=ROOT, capture_output=True, text=True, env=env,
+    )
+    if result.stdout.strip():
+        print(result.stdout.strip()[-4000:])
+
+
+def wait_for(url: str, seconds: int = 120) -> bool:
+    """Block until the URL answers 2xx/3xx — no fixed sleeps on startup."""
+    import urllib.error
+    import urllib.request
+
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as response:
+                if 200 <= response.status < 400:
+                    return True
+        except (urllib.error.URLError, OSError):
+            pass
+        time.sleep(1.5)
+    return False
 
 
 def lan_ip() -> str:
@@ -119,7 +155,7 @@ def backup(backup_dir: Path, keep: int, env) -> Path | None:
     return out
 
 
-def restore_latest(backup_dir: Path, env) -> None:
+def restore_latest(backup_dir: Path, env) -> bool:
     dumps = sorted(backup_dir.glob("dreamedia-*.dump"), key=lambda p: p.stat().st_mtime, reverse=True)
     latest = None
     for candidate in dumps:
@@ -133,7 +169,7 @@ def restore_latest(backup_dir: Path, env) -> None:
         if dumps:
             sys.exit("✗ All dumps are invalid. NOT starting against an empty database.")
         print("→ No dump to restore; starting empty.")
-        return
+        return False
     print(f"→ Auto-restoring {latest.name} (D52)...")
     with latest.open("rb") as fh:
         result = subprocess.run(
@@ -148,6 +184,7 @@ def restore_latest(backup_dir: Path, env) -> None:
             "  Not starting against an empty/partial database. Fix and rerun."
         )
     print("  ✓ restore complete")
+    return True
 
 
 def main() -> None:
@@ -163,7 +200,10 @@ def main() -> None:
     if access not in ("wifi", "computer"):
         sys.exit("✗ ACCESS must be 'wifi' or 'computer' (see .env.example)")
     bind = "0.0.0.0" if access == "wifi" else "127.0.0.1"
-    env.setdefault("ACCESS_HOST", bind)  # compose publish binding (D54)
+    # compose publish binding (D54). Export it for real: child processes only
+    # see os.environ, not our parsed copy.
+    os.environ.setdefault("ACCESS_HOST", bind)
+    env.setdefault("ACCESS_HOST", bind)
 
     # Password stability: warning only (never enforcement).
     pass_sha = hashlib.sha256(env["DREAMEDIA_PG_PASSWORD"].encode()).hexdigest()
@@ -187,7 +227,7 @@ def main() -> None:
     if not shutil.which("docker"):
         sys.exit("✗ Missing 'docker' — install it and rerun.")
     if args.dev:
-        for tool in ("uv", "bun"):
+        for tool in ("uv", "bun", "node"):
             if not shutil.which(tool):
                 sys.exit(f"✗ Missing '{tool}' (needed for --dev) — install it and rerun.")
 
@@ -211,26 +251,60 @@ def main() -> None:
         time.sleep(1)
 
     # 4. restore (unless --fresh)
+    restored = False
     if args.fresh:
         print("→ --fresh: skipping restore. Clean slate; your dump is safe in backups/.")
     else:
-        restore_latest(backup_dir, env)
+        restored = restore_latest(backup_dir, env)
 
     # 5. app services
     if not args.dev:
         # Default: the whole app runs in containers (D6 docker app).
-        print("→ Building + starting backend and frontend containers...")
-        run(["docker", "compose", "up", "-d", "--build", "backend", "frontend"], cwd=ROOT)
+        print("→ Building + starting the stack (db, bridge, backend, frontend)...")
+        result = subprocess.run(
+            ["docker", "compose", "up", "-d", "--build"],
+            cwd=ROOT, capture_output=True, text=True, env=env,
+        )
+        if result.returncode != 0:
+            print(result.stdout[-1500:])
+            print(result.stderr[-2500:])
+            compose_ps(env)
+            sys.exit("✗ docker compose up failed (details above)")
+
+        print("→ Waiting for the app to answer on :3000...")
+        if not wait_for("http://127.0.0.1:3000/health", seconds=180):
+            compose_ps(env)
+            compose_logs(env)
+            sys.exit("✗ The stack started but never became healthy (see logs above)")
+
+        bridge_ok = wait_for("http://127.0.0.1:3100/health", seconds=30)
+        if not restored:
+            print("→ Empty database: open the app and use 'Sign up' to create your account.")
         print()
         print("=" * 50)
         print(f"🐴 DreaMedia is up: http://localhost:3000"
               + (f"  (LAN: http://{lan_ip()}:3000)" if bind == "0.0.0.0" else ""))
+        print(f"   bell bridge    : http://127.0.0.1:3100/health "
+              + ("✓" if bridge_ok else "✗ not answering"))
         print("   logs   : docker compose logs -f")
         print("   stop   : docker compose down")
         print("=" * 50)
         return
 
     # --dev: local processes instead of containers
+    # The frontend owns the notification receiver; the backend pushes into it.
+    env.setdefault("FRONTEND_NOTIFY_URL", "http://127.0.0.1:3100/api/notifications")
+    bridge_env = dict(env)
+    bridge_env.setdefault("BRIDGE_PORT", "3100")
+    bridge_env.setdefault("BRIDGE_STORE", str(FRONTEND / ".bridge" / "inbox.json"))
+    print("→ Starting notification bridge on :3100...")
+    bridge_log = (ROOT / ".bridge.log").open("w")
+    bridge = subprocess.Popen(
+        ["node", "server/notify-bridge.mjs"],
+        cwd=FRONTEND, stdout=bridge_log, stderr=subprocess.STDOUT, env=bridge_env,
+    )
+    (ROOT / ".bridge.pid").write_text(str(bridge.pid))
+
     print("→ Syncing backend deps (uv)...")
     run(["uv", "sync", "-q"], cwd=BACKEND)
     print(f"→ Starting backend on {bind}:8000...")
@@ -242,7 +316,13 @@ def main() -> None:
     (ROOT / ".backend.pid").write_text(str(backend.pid))
 
     def cleanup(*_):
-        print("\n→ Stopping backend...")
+        print("\n→ Stopping backend + bridge...")
+        bridge.terminate()
+        try:
+            bridge.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            bridge.kill()
+        (ROOT / ".bridge.pid").unlink(missing_ok=True)
         backend.terminate()
         try:
             backend.wait(timeout=5)

@@ -45,7 +45,8 @@ async def run_backup() -> Result[str, str]:
 
     env = dict(os.environ)
     # .../usr/lib/postgresql/17/bin/pg_dump → libpq lives in .../usr/lib/x86_64-linux-gnu
-    lib_dir = Path(pg_dump).parents[3] / "x86_64-linux-gnu"
+    _parents = Path(pg_dump).parents
+    lib_dir = _parents[3] / "x86_64-linux-gnu" if len(_parents) > 3 else Path("/usr/lib")
     if lib_dir.is_dir():
         env["LD_LIBRARY_PATH"] = f"{lib_dir}:{env.get('LD_LIBRARY_PATH', '')}"
 

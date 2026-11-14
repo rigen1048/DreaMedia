@@ -1,0 +1,435 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, ExternalLink, ListVideo, Plus, Trash2 } from "lucide-react";
+import * as api from "../../app/api";
+import { useApp, useWorkspace } from "../../app/state";
+import { ConfirmButton, EmptyState, Thumb } from "../../app/ui";
+import { timeAgo, formatDate } from "../../lib/format";
+import type { PlaylistCard } from "../../lib/types";
+
+export default function Todo() {
+  const workspace = useWorkspace();
+  const { act } = useApp();
+  const [name, setName] = useState("");
+
+  const createPlaylist = async () => {
+    if (!name.trim()) return;
+    const ok = await act(() => api.ytCreateCard(name.trim()), "Playlist created");
+    if (ok) setName("");
+  };
+
+  const [listFilter, setListFilter] = useState("all");
+
+  const queue = useMemo(
+    () =>
+      workspace.aniEntries
+        .filter((entry) => entry.label === "none" && entry.active)
+        .filter((entry) => listFilter === "all" || entry.list === listFilter)
+        .sort((a, b) => {
+          const rank: Record<string, number> = {
+            watching: 0,
+            next_sequel: 1,
+            new_anime: 2,
+            watchlist: 3,
+          };
+          const byList = (rank[a.list] ?? 9) - (rank[b.list] ?? 9);
+          if (byList !== 0) return byList;
+          const next = (a.nextAiringAt ?? Number.MAX_SAFE_INTEGER) - (b.nextAiringAt ?? Number.MAX_SAFE_INTEGER);
+          if (next !== 0) return next;
+          return a.title?.localeCompare(b.title ?? "") ?? 0;
+        }),
+    [workspace.aniEntries, listFilter],
+  );
+
+  const counts = useMemo(() => {
+    const all = workspace.aniEntries.filter((entry) => entry.label === "none" && entry.active);
+    return {
+      all: all.length,
+      watching: all.filter((entry) => entry.list === "watching").length,
+      next_sequel: all.filter((entry) => entry.list === "next_sequel").length,
+      new_anime: all.filter((entry) => entry.list === "new_anime").length,
+      watchlist: all.filter((entry) => entry.list === "watchlist").length,
+    } as Record<string, number>;
+  }, [workspace.aniEntries]);
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div className="page-head__title">
+          <h1>Todo</h1>
+          <p>Playlists are standalone; the anime queue follows your management cursors.</p>
+        </div>
+        <div className="page-head__actions">
+          <div className="metrics">
+            <span>
+              <b>{workspace.ytCards.length}</b> playlists
+            </span>
+            <span className="sep" />
+            <span>
+              <b>{counts.all}</b> anime cards
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <section className="todo-section">
+        <div className="section-head">
+          <h2>Playlists</h2>
+          <span>Built from video links only — never from notification data.</span>
+          <span className="grow" />
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              className="input"
+              style={{ width: 190, height: 30, fontSize: 12 }}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="New playlist name"
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void createPlaylist();
+              }}
+            />
+            <button
+              className="btn btn--sm"
+              disabled={!name.trim()}
+              onClick={() => void createPlaylist()}
+            >
+              <Plus size={13} /> Playlist
+            </button>
+          </div>
+        </div>
+
+        {workspace.ytCards.length === 0 ? (
+          <div className="table">
+            <EmptyState
+              title="No playlists yet"
+              hint="Create a playlist, then paste YouTube links — the backend resolves titles and thumbnails."
+            />
+          </div>
+        ) : (
+          <div className="playlist-grid">
+            {workspace.ytCards.map((card) => (
+              <Playlist key={card.id} card={card} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="todo-section">
+        <div className="section-head">
+          <h2>Anime</h2>
+          <span>Every tracked entry — cursors update Management and notifications.</span>
+        </div>
+
+        <div className="filterbar" style={{ marginBottom: 10 }}>
+          {[
+            ["all", "All"],
+            ["watching", "Watching"],
+            ["next_sequel", "Next sequel"],
+            ["new_anime", "New anime"],
+            ["watchlist", "Watchlist"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              className="chipbtn"
+              data-active={listFilter === value}
+              onClick={() => setListFilter(value)}
+            >
+              {label}
+              <span className="count">{counts[value] ?? 0}</span>
+            </button>
+          ))}
+        </div>
+
+        {queue.length === 0 ? (
+          <div className="table">
+            <EmptyState
+              title="No anime cards here"
+              hint="Track anime from Management, then it appears here."
+            />
+          </div>
+        ) : (
+          <div className="queue-grid">
+            {queue.map((entry) => (
+              <QueueCard key={entry.id} entryId={entry.id} />
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function Playlist({ card }: { card: PlaylistCard }) {
+  const { refresh } = useApp();
+  const [draftName, setDraftName] = useState(card.name ?? "");
+  const [links, setLinks] = useState("");
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => setDraftName(card.name ?? ""), [card.name]);
+
+  const percent = card.total ? Math.round((card.done / card.total) * 100) : 0;
+
+  const saveName = async () => {
+    const next = draftName.trim();
+    if (!next || next === card.name) return;
+    await api.ytRenameCard(card.id, next);
+    await refresh();
+  };
+
+  const addLinks = async () => {
+    const parsed = links
+      .split(/[\s,]+/)
+      .map((link) => link.trim())
+      .filter((link) => link.length > 4);
+    if (!parsed.length) return;
+    setLinks("");
+    await api.ytAddCardItems(card.id, parsed);
+    await refresh();
+  };
+
+  return (
+    <article className="playlist-card">
+      <div className="playlist-card__head">
+        <ListVideo size={14} style={{ color: "var(--accent)" }} />
+        <input
+          className="playlist-card__name"
+          value={draftName}
+          onChange={(event) => setDraftName(event.target.value)}
+          onBlur={() => void saveName()}
+          onKeyDown={(event) => event.key === "Enter" && event.currentTarget.blur()}
+          aria-label="Playlist name"
+        />
+        <span className="count" style={{ fontSize: 10.5, color: "var(--faint)" }}>
+          {card.done}/{card.total}
+        </span>
+        <ConfirmButton
+          label={`Delete playlist ${card.name}`}
+          onConfirm={async () => {
+            await api.ytDeleteCard(card.id);
+            await refresh();
+          }}
+        >
+          <Trash2 size={12} />
+        </ConfirmButton>
+      </div>
+
+      <div className="playlist-progress">
+        <div className="progress">
+          <span style={{ width: `${percent}%` }} />
+        </div>
+        <span>{percent}%</span>
+      </div>
+
+      <div className="playlist-items">
+        {card.items.length === 0 && (
+          <div style={{ padding: "6px 2px", fontSize: 11.5, color: "var(--faint)" }}>
+            No links yet — add the first video.
+          </div>
+        )}
+        {card.items.slice(0, open ? undefined : 4).map((item) => (
+          <div className="pl-item" key={item.id} data-done={item.done}>
+            <button
+              className="check"
+              data-checked={item.done}
+              aria-label={item.done ? "Mark not done" : "Mark done"}
+              onClick={async () => {
+                await api.ytSetCardItemDone(item.id, !item.done);
+                await refresh();
+              }}
+            >
+              {item.done && <Check size={9} />}
+            </button>
+            {item.thumbnail ? (
+              <img src={item.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" />
+            ) : (
+              <span
+                style={{ width: 44, height: 26, borderRadius: 4, background: "var(--panel-3)" }}
+              />
+            )}
+            <span className="pl-item__title" title={item.title ?? item.url ?? ""}>
+              {item.title ?? item.url ?? item.videoId}
+            </span>
+            {item.url && (
+              <a
+                className="icon-btn"
+                style={{ width: 22, height: 22 }}
+                href={item.url}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Open video"
+              >
+                <ExternalLink size={11} />
+              </a>
+            )}
+            <ConfirmButton
+              label="Remove item"
+              className="icon-btn icon-btn--danger"
+              onConfirm={async () => {
+                await api.ytDeleteCardItem(item.id);
+                await refresh();
+              }}
+            >
+              <Trash2 size={11} />
+            </ConfirmButton>
+          </div>
+        ))}
+
+        {card.items.length > 4 && (
+          <button className="link-btn" onClick={() => setOpen(!open)}>
+            {open ? "Show less" : `Show all ${card.items.length}`}
+          </button>
+        )}
+      </div>
+
+      <div className="playlist-add">
+        <input
+          className="input"
+          value={links}
+          onChange={(event) => setLinks(event.target.value)}
+          placeholder="Paste links — one per line or comma separated"
+          onKeyDown={(event) => event.key === "Enter" && void addLinks()}
+        />
+        <button className="btn btn--sm" disabled={!links.trim()} onClick={() => void addLinks()}>
+          Add
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function QueueCard({ entryId }: { entryId: number }) {
+  const workspace = useWorkspace();
+  const { act } = useApp();
+  const entry = workspace.aniEntries.find((item) => item.id === entryId);
+  const ref = useRef<HTMLElement | null>(null);
+  const [highlight, setHighlight] = useState(false);
+
+  useEffect(() => {
+    const param = new URLSearchParams(window.location.search).get("entry");
+    if (param && Number(param) === entryId) {
+      setHighlight(true);
+      ref.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      const timer = window.setTimeout(() => setHighlight(false), 3600);
+      return () => window.clearTimeout(timer);
+    }
+  }, [entryId]);
+
+  if (!entry) return null;
+
+  const season = entry.cursorSeason ?? 1;
+  const episode = entry.cursorEpisode ?? 0;
+  const currentSeason = entry.seasons.find((item) => item.seasonNo === season);
+  const seasonEps = currentSeason?.episodesTotal ?? null;
+  const percent = seasonEps
+    ? Math.min(100, Math.round((episode / seasonEps) * 100))
+    : entry.episodeCount
+      ? Math.min(100, Math.round((episode / entry.episodeCount) * 100))
+      : 0;
+  const label =
+    entry.list === "watching"
+      ? "watching"
+      : entry.list === "next_sequel"
+        ? "next sequel"
+        : entry.list === "new_anime"
+          ? "new anime"
+          : (entry.watchState ?? "watchlist");
+
+  return (
+    <article
+      className="queue-card"
+      ref={ref as never}
+      style={
+        highlight
+          ? { borderColor: "var(--ani)", boxShadow: "0 0 0 2px var(--ani-soft)" }
+          : undefined
+      }
+    >
+      <Thumb className="queue-cover" src={entry.cover} alt={entry.title ?? "Anime"} />
+
+      <div className="queue-body">
+        <div className="queue-title">{entry.title}</div>
+        <div className="queue-meta">
+          <span>{entry.animeType ?? "TV"}</span>
+          <span>
+            {entry.totalSeasons || entry.seasons.length || 1} season
+            {(entry.totalSeasons || 1) > 1 ? "s" : ""}
+          </span>
+          <span>{entry.episodeCount} eps</span>
+          <span>{entry.releaseDate ? formatDate(entry.releaseDate) : "date TBA"}</span>
+          <span className="chip chip--muted" style={{ fontSize: 9, padding: "0 5px" }}>
+            {label}
+          </span>
+        </div>
+        <div className="queue-meta">
+          <span>
+            S<b>{season}</b> · E<b>{episode}</b>
+            {seasonEps ? ` / ${seasonEps}` : ""}
+          </span>
+          <span>
+            {entry.airedCount}/{entry.episodeCount} aired
+          </span>
+          {entry.nextAiringAt ? (
+            <span>
+              ep {entry.nextAiringEp} {timeAgo(entry.nextAiringAt)}
+            </span>
+          ) : (
+            <span>
+              {entry.airingTime ??
+                (entry.episodeCount && entry.airedCount >= entry.episodeCount ? "aired" : "no schedule")}
+            </span>
+          )}
+        </div>
+
+        <div className="progress progress--ani" style={{ margin: "3px 0 3px" }}>
+          <span style={{ width: `${percent}%` }} />
+        </div>
+
+        <div className="queue-actions">
+          {entry.list === "watching" || entry.list === "next_sequel" ? (
+            <>
+              <button
+                className="btn btn--sm btn--primary"
+                onClick={() =>
+                  void act(
+                    () => api.aniSetCursor(entry.id, season, episode + 1, 0),
+                    `Watched S${season} E${episode + 1}`,
+                  )
+                }
+              >
+                +1 episode
+              </button>
+              <button
+                className="btn btn--sm"
+                onClick={() =>
+                  void act(
+                    () => api.aniSetWatched(entry.id, season, true),
+                    `Season ${season} watched`,
+                  )
+                }
+              >
+                Season done
+              </button>
+              <button
+                className="btn btn--sm btn--ghost"
+                onClick={() => void act(() => api.aniFinish(entry.id), "Completed")}
+              >
+                Finish
+              </button>
+            </>
+          ) : (
+            <button
+              className="btn btn--sm btn--primary"
+              onClick={() =>
+                void act(
+                  () => api.aniUpdateEntry(entry.id, { listKind: "watching" }),
+                  "Moved to watching",
+                )
+              }
+            >
+              Start watching
+            </button>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}

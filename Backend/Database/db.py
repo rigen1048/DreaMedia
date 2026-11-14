@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 import asyncpg
 
@@ -17,15 +18,21 @@ _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 def dsn() -> str:
     """DSN from the ROOT .env (owner decision): full override wins; else the
-    password is REQUIRED — no default, fail loudly at startup."""
+    password is REQUIRED — no default, fail loudly at startup.
+
+    Host/port are overridable so the same code runs on the host (127.0.0.1)
+    and inside compose (db:5432). The password is percent-encoded so that
+    '@', ':' or '/' in it cannot corrupt the URL."""
     override = os.environ.get("DREAMEDIA_PG_DSN")
     if override:
         return override
+    host = os.environ.get("DREAMEDIA_PG_HOST", "127.0.0.1")
+    port = os.environ.get("DREAMEDIA_PG_PORT", "5432")
     password = os.environ.get("DREAMEDIA_PG_PASSWORD")
     if password:
-        return f"postgresql://dreamedia:{password}@127.0.0.1:5432/dreamedia"
+        return f"postgresql://dreamedia:{quote(password, safe='')}@{host}:{port}/dreamedia"
     # Trust-auth dev Postgres (userland installs) accepts passwordless.
-    return "postgresql://dreamedia@127.0.0.1:5432/dreamedia"
+    return f"postgresql://dreamedia@{host}:{port}/dreamedia"
 
 _pool: asyncpg.Pool | None = None
 _pool_loop: asyncio.AbstractEventLoop | None = None

@@ -44,6 +44,8 @@ class AniStore:
         cover: Optional[str],
         payload: FetchPayload,
         list_kind: str = "watching",
+        anime_type: Optional[str] = None,
+        subdomain_id: Optional[int] = None,
     ) -> Result[int, str]:
         """Insert an entry + its season cache + schedule rows."""
         key = await vault.get(user_id)
@@ -53,10 +55,11 @@ class AniStore:
         async with pool.acquire() as con:
             async with con.transaction():
                 entry_id = await con.fetchval(
-                    "INSERT INTO ani_entries (user_id, anilist_id, title_enc, cover_enc, list) "
-                    "VALUES ($1, $2, $3, $4, $5) RETURNING id",
+                    "INSERT INTO ani_entries (user_id, anilist_id, title_enc, cover_enc, list, "
+                    "anime_type, subdomain_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
                     user_id, first_season_anilist_id,
                     encrypt(key, title), encrypt(key, cover), list_kind,
+                    anime_type, subdomain_id,
                 )
                 await self._upsert_seasons(con, key, entry_id, payload)
         return Success(entry_id)
@@ -153,6 +156,7 @@ class AniStore:
             f"{entry_id}|{season_no}|{kind}|"
             + json.dumps(payload, sort_keys=True, default=str),
         )
+        title = None
         pool = await get_pool()
         async with pool.acquire() as con:
             exists = await con.fetchval(
@@ -168,7 +172,18 @@ class AniStore:
                 )
             except asyncpg.UniqueViolationError:
                 return
+            title_enc = await con.fetchval(
+                "SELECT title_enc FROM ani_entries WHERE id = $1", entry_id
+            )
+            if title_enc is not None:
+                title = decrypt(key, title_enc)
         log.info("ani event: %s entry=%s season=%s tier=%s", kind, entry_id, season_no, tier)
+        # Backend message lane: release/change notifications for the bell.
+        from Utility.notify import notify_ani_release
+
+        await notify_ani_release(
+            user_id, entry_id, title or "Anime", season_no, kind, payload
+        )
 
     # ---------------- Access tier (D16 mutations) ----------------
     async def update_entry(
@@ -182,6 +197,10 @@ class AniStore:
         notify_release: Optional[bool] = None,
         active: Optional[bool] = None,
         canon_only: Optional[bool] = None,
+        watch_state: Optional[str] = None,
+        anime_type: Optional[str] = None,
+        subdomain_id: Optional[int] = None,
+        clear_category: bool = False,
     ) -> Result[Dict[str, Any], str]:
         key = await vault.get(user_id)
         if key is None:
@@ -196,13 +215,17 @@ class AniStore:
                     list = COALESCE($5, list),
                     notify_release = COALESCE($6, notify_release),
                     active = COALESCE($7, active),
-                    canon_only = COALESCE($8, canon_only)
+                    canon_only = COALESCE($8, canon_only),
+                    watch_state = COALESCE($9, watch_state),
+                    anime_type = COALESCE($10, anime_type),
+                    subdomain_id = CASE WHEN $11 THEN NULL ELSE COALESCE($12, subdomain_id) END
                 WHERE id = $1 AND user_id = $2
                 """,
                 entry_id, user_id, label,
                 encrypt(key, label_reason) if label_reason else None,
                 list_kind, notify_release, active,
-                canon_only,
+                canon_only, watch_state, anime_type,
+                clear_category, subdomain_id,
             )
         if result.endswith("0"):
             return Failure("entry not found")
@@ -316,28 +339,8 @@ class AniStore:
 
     # ---------------- feed reads ----------------
     async def events_feed(self, user_id: int, include_seen: bool = False) -> List[Dict[str, Any]]:
-        key = await vault.get(user_id)
-        if key is None:
-            return []
-        pool = await get_pool()
-        async with pool.acquire() as con:
-            rows = await con.fetch(
-                "SELECT e.id, e.entry_id, e.season_no, e.kind, e.tier, e.payload_enc, e.seen, e.created_at "
-                "FROM ani_events e JOIN ani_entries a ON a.id = e.entry_id "
-                "WHERE a.user_id = $1 AND ($2 OR NOT e.seen) ORDER BY e.created_at DESC",
-                user_id, include_seen,
-            )
-        return [
-            {
-                "id": r["id"], "entry_id": r["entry_id"], "season_no": r["season_no"], "kind": r["kind"],
-                "tier": r["tier"], "seen": r["seen"], "created_at": r["created_at"].isoformat(),
-                "payload": json.loads(decrypt(key, r["payload_enc"]) or "{}"),
-            }
-            for r in rows
-        ]
-
-    async def management_view(self, user_id: int) -> List[Dict[str, Any]]:
-        """User Management division (D18): entries + per-season ep counts + totals (D23)."""
+        """Anime events + the owning entry's display metadata, so each event
+        is a complete notification row without a second round-trip."""
         key = await vault.get(user_id)
         if key is None:
             return []
@@ -345,16 +348,66 @@ class AniStore:
         async with pool.acquire() as con:
             rows = await con.fetch(
                 """
-                SELECT a.id, a.title_enc, a.cover_enc, a.label, a.list, a.active, a.notify_release,
+                SELECT e.id, e.entry_id, e.season_no, e.kind, e.tier, e.payload_enc, e.seen, e.created_at,
+                       a.title_enc, a.cover_enc, a.anime_type, a.notify_release, a.label,
+                       COALESCE(sd.notify, TRUE) AND COALESCE(d.notify, TRUE) AS category_notify,
+                       sd.name_enc AS sd_enc, d.name_enc AS d_enc
+                FROM ani_events e
+                JOIN ani_entries a ON a.id = e.entry_id
+                LEFT JOIN ani_subdomains sd ON sd.id = a.subdomain_id
+                LEFT JOIN ani_domains d ON d.id = sd.domain_id
+                WHERE a.user_id = $1 AND ($2 OR NOT e.seen)
+                ORDER BY e.created_at DESC
+                """,
+                user_id, include_seen,
+            )
+        return [
+            {
+                "id": r["id"], "entry_id": r["entry_id"], "season_no": r["season_no"],
+                "kind": r["kind"], "tier": r["tier"], "seen": r["seen"],
+                "created_at": r["created_at"].isoformat(),
+                "payload": json.loads(decrypt(key, r["payload_enc"]) or "{}"),
+                "title": decrypt(key, r["title_enc"]),
+                "cover": decrypt(key, r["cover_enc"]),
+                "anime_type": r["anime_type"],
+                "domain": decrypt(key, r["d_enc"]) or "uncategorized",
+                "subdomain": decrypt(key, r["sd_enc"]) or "uncategorized",
+                "notify_enabled": bool(
+                    r["notify_release"] and r["category_notify"] and r["label"] == "none"
+                ),
+            }
+            for r in rows
+        ]
+
+    async def management_view(
+        self, user_id: int, include_blocked: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Management + Todo read model: entries with card metadata (type,
+        release, airing time, season/episode counts, cursor) and categories."""
+        key = await vault.get(user_id)
+        if key is None:
+            return []
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            rows = await con.fetch(
+                """
+                SELECT a.id, a.title_enc, a.cover_enc, a.label, a.label_reason_enc,
+                       a.list, a.watch_state, a.active, a.notify_release,
                        a.canon_only, a.cursor_season, a.cursor_episode, a.cursor_position_seconds,
+                       a.anime_type, a.airing_time, a.subdomain_id,
                        s.season_no, s.title_enc AS s_title_enc, s.status, s.episodes_total,
-                       s.episodes_aired, s.state, s.watched, s.start_date, s.release_date
+                       s.episodes_aired, s.state, s.watched, s.start_date, s.release_date,
+                       s.next_airing_at, s.next_airing_ep,
+                       d.id AS d_id, d.name_enc AS d_enc, d.notify AS d_notify,
+                       sd.id AS sd_id, sd.name_enc AS sd_enc, sd.notify AS sd_notify
                 FROM ani_entries a
                 LEFT JOIN ani_seasons s ON s.entry_id = a.id
-                WHERE a.user_id = $1 AND a.label != 'blocked'
+                LEFT JOIN ani_subdomains sd ON sd.id = a.subdomain_id
+                LEFT JOIN ani_domains d ON d.id = sd.domain_id
+                WHERE a.user_id = $1 AND ($2 OR a.label != 'blocked')
                 ORDER BY a.id, s.season_no
                 """,
-                user_id,
+                user_id, include_blocked,
             )
         entries: Dict[int, Dict[str, Any]] = {}
         for r in rows:
@@ -363,9 +416,21 @@ class AniStore:
                 {
                     "id": r["id"], "title": decrypt(key, r["title_enc"]),
                     "cover": decrypt(key, r["cover_enc"]),
-                    "label": r["label"], "list": r["list"], "active": r["active"],
+                    "label": r["label"],
+                    "label_reason": decrypt(key, r["label_reason_enc"]),
+                    "list": r["list"], "watch_state": r["watch_state"],
+                    "active": r["active"],
                     "notify_release": r["notify_release"],
                     "canon_only": r["canon_only"],
+                    "anime_type": r["anime_type"],
+                    "airing_time": r["airing_time"],
+                    "domain_id": r["d_id"],
+                    "subdomain_id": r["sd_id"],
+                    "domain": decrypt(key, r["d_enc"]) or "uncategorized",
+                    "subdomain": decrypt(key, r["sd_enc"]) or "uncategorized",
+                    "category_notify": bool(
+                        r["d_notify"] is not False and r["sd_notify"] is not False
+                    ),
                     "cursor": {
                         "season": r["cursor_season"], "episode": r["cursor_episode"],
                         "position_seconds": r["cursor_position_seconds"],
@@ -378,16 +443,37 @@ class AniStore:
                     {
                         "season_no": r["season_no"], "title": decrypt(key, r["s_title_enc"]),
                         "status": r["status"],
-                        "episodes_total": r["episodes_total"], "episodes_aired": r["episodes_aired"],
+                        "episodes_total": r["episodes_total"],
+                        "episodes_aired": r["episodes_aired"],
                         "state": r["state"], "watched": r["watched"],
                         "start_date": r["start_date"], "release_date": r["release_date"],
+                        "next_airing_at": r["next_airing_at"],
+                        "next_airing_ep": r["next_airing_ep"],
                     }
                 )
         for entry in entries.values():
             entry["total_seasons"] = len(entry["seasons"])
+            entry["episode_count"] = sum(s["episodes_total"] or 0 for s in entry["seasons"])
+            entry["aired_count"] = sum(s["episodes_aired"] or 0 for s in entry["seasons"])
+            entry["watched_seasons"] = sum(1 for s in entry["seasons"] if s["watched"])
+            entry["notify_enabled"] = bool(
+                entry["notify_release"]
+                and entry["category_notify"]
+                and entry["label"] == "none"
+                and entry["active"]
+            )
+            entry["release_date"] = next(
+                (s["release_date"] for s in entry["seasons"] if s["release_date"]), None
+            )
+            entry["next_airing_at"] = next(
+                (s["next_airing_at"] for s in entry["seasons"] if s["next_airing_at"]), None
+            )
+            entry["next_airing_ep"] = next(
+                (s["next_airing_ep"] for s in entry["seasons"] if s["next_airing_ep"]), None
+            )
+            entry["current_season"] = entry["cursor"]["season"] or 1
+            entry["current_episode"] = entry["cursor"]["episode"]
         return list(entries.values())
-
-
 
     # ---------------- seen events (frontend AI P1) ----------------
     async def mark_events_seen(self, user_id: int, event_ids: List[int], seen: bool = True) -> int:
@@ -491,6 +577,236 @@ class AniStore:
             return Failure("entry has no seasons")
         return await self.mark_range(user_id, entry_id, 1, max_season)
 
+
+    async def ensure_category(
+        self, user_id: int, domain: str, subdomain: Optional[str]
+    ) -> Optional[int]:
+        """Get-or-create an anime domain/subdomain; returns subdomain_id."""
+        key = await vault.get(user_id)
+        if key is None or not domain.strip():
+            return None
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            d_id = await con.fetchval(
+                "INSERT INTO ani_domains (user_id, name_enc, name_hash) VALUES ($1, $2, $3) "
+                "ON CONFLICT (user_id, name_hash) DO UPDATE SET name_enc = EXCLUDED.name_enc "
+                "RETURNING id",
+                user_id, encrypt(key, domain.strip()), index_hash(key, domain.strip().lower()),
+            )
+            if not subdomain or not subdomain.strip():
+                return None
+            return await con.fetchval(
+                "INSERT INTO ani_subdomains (domain_id, name_enc, name_hash) VALUES ($1, $2, $3) "
+                "ON CONFLICT (domain_id, name_hash) DO UPDATE SET name_enc = EXCLUDED.name_enc "
+                "RETURNING id",
+                d_id, encrypt(key, subdomain.strip()), index_hash(key, subdomain.strip().lower()),
+            )
+
+    # ---------------- categories (Management > Category) ----------------
+    async def domains_tree(self, user_id: int) -> Dict[str, Any]:
+        key = await vault.get(user_id)
+        if key is None:
+            return {"domains": [], "unassigned_entries": 0}
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            rows = await con.fetch(
+                """
+                SELECT d.id AS d_id, d.name_enc AS d_enc, d.active AS d_active, d.notify AS d_notify,
+                       s.id AS s_id, s.name_enc AS s_enc, s.active AS s_active, s.notify AS s_notify,
+                       (SELECT count(*) FROM ani_entries e WHERE e.subdomain_id = s.id) AS entry_count
+                FROM ani_domains d
+                LEFT JOIN ani_subdomains s ON s.domain_id = d.id
+                WHERE d.user_id = $1
+                ORDER BY d.id, s.id
+                """,
+                user_id,
+            )
+            unassigned = await con.fetchval(
+                "SELECT count(*) FROM ani_entries WHERE user_id = $1 AND subdomain_id IS NULL",
+                user_id,
+            )
+        domains: Dict[int, Dict[str, Any]] = {}
+        for r in rows:
+            entry = domains.setdefault(
+                r["d_id"],
+                {
+                    "id": r["d_id"], "name": decrypt(key, r["d_enc"]),
+                    "active": r["d_active"], "notify": r["d_notify"], "subdomains": [],
+                },
+            )
+            if r["s_id"] is not None:
+                entry["subdomains"].append(
+                    {
+                        "id": r["s_id"], "name": decrypt(key, r["s_enc"]),
+                        "active": r["s_active"], "notify": r["s_notify"],
+                        "channel_count": r["entry_count"], "blocked_count": 0,
+                    }
+                )
+        tree = list(domains.values())
+        for d in tree:
+            d["channel_count"] = sum(s["channel_count"] for s in d["subdomains"])
+        return {"domains": tree, "unassigned_channels": unassigned}
+
+    async def create_domain(self, user_id: int, name: str) -> Result[Dict[str, Any], str]:
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        cleaned = name.strip()
+        if not cleaned:
+            return Failure("domain name is required")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            domain_id = await con.fetchval(
+                "INSERT INTO ani_domains (user_id, name_enc, name_hash) VALUES ($1, $2, $3) "
+                "ON CONFLICT (user_id, name_hash) DO UPDATE SET name_enc = EXCLUDED.name_enc "
+                "RETURNING id",
+                user_id, encrypt(key, cleaned), index_hash(key, cleaned.lower()),
+            )
+        return Success({"id": domain_id, "name": cleaned})
+
+    async def rename_domain(self, user_id: int, domain_id: int, new_name: str) -> Result[Dict[str, Any], str]:
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        cleaned = new_name.strip()
+        if not cleaned:
+            return Failure("domain name is required")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            try:
+                result = await con.execute(
+                    "UPDATE ani_domains SET name_enc = $3, name_hash = $4 WHERE id = $1 AND user_id = $2",
+                    domain_id, user_id, encrypt(key, cleaned), index_hash(key, cleaned.lower()),
+                )
+            except Exception:
+                return Failure("a domain with that name already exists")
+        if result.endswith("0"):
+            return Failure("domain not found")
+        return Success({"id": domain_id, "name": cleaned})
+
+    async def delete_domain(self, user_id: int, domain_id: int) -> Result[Dict[str, Any], str]:
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "DELETE FROM ani_domains WHERE id = $1 AND user_id = $2", domain_id, user_id
+            )
+        if result.endswith("0"):
+            return Failure("domain not found")
+        return Success({"deleted": domain_id})
+
+    async def create_subdomain(self, user_id: int, domain_id: int, name: str) -> Result[Dict[str, Any], str]:
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        cleaned = name.strip()
+        if not cleaned:
+            return Failure("subdomain name is required")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            owner = await con.fetchval(
+                "SELECT 1 FROM ani_domains WHERE id = $1 AND user_id = $2", domain_id, user_id
+            )
+            if not owner:
+                return Failure("domain not found")
+            sub_id = await con.fetchval(
+                "INSERT INTO ani_subdomains (domain_id, name_enc, name_hash) VALUES ($1, $2, $3) "
+                "ON CONFLICT (domain_id, name_hash) DO UPDATE SET name_enc = EXCLUDED.name_enc "
+                "RETURNING id",
+                domain_id, encrypt(key, cleaned), index_hash(key, cleaned.lower()),
+            )
+        return Success({"id": sub_id, "domain_id": domain_id, "name": cleaned})
+
+    async def rename_subdomain(self, user_id: int, subdomain_id: int, new_name: str) -> Result[Dict[str, Any], str]:
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        cleaned = new_name.strip()
+        if not cleaned:
+            return Failure("subdomain name is required")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            try:
+                result = await con.execute(
+                    "UPDATE ani_subdomains s SET name_enc = $3, name_hash = $4 "
+                    "FROM ani_domains d WHERE s.domain_id = d.id AND d.user_id = $1 AND s.id = $2",
+                    user_id, subdomain_id, encrypt(key, cleaned), index_hash(key, cleaned.lower()),
+                )
+            except Exception:
+                return Failure("a subdomain with that name already exists")
+        if result.endswith("0"):
+            return Failure("subdomain not found")
+        return Success({"id": subdomain_id, "name": cleaned})
+
+    async def delete_subdomain(self, user_id: int, subdomain_id: int) -> Result[Dict[str, Any], str]:
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "DELETE FROM ani_subdomains s USING ani_domains d "
+                "WHERE s.domain_id = d.id AND d.user_id = $1 AND s.id = $2",
+                user_id, subdomain_id,
+            )
+        if result.endswith("0"):
+            return Failure("subdomain not found")
+        return Success({"deleted": subdomain_id})
+
+    async def set_domain_notify(self, user_id: int, domain_id: int, notify: bool) -> Result[Dict[str, Any], str]:
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "UPDATE ani_domains SET notify = $3 WHERE id = $1 AND user_id = $2",
+                domain_id, user_id, notify,
+            )
+        if result.endswith("0"):
+            return Failure("domain not found")
+        return Success({"id": domain_id, "notify": notify})
+
+    async def set_subdomain_notify(self, user_id: int, subdomain_id: int, notify: bool) -> Result[Dict[str, Any], str]:
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "UPDATE ani_subdomains s SET notify = $3 FROM ani_domains d "
+                "WHERE d.id = s.domain_id AND d.user_id = $1 AND s.id = $2",
+                user_id, subdomain_id, notify,
+            )
+        if result.endswith("0"):
+            return Failure("subdomain not found")
+        return Success({"id": subdomain_id, "notify": notify})
+
+    async def assign_entry(self, user_id: int, entry_id: int, subdomain_id: Optional[int]) -> Result[Dict[str, Any], str]:
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            if subdomain_id is not None:
+                owner = await con.fetchval(
+                    "SELECT 1 FROM ani_subdomains s JOIN ani_domains d ON d.id = s.domain_id "
+                    "WHERE s.id = $1 AND d.user_id = $2",
+                    subdomain_id, user_id,
+                )
+                if not owner:
+                    return Failure("subdomain not found")
+            result = await con.execute(
+                "UPDATE ani_entries SET subdomain_id = $3 WHERE id = $1 AND user_id = $2",
+                entry_id, user_id, subdomain_id,
+            )
+        if result.endswith("0"):
+            return Failure("entry not found")
+        return Success({"id": entry_id, "subdomain_id": subdomain_id})
+
+    async def notify_enabled(self, user_id: int, entry_id: int) -> bool:
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            return bool(
+                await con.fetchval(
+                    """
+                    SELECT COALESCE(e.notify_release, TRUE) AND COALESCE(sd.notify, TRUE)
+                       AND COALESCE(d.notify, TRUE) AND e.label = 'none' AND e.active
+                    FROM ani_entries e
+                    LEFT JOIN ani_subdomains sd ON sd.id = e.subdomain_id
+                    LEFT JOIN ani_domains d ON d.id = sd.domain_id
+                    WHERE e.id = $1 AND e.user_id = $2
+                    """,
+                    entry_id, user_id,
+                )
+            )
 
 def _aired(video: Dict[str, Any]) -> int:
     from Orchestrator.Ani.Filter.states import episodes_aired
