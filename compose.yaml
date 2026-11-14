@@ -47,6 +47,9 @@ services:
   backend:
     build: ./Backend
     restart: unless-stopped
+    # Match the host user: dumps written into ./backups must stay owned by
+    # whoever runs start.py, otherwise pruning/restoring hits permissions.
+    user: "${DREAMEDIA_UID:-1000}:${DREAMEDIA_GID:-1000}"
     environment:
       DREAMEDIA_PG_HOST: db
       DREAMEDIA_PG_PORT: "5432"

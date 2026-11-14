@@ -2,7 +2,8 @@
 __pycache__/
 *.pyc
 .uv-cache/
-backups/
+backups/*
+!backups/.gitkeep
 .env
 
 .bridge/

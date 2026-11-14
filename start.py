@@ -204,6 +204,9 @@ def main() -> None:
     # see os.environ, not our parsed copy.
     os.environ.setdefault("ACCESS_HOST", bind)
     env.setdefault("ACCESS_HOST", bind)
+    # Containers run as us, so backups land on the host with our ownership.
+    os.environ.setdefault("DREAMEDIA_UID", str(os.getuid()))
+    os.environ.setdefault("DREAMEDIA_GID", str(os.getgid()))
 
     # Password stability: warning only (never enforcement).
     pass_sha = hashlib.sha256(env["DREAMEDIA_PG_PASSWORD"].encode()).hexdigest()
