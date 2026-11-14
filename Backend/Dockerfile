@@ -22,5 +22,8 @@ COPY . .
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
 
+# Admin backups default to the relative "backups" directory; the compose
+# volume lives at /backups, so make the relative path resolve there.
+RUN mkdir -p /backups && ln -s /backups /app/backups
 EXPOSE 8000
 CMD ["uvicorn", "App.main:app", "--host", "0.0.0.0", "--port", "8000"]
