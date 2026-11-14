@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import yt_dlp
 from returns.result import Failure, Result, Success
@@ -115,26 +115,70 @@ def parse_video_id(link: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
+def _oembed(video_id: str) -> Optional[Dict[str, Any]]:
+    """Cheap metadata fallback when yt-dlp is blocked (bot walls, regions)."""
+    try:
+        import httpx
+
+        response = httpx.get(
+            "https://www.youtube.com/oembed",
+            params={"url": f"https://www.youtube.com/watch?v={video_id}", "format": "json"},
+            timeout=5.0,
+            follow_redirects=True,
+        )
+        if response.status_code == 200 and response.text.strip():
+            data = response.json()
+            if data.get("title"):
+                return data
+    except Exception as exc:  # pragma: no cover - network dependent
+        log.warning("oembed lookup failed for %s: %s", video_id, exc)
+    return None
+
+
 def resolve_video(link: str) -> Result[VideoInfo, str]:
-    """Resolve a YouTube video link → id/title/thumbnail (for manual cards, D47)."""
+    """Resolve a YouTube video link → id/title/thumbnail (for manual cards, D47).
+
+    Manual playlists must never lose a link to a scraper failure: the id is
+    enough to store the row, so oEmbed → yt-dlp → id-only stub is the chain.
+    """
     video_id = parse_video_id(link)
     if not video_id:
         return Failure("could not extract a video id from that link")
     url = f"https://www.youtube.com/watch?v={video_id}"
+    meta = _oembed(video_id)
+    if meta:
+        return Success(
+            VideoInfo(
+                video_id=video_id,
+                title=meta.get("title") or "Untitled",
+                url=url,
+                thumbnail=meta.get("thumbnail_url")
+                or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+            )
+        )
+
     try:
         with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
             info = ydl.extract_info(url, download=False)
+        if isinstance(info, dict) and info.get("id"):
+            return Success(
+                VideoInfo(
+                    video_id=info["id"],
+                    title=info.get("title") or "Untitled",
+                    url=url,
+                    thumbnail=info.get("thumbnail")
+                    or f"https://i.ytimg.com/vi/{info['id']}/hqdefault.jpg",
+                )
+            )
     except Exception as e:
-        log.error("video resolve failed for %s: %s", url, e)
-        return Failure("video resolve failed")
-    if not isinstance(info, dict) or not info.get("id"):
-        return Failure("video not found")
+        log.warning("yt-dlp video resolve failed for %s: %s", url, e)
+
+    log.warning("storing %s without metadata (YouTube unreachable)", video_id)
     return Success(
         VideoInfo(
-            video_id=info["id"],
-            title=info.get("title") or "Untitled",
+            video_id=video_id,
+            title=f"YouTube video {video_id}",
             url=url,
-            thumbnail=info.get("thumbnail")
-            or f"https://i.ytimg.com/vi/{info['id']}/hqdefault.jpg",
+            thumbnail=f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
         )
     )

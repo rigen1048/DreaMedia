@@ -63,6 +63,28 @@ app = FastAPI(title="DreaMedia", version="0.1.0", lifespan=lifespan)
 
 
 @app.middleware("http")
+async def _session_cookie(request, call_next):
+    """GraphQL auth writes request.state.auth_cookie; the cookie itself is
+    applied here so login/signup/logout stay ordinary mutations."""
+    response = await call_next(request)
+    token = getattr(request.state, "auth_cookie", None)
+    if token:
+        from Config.Hardcoded.limits import SESSION_TTL_SECONDS
+
+        response.set_cookie(
+            "dreamedia",
+            token,
+            max_age=SESSION_TTL_SECONDS,
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
+    if getattr(request.state, "clear_auth_cookie", False):
+        response.delete_cookie("dreamedia", path="/")
+    return response
+
+
+@app.middleware("http")
 async def _restore_gate(request, call_next):
     """During an admin restore, mutations are refused (503) and reads pass.
     In-place restore with live writers is a corruption risk (2026 review)."""

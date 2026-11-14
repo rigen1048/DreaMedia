@@ -1,73 +1,170 @@
-"""Children GraphQL schemas (D25) — one per plugin, resolving over the
-same service layer the plugin's Feed/Access REST routers expose.
+"""Unified GraphQL API — the frontend's ONLY data contract.
 
-The supergraph (supergraph.py) merges these children. A new plugin =
-new child here + its Feed/Access REST dirs (D16).
+Every read and write the UI performs goes through this schema and its
+supergraph (/graphql). The REST routers that remain mounted are the
+frontend's *inbound* notification lane and internal/admin tooling; the UI
+does not call them.
+
+Design notes:
+- One schema, two feature namespaces (yt / ani) plus auth + messages.
+- YouTube notification types map to the subscription mode
+  (tracking → Track, wordscan → WordScan, playlist → Playlist,
+  random → Random).
+- Notification scoping is exposed on the category tree and channel rows so
+  the UI can mute a domain, a subdomain, or one channel.
 """
 from __future__ import annotations
 
-import strawberry
+import asyncio
+import json
+from typing import Any, Dict, List, Optional
 
-from App.deps import current_user_id
+import strawberry
+from returns.result import Failure, Success
+from strawberry.types import Info
+
+from Auth import auth
 from Database.ani_store import AniStore
+from Database.card_store import CardStore
 from Database.pg_store import PgStore
 
 _yt = PgStore()
 _ani = AniStore()
 
 
-async def _uid(info) -> int:
-    """Resolve the session cookie to a user_id (same dep as REST)."""
+async def _enrich_card_items(user_id: int, pending: list[tuple[int, str]]) -> None:
+    """Background metadata fill for manual playlist rows (best effort)."""
+    from Orchestrator.Yt.Fetch.convert import resolve_video
+    from Utility.logs import log
+
+    store = CardStore()
+    for item_id, url in pending:
+        try:
+            result = await asyncio.to_thread(resolve_video, url)
+            if isinstance(result, Failure):
+                continue
+            video = result.unwrap()
+            if video.title and not video.title.startswith("YouTube video "):
+                await store.update_item_meta(user_id, item_id, video.title, video.thumbnail)
+        except Exception:  # pragma: no cover - background best effort
+            log.exception("card item enrichment failed for %s", url)
+
+
+async def _uid(info: Info) -> int:
     request = info.context["request"]
     token = request.cookies.get("dreamedia")
     if not token:
-        raise PermissionError("not authenticated")
-    from Auth import auth
-
+        raise ValueError("Not authenticated")
     user_id = await auth.resolve_session(token)
     if user_id is None:
-        raise PermissionError("session expired")
+        raise ValueError("Session expired")
     return user_id
 
 
-# ---------------- Yt child ----------------
+async def _optional_uid(info: Info) -> Optional[int]:
+    request = info.context["request"]
+    token = request.cookies.get("dreamedia")
+    if not token:
+        return None
+    return await auth.resolve_session(token)
+
+
+def _unwrap(result, fallback: str = "Request failed"):
+    if isinstance(result, Failure):
+        raise ValueError(result.failure() or fallback)
+    return result.unwrap()
+
+
+# ============================ Shared types ============================
+@strawberry.type
+class Viewer:
+    id: int
+    username: str
+    role: str
+
+
+@strawberry.type
+class BackendMessage:
+    id: int
+    media: str
+    kind: str
+    title: str
+    message: str
+    level: str
+    url: Optional[str]
+    created_at: str
+    seen: bool
+    pushed: bool
+    payload: str
+
+
+# ============================ YouTube ============================
 @strawberry.type
 class YtVideo:
     id: int
     channel_id: int
-    title: str
-    url: str
-    thumbnail: str | None
-    published_at: int | None
+    title: Optional[str]
+    url: Optional[str]
+    thumbnail: Optional[str]
+    published_at: Optional[int]
     seen: bool
-    channel: str | None
-    channel_logo: str | None
+    channel: Optional[str]
+    channel_logo: Optional[str]
+    mode: str
+    notify_enabled: bool
+    label: str
+    domain: str
+    subdomain: str
 
 
 @strawberry.type
 class YtChannel:
     id: int
-    name: str | None
-    url: str | None
-    logo: str | None
+    name: Optional[str]
+    url: Optional[str]
+    logo: Optional[str]
     label: str
-    label_reason: str | None
-    rss_id: str | None
-    kind: str | None
-    active: bool | None
-    rank: str | None
-    words: list[str]
+    label_reason: Optional[str]
+    rss_id: Optional[str]
+    kind: Optional[str]
+    active: Optional[bool]
+    rank: Optional[str]
+    words: List[str]
     domain: str
     subdomain: str
+    domain_id: Optional[int]
+    subdomain_id: Optional[int]
+    notify: bool
+    notify_enabled: bool
+
+
+@strawberry.type
+class YtSubdomain:
+    id: int
+    name: str
+    active: bool
+    notify: bool
+    channel_count: int
+    blocked_count: int
+
+
+@strawberry.type
+class YtDomain:
+    id: int
+    name: str
+    active: bool
+    notify: bool
+    channel_count: int
+    subdomains: List[YtSubdomain]
 
 
 @strawberry.type
 class YtCardItem:
     id: int
     video_id: str
-    url: str | None
-    title: str | None
-    thumbnail: str | None
+    url: Optional[str]
+    title: Optional[str]
+    thumbnail: Optional[str]
     done: bool
     added_at: str
 
@@ -75,11 +172,11 @@ class YtCardItem:
 @strawberry.type
 class YtCard:
     id: int
-    name: str | None
+    name: Optional[str]
     created_at: str
     total: int
     done: int
-    items: list[YtCardItem]
+    items: List[YtCardItem]
 
 
 @strawberry.type
@@ -94,25 +191,49 @@ class YtSidebarDomain:
     key: str
     name: str
     active: bool
-    subdomains: list[YtSidebarSubdomain]
+    subdomains: List[YtSidebarSubdomain]
 
 
 @strawberry.type
 class YtQuery:
     @strawberry.field
-    async def yt_feed(self, info: strawberry.Info, limit: int = 100) -> list[YtVideo]:
+    async def yt_feed(self, info: Info, limit: int = 200) -> List[YtVideo]:
         videos = await _yt.feed(await _uid(info), limit)
         return [YtVideo(**v) for v in videos]
 
     @strawberry.field
-    async def yt_channels(self, info: strawberry.Info, include_blocked: bool = False) -> list[YtChannel]:
+    async def yt_channels(
+        self, info: Info, include_blocked: bool = False
+    ) -> List[YtChannel]:
         channels = await _yt.channels_view(await _uid(info), include_blocked)
         return [YtChannel(**c) for c in channels]
 
     @strawberry.field
-    async def yt_cards(self, info: strawberry.Info) -> list[YtCard]:
-        from Database.card_store import CardStore
+    async def yt_domains(self, info: Info) -> List[YtDomain]:
+        tree = await _yt.domains_tree(await _uid(info))
+        return [
+            YtDomain(
+                id=d["id"], name=d["name"], active=d["active"], notify=d["notify"],
+                channel_count=d.get("channel_count", 0),
+                subdomains=[
+                    YtSubdomain(
+                        id=s["id"], name=s["name"], active=s["active"], notify=s["notify"],
+                        channel_count=s.get("channel_count", 0),
+                        blocked_count=s.get("blocked_count", 0),
+                    )
+                    for s in d["subdomains"]
+                ],
+            )
+            for d in tree["domains"]
+        ]
 
+    @strawberry.field
+    async def yt_unassigned_count(self, info: Info) -> int:
+        tree = await _yt.domains_tree(await _uid(info))
+        return int(tree.get("unassigned_channels") or 0)
+
+    @strawberry.field
+    async def yt_cards(self, info: Info) -> List[YtCard]:
         cards = await CardStore().list_cards(await _uid(info))
         return [
             YtCard(
@@ -130,7 +251,7 @@ class YtQuery:
         ]
 
     @strawberry.field
-    async def yt_sidebar(self, info: strawberry.Info) -> list[YtSidebarDomain]:
+    async def yt_sidebar(self, info: Info) -> List[YtSidebarDomain]:
         data = await _yt.sidebar(await _uid(info))
         return [
             YtSidebarDomain(
@@ -148,231 +269,523 @@ class YtQuery:
 class YtMutation:
     @strawberry.field
     async def yt_subscribe(
-        self, info: strawberry.Info, kind: str, link: str, channel_name: str, channel_url: str,
-        words: list[str] | None = None,
+        self, info: Info, kind: str, link: str, words: Optional[List[str]] = None,
+        rank: Optional[str] = None, domain: Optional[str] = None,
+        subdomain: Optional[str] = None,
+    ) -> int:
+        """Link-only subscribe. Server resolves the channel/playlist."""
+        from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
+
+        user_id = await _uid(info)
+        if kind == "playlist":
+            playlist_id = parse_playlist_id(link)
+            if not playlist_id:
+                raise ValueError("Could not extract a playlist id from that link")
+            info_res = await asyncio.to_thread(resolve_channel, link.split("?")[0])
+            if isinstance(info_res, Failure):
+                name, url, logo = "Playlist", link, None
+            else:
+                resolved = info_res.unwrap()
+                name, url, logo = resolved.name, resolved.url, resolved.logo
+            channel_id = _unwrap(
+                await _yt.add_playlist(user_id, playlist_id, name, url, logo=logo)
+            )
+        else:
+            info_res = await asyncio.to_thread(resolve_channel, link)
+            if isinstance(info_res, Failure):
+                raise ValueError(info_res.failure())
+            resolved = info_res.unwrap()
+            if kind in ("tracking", "wordscan"):
+                channel_id = _unwrap(
+                    await _yt.add_tracking(
+                        user_id, resolved.rss_id, resolved.name, resolved.url,
+                        kind=kind, words=words, logo=resolved.logo,
+                    )
+                )
+            elif kind == "random":
+                channel_id = _unwrap(
+                    await _yt.add_random(
+                        user_id, resolved.name, resolved.url, rank or "week",
+                        logo=resolved.logo,
+                    )
+                )
+            else:
+                raise ValueError(f"Unknown notification type: {kind}")
+        if domain and subdomain:
+            await _yt.assign_category(user_id, channel_id, domain, subdomain)
+        return channel_id
+
+    @strawberry.field
+    async def yt_set_label(
+        self, info: Info, channel_id: int, label: str, reason: Optional[str] = None
     ) -> bool:
-        from returns.result import Success
-
-        result = await _yt.add_tracking(
-            await _uid(info), link, channel_name, channel_url, kind=kind, words=words
-        )
-        return isinstance(result, Success)
+        _unwrap(await _yt.set_label(await _uid(info), channel_id, label, reason))
+        return True
 
     @strawberry.field
-    async def yt_set_label(self, info: strawberry.Info, channel_id: int, label: str, reason: str | None = None) -> bool:
-        from returns.result import Success
-
-        return isinstance(await _yt.set_label(await _uid(info), channel_id, label, reason), Success)
-
-    @strawberry.field
-    async def yt_mark_seen(self, info: strawberry.Info, video_ids: list[int], seen: bool = True) -> int:
+    async def yt_mark_seen(
+        self, info: Info, video_ids: List[int], seen: bool = True
+    ) -> int:
         return await _yt.mark_videos_seen(await _uid(info), video_ids, seen)
 
     @strawberry.field
     async def yt_switch_mode(
-        self, info: strawberry.Info, channel_id: int, kind: str,
-        words: list[str] | None = None, rank: str | None = None,
+        self, info: Info, channel_id: int, kind: str,
+        words: Optional[List[str]] = None, rank: Optional[str] = None,
     ) -> bool:
-        from returns.result import Success
+        _unwrap(await _yt.switch_mode(await _uid(info), channel_id, kind, words, rank))
+        return True
 
-        return isinstance(
-            await _yt.switch_mode(await _uid(info), channel_id, kind, words, rank), Success
+    @strawberry.field
+    async def yt_set_active(self, info: Info, channel_id: int, active: bool) -> bool:
+        _unwrap(await _yt.set_channel_active(await _uid(info), channel_id, active))
+        return True
+
+    @strawberry.field
+    async def yt_set_notify(self, info: Info, channel_id: int, notify: bool) -> bool:
+        _unwrap(await _yt.set_channel_notify(await _uid(info), channel_id, notify))
+        return True
+
+    @strawberry.field
+    async def yt_delete_channel(self, info: Info, channel_id: int) -> bool:
+        _unwrap(await _yt.delete_channel(await _uid(info), channel_id))
+        return True
+
+    @strawberry.field
+    async def yt_create_domain(self, info: Info, name: str) -> int:
+        return int(_unwrap(await _yt.create_domain(await _uid(info), name))["id"])
+
+    @strawberry.field
+    async def yt_rename_domain(self, info: Info, domain_id: int, name: str) -> bool:
+        _unwrap(await _yt.rename_domain(await _uid(info), domain_id, name))
+        return True
+
+    @strawberry.field
+    async def yt_delete_domain(self, info: Info, domain_id: int) -> bool:
+        _unwrap(await _yt.delete_domain(await _uid(info), domain_id))
+        return True
+
+    @strawberry.field
+    async def yt_set_domain_notify(self, info: Info, domain_id: int, notify: bool) -> bool:
+        _unwrap(await _yt.set_domain_notify(await _uid(info), domain_id, notify))
+        return True
+
+    @strawberry.field
+    async def yt_create_subdomain(self, info: Info, domain_id: int, name: str) -> int:
+        return int(
+            _unwrap(await _yt.create_subdomain(await _uid(info), domain_id, name))["id"]
         )
 
     @strawberry.field
-    async def yt_set_active(self, info: strawberry.Info, channel_id: int, active: bool) -> bool:
-        from returns.result import Success
-
-        return isinstance(await _yt.set_channel_active(await _uid(info), channel_id, active), Success)
-
-    @strawberry.field
-    async def yt_create_card(self, info: strawberry.Info, name: str) -> int:
-        from returns.result import Failure
-
-        from Database.card_store import CardStore
-
-        result = await CardStore().create_card(await _uid(info), name)
-        if isinstance(result, Failure):
-            raise ValueError(result.failure())
-        return result.unwrap()
+    async def yt_rename_subdomain(self, info: Info, subdomain_id: int, name: str) -> bool:
+        _unwrap(await _yt.rename_subdomain(await _uid(info), subdomain_id, name))
+        return True
 
     @strawberry.field
-    async def yt_add_card_item(self, info: strawberry.Info, card_id: int, link: str) -> int:
-        import asyncio
+    async def yt_delete_subdomain(self, info: Info, subdomain_id: int) -> bool:
+        _unwrap(await _yt.delete_subdomain(await _uid(info), subdomain_id))
+        return True
 
-        from returns.result import Failure
+    @strawberry.field
+    async def yt_set_subdomain_notify(
+        self, info: Info, subdomain_id: int, notify: bool
+    ) -> bool:
+        _unwrap(await _yt.set_subdomain_notify(await _uid(info), subdomain_id, notify))
+        return True
 
-        from Database.card_store import CardStore
+    @strawberry.field
+    async def yt_assign_channel(
+        self, info: Info, channel_id: int, subdomain_id: Optional[int] = None,
+        domain: Optional[str] = None, subdomain: Optional[str] = None,
+    ) -> bool:
+        """Attach a channel to an existing subdomain id, or get-or-create one
+        by domain/subdomain names (the "attach to channel" workflow)."""
+        user_id = await _uid(info)
+        if subdomain_id is None and domain and subdomain:
+            _unwrap(await _yt.assign_category(user_id, channel_id, domain, subdomain))
+            return True
+        _unwrap(await _yt.assign_channel(user_id, channel_id, subdomain_id))
+        return True
+
+    @strawberry.field
+    async def yt_create_card(self, info: Info, name: str) -> int:
+        return int(_unwrap(await CardStore().create_card(await _uid(info), name)))
+
+    @strawberry.field
+    async def yt_rename_card(self, info: Info, card_id: int, name: str) -> bool:
+        _unwrap(await CardStore().rename_card(await _uid(info), card_id, name))
+        return True
+
+    @strawberry.field
+    async def yt_add_card_items(
+        self, info: Info, card_id: int, links: List[str]
+    ) -> int:
+        """Bulk add by pasted video links; each link is resolved server-side."""
         from Orchestrator.Yt.Fetch.convert import resolve_video
 
-        info_res = await asyncio.to_thread(resolve_video, link)
-        if isinstance(info_res, Failure):
-            raise ValueError(info_res.failure())
-        video = info_res.unwrap()
-        result = await CardStore().add_item(
-            await _uid(info), card_id, video.video_id, video.url, video.title, video.thumbnail
-        )
-        if isinstance(result, Failure):
-            raise ValueError(result.failure())
-        return result.unwrap()
+        from Orchestrator.Yt.Fetch.convert import parse_video_id
+
+        user_id = await _uid(info)
+        pending: list[tuple[int, str]] = []
+        invalid: list[str] = []
+        for link in links:
+            link = link.strip()
+            if not link:
+                continue
+            video_id = parse_video_id(link)
+            if not video_id:
+                invalid.append(link)
+                continue
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            item_id = _unwrap(
+                await CardStore().add_item(
+                    user_id, card_id, video_id, url,
+                    f"YouTube video {video_id}",
+                    f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+                )
+            )
+            pending.append((item_id, url))
+        if invalid and not pending:
+            raise ValueError(f"Not a YouTube video link: {invalid[0]}")
+        if pending:
+            # Never block the mutation on YouTube: insert now, enrich in the
+            # background (yt-dlp -> oEmbed -> keep the placeholder).
+            asyncio.create_task(_enrich_card_items(user_id, pending))
+        return len(pending)
 
     @strawberry.field
-    async def yt_set_card_item_done(self, info: strawberry.Info, item_id: int, done: bool) -> bool:
-        from returns.result import Success
-
-        from Database.card_store import CardStore
-
-        return isinstance(
-            await CardStore().set_item_done(await _uid(info), item_id, done), Success
-        )
+    async def yt_set_card_item_done(
+        self, info: Info, item_id: int, done: bool
+    ) -> bool:
+        _unwrap(await CardStore().set_item_done(await _uid(info), item_id, done))
+        return True
 
     @strawberry.field
-    async def yt_delete_card(self, info: strawberry.Info, card_id: int) -> bool:
-        from returns.result import Success
-
-        from Database.card_store import CardStore
-
-        return isinstance(await CardStore().delete_card(await _uid(info), card_id), Success)
+    async def yt_delete_card(self, info: Info, card_id: int) -> bool:
+        _unwrap(await CardStore().delete_card(await _uid(info), card_id))
+        return True
 
     @strawberry.field
-    async def yt_delete_card_item(self, info: strawberry.Info, item_id: int) -> bool:
-        from returns.result import Success
-
-        from Database.card_store import CardStore
-
-        return isinstance(await CardStore().delete_item(await _uid(info), item_id), Success)
-
-    @strawberry.field
-    async def yt_delete_channel(self, info: strawberry.Info, channel_id: int) -> bool:
-        from returns.result import Success
-
-        return isinstance(await _yt.delete_channel(await _uid(info), channel_id), Success)
+    async def yt_delete_card_item(self, info: Info, item_id: int) -> bool:
+        _unwrap(await CardStore().delete_item(await _uid(info), item_id))
+        return True
 
 
-# ---------------- Ani child ----------------
+# ============================ Anime ============================
+_EVENT_GROUP = {
+    "next_episode_date": ("release", "today", "Episode airing"),
+    "release_confirmed": ("release", "today", "Release confirmed"),
+    "next_sequel_date": ("release", "sequel", "Sequel announced"),
+    "next_sequel": ("release", "sequel", "Next sequel"),
+    "new_anime_date": ("release", "new", "New anime"),
+    "episode_postponed": ("change", "today", "Episode postponed"),
+    "release_changed": ("change", "today", "Release changed"),
+}
+
+
 @strawberry.type
 class AniEvent:
     id: int
     entry_id: int
-    season_no: int | None
+    title: Optional[str]
+    cover: Optional[str]
+    anime_type: Optional[str]
+    season_no: Optional[int]
     kind: str
+    group: str
+    bucket: str
+    label: str
     tier: str
     seen: bool
     created_at: str
     payload: str
+    domain: str
+    subdomain: str
+    notify_enabled: bool
 
 
 @strawberry.type
 class AniSeason:
     season_no: int
-    status: str | None
-    episodes_total: int | None
-    episodes_aired: int | None
+    title: Optional[str]
+    status: Optional[str]
+    episodes_total: Optional[int]
+    episodes_aired: Optional[int]
     state: str
     watched: bool
+    start_date: Optional[str]
+    release_date: Optional[str]
+    next_airing_at: Optional[int]
+    next_airing_ep: Optional[int]
 
 
 @strawberry.type
 class AniEntry:
     id: int
-    title: str | None
+    title: Optional[str]
+    cover: Optional[str]
     label: str
+    label_reason: Optional[str]
     list: str
+    watch_state: Optional[str]
     active: bool
     notify_release: bool
+    notify_enabled: bool
     canon_only: bool
-    cursor: str
+    anime_type: Optional[str]
+    airing_time: Optional[str]
+    domain_id: Optional[int]
+    subdomain_id: Optional[int]
+    domain: str
+    subdomain: str
+    cursor_season: Optional[int]
+    cursor_episode: Optional[int]
+    position_seconds: Optional[int]
     total_seasons: int
-    seasons: list[AniSeason]
+    episode_count: int
+    aired_count: int
+    watched_seasons: int
+    release_date: Optional[str]
+    next_airing_at: Optional[int]
+    next_airing_ep: Optional[int]
+    seasons: List[AniSeason]
+
+
+@strawberry.type
+class AniDomain:
+    id: int
+    name: str
+    active: bool
+    notify: bool
+    channel_count: int
+    subdomains: List[YtSubdomain]
 
 
 @strawberry.type
 class AniQuery:
     @strawberry.field
-    async def ani_events(self, info: strawberry.Info, include_seen: bool = False) -> list[AniEvent]:
-        import json
-
+    async def ani_events(
+        self, info: Info, include_seen: bool = True
+    ) -> List[AniEvent]:
         events = await _ani.events_feed(await _uid(info), include_seen)
-        return [
-            AniEvent(
-                id=e["id"], entry_id=e["entry_id"], season_no=e["season_no"], kind=e["kind"], tier=e["tier"],
-                seen=e["seen"], created_at=e["created_at"], payload=json.dumps(e["payload"]),
+        result = []
+        for e in events:
+            group, bucket, label = _EVENT_GROUP.get(
+                e["kind"], ("release", "today", e["kind"].replace("_", " ").title())
             )
-            for e in events
-        ]
+            if e["kind"] == "release_changed" and (e.get("season_no") or 1) > 1:
+                bucket = "sequel"
+            result.append(
+                AniEvent(
+                    id=e["id"], entry_id=e["entry_id"], title=e.get("title"),
+                    cover=e.get("cover"), anime_type=e.get("anime_type"),
+                    season_no=e["season_no"], kind=e["kind"], group=group,
+                    bucket=bucket, label=label, tier=e["tier"], seen=e["seen"],
+                    created_at=e["created_at"],
+                    payload=json.dumps(e["payload"], default=str),
+                    domain=e.get("domain", "uncategorized"),
+                    subdomain=e.get("subdomain", "uncategorized"),
+                    notify_enabled=bool(e.get("notify_enabled")),
+                )
+            )
+        return result
 
     @strawberry.field
-    async def ani_management(self, info: strawberry.Info) -> list[AniEntry]:
-        import json as _json
-
-        view = await _ani.management_view(await _uid(info))
+    async def ani_entries(
+        self, info: Info, include_blocked: bool = False
+    ) -> List[AniEntry]:
+        view = await _ani.management_view(await _uid(info), include_blocked)
         return [
             AniEntry(
-                id=e["id"], title=e["title"], label=e["label"], list=e["list"],
-                active=e["active"], notify_release=e["notify_release"],
-                canon_only=e["canon_only"], cursor=_json.dumps(e["cursor"]),
-                total_seasons=e["total_seasons"],
+                id=e["id"], title=e["title"], cover=e.get("cover"), label=e["label"],
+                label_reason=e.get("label_reason"), list=e["list"],
+                watch_state=e.get("watch_state"), active=e["active"],
+                notify_release=e["notify_release"], notify_enabled=e["notify_enabled"],
+                canon_only=e["canon_only"], anime_type=e.get("anime_type"),
+                airing_time=e.get("airing_time"), domain_id=e.get("domain_id"),
+                subdomain_id=e.get("subdomain_id"), domain=e["domain"],
+                subdomain=e["subdomain"], cursor_season=e["cursor"]["season"],
+                cursor_episode=e["cursor"]["episode"],
+                position_seconds=e["cursor"]["position_seconds"],
+                total_seasons=e["total_seasons"], episode_count=e["episode_count"],
+                aired_count=e["aired_count"], watched_seasons=e["watched_seasons"],
+                release_date=e.get("release_date"),
+                next_airing_at=e.get("next_airing_at"),
+                next_airing_ep=e.get("next_airing_ep"),
                 seasons=[AniSeason(**s) for s in e["seasons"]],
             )
             for e in view
+        ]
+
+    @strawberry.field
+    async def ani_domains(self, info: Info) -> List[AniDomain]:
+        tree = await _ani.domains_tree(await _uid(info))
+        return [
+            AniDomain(
+                id=d["id"], name=d["name"], active=d["active"], notify=d["notify"],
+                channel_count=d.get("channel_count", 0),
+                subdomains=[
+                    YtSubdomain(
+                        id=s["id"], name=s["name"], active=s["active"], notify=s["notify"],
+                        channel_count=s.get("channel_count", 0),
+                        blocked_count=s.get("blocked_count", 0),
+                    )
+                    for s in d["subdomains"]
+                ],
+            )
+            for d in tree["domains"]
         ]
 
 
 @strawberry.type
 class AniMutation:
     @strawberry.field
-    async def ani_track(self, info: strawberry.Info, title: str, list_kind: str = "watching") -> bool:
-        from returns.result import Failure, Success
-
+    async def ani_track(
+        self, info: Info, title: str, list_kind: str = "watching",
+        domain: Optional[str] = None, subdomain: Optional[str] = None,
+    ) -> int:
         from Orchestrator.Ani.Fetch.ani_track import ani_fetch
 
+        user_id = await _uid(info)
         fetch = await ani_fetch(title)
         if isinstance(fetch, Failure):
-            return False
+            raise ValueError(fetch.failure())
         payload = fetch.unwrap()
         first = payload[0][1]
-        result = await _ani.add_entry(
-            await _uid(info), int(first["id"]), title, first.get("thumbnail"), payload, list_kind
+        subdomain_id = None
+        if domain and subdomain:
+            subdomain_id = await _ani.ensure_category(user_id, domain, subdomain)
+        return int(
+            _unwrap(
+                await _ani.add_entry(
+                    user_id, int(first["id"]), title, first.get("thumbnail"), payload,
+                    list_kind, anime_type=first.get("format"),
+                    subdomain_id=subdomain_id,
+                )
+            )
         )
-        return isinstance(result, Success)
 
     @strawberry.field
-    async def ani_set_watched(self, info: strawberry.Info, entry_id: int, season_no: int, watched: bool) -> bool:
-        from returns.result import Success
-
-        return isinstance(
-            await _ani.set_season_watched(await _uid(info), entry_id, season_no, watched), Success
+    async def ani_update_entry(
+        self, info: Info, entry_id: int, list_kind: Optional[str] = None,
+        watch_state: Optional[str] = None, label: Optional[str] = None,
+        label_reason: Optional[str] = None, notify_release: Optional[bool] = None,
+        active: Optional[bool] = None, canon_only: Optional[bool] = None,
+        anime_type: Optional[str] = None, subdomain_id: Optional[int] = None,
+        clear_category: bool = False,
+    ) -> bool:
+        _unwrap(
+            await _ani.update_entry(
+                await _uid(info), entry_id, label=label, label_reason=label_reason,
+                list_kind=list_kind, notify_release=notify_release, active=active,
+                canon_only=canon_only, watch_state=watch_state, anime_type=anime_type,
+                subdomain_id=subdomain_id, clear_category=clear_category,
+            )
         )
+        return True
+
+    @strawberry.field
+    async def ani_set_watched(
+        self, info: Info, entry_id: int, season_no: int, watched: bool
+    ) -> bool:
+        _unwrap(
+            await _ani.set_season_watched(await _uid(info), entry_id, season_no, watched)
+        )
+        return True
 
     @strawberry.field
     async def ani_set_cursor(
-        self, info: strawberry.Info, entry_id: int, season: int,
-        episode: int | None = None, position_seconds: int | None = None,
+        self, info: Info, entry_id: int, season: int,
+        episode: Optional[int] = None, position_seconds: Optional[int] = None,
     ) -> bool:
-        from returns.result import Success
-
-        return isinstance(
-            await _ani.set_cursor(await _uid(info), entry_id, season, episode, position_seconds),
-            Success,
+        _unwrap(
+            await _ani.set_cursor(await _uid(info), entry_id, season, episode, position_seconds)
         )
+        return True
 
     @strawberry.field
-    async def ani_mark_range(self, info: strawberry.Info, entry_id: int, from_season: int, to_season: int) -> bool:
-        from returns.result import Success
-
-        return isinstance(
-            await _ani.mark_range(await _uid(info), entry_id, from_season, to_season), Success
+    async def ani_mark_range(
+        self, info: Info, entry_id: int, from_season: int, to_season: int
+    ) -> bool:
+        _unwrap(
+            await _ani.mark_range(await _uid(info), entry_id, from_season, to_season)
         )
+        return True
 
     @strawberry.field
-    async def ani_events_seen(self, info: strawberry.Info, event_ids: list[int], seen: bool = True) -> int:
+    async def ani_finish(self, info: Info, entry_id: int) -> bool:
+        _unwrap(await _ani.mark_all_watched(await _uid(info), entry_id))
+        return True
+
+    @strawberry.field
+    async def ani_events_seen(
+        self, info: Info, event_ids: List[int], seen: bool = True
+    ) -> int:
         return await _ani.mark_events_seen(await _uid(info), event_ids, seen)
 
     @strawberry.field
-    async def ani_delete_entry(self, info: strawberry.Info, entry_id: int) -> bool:
-        from returns.result import Success
+    async def ani_delete_entry(self, info: Info, entry_id: int) -> bool:
+        _unwrap(await _ani.delete_entry(await _uid(info), entry_id))
+        return True
 
-        return isinstance(await _ani.delete_entry(await _uid(info), entry_id), Success)
+    @strawberry.field
+    async def ani_create_domain(self, info: Info, name: str) -> int:
+        return int(_unwrap(await _ani.create_domain(await _uid(info), name))["id"])
+
+    @strawberry.field
+    async def ani_rename_domain(self, info: Info, domain_id: int, name: str) -> bool:
+        _unwrap(await _ani.rename_domain(await _uid(info), domain_id, name))
+        return True
+
+    @strawberry.field
+    async def ani_delete_domain(self, info: Info, domain_id: int) -> bool:
+        _unwrap(await _ani.delete_domain(await _uid(info), domain_id))
+        return True
+
+    @strawberry.field
+    async def ani_set_domain_notify(
+        self, info: Info, domain_id: int, notify: bool
+    ) -> bool:
+        _unwrap(await _ani.set_domain_notify(await _uid(info), domain_id, notify))
+        return True
+
+    @strawberry.field
+    async def ani_create_subdomain(self, info: Info, domain_id: int, name: str) -> int:
+        return int(
+            _unwrap(await _ani.create_subdomain(await _uid(info), domain_id, name))["id"]
+        )
+
+    @strawberry.field
+    async def ani_rename_subdomain(
+        self, info: Info, subdomain_id: int, name: str
+    ) -> bool:
+        _unwrap(await _ani.rename_subdomain(await _uid(info), subdomain_id, name))
+        return True
+
+    @strawberry.field
+    async def ani_delete_subdomain(self, info: Info, subdomain_id: int) -> bool:
+        _unwrap(await _ani.delete_subdomain(await _uid(info), subdomain_id))
+        return True
+
+    @strawberry.field
+    async def ani_set_subdomain_notify(
+        self, info: Info, subdomain_id: int, notify: bool
+    ) -> bool:
+        _unwrap(await _ani.set_subdomain_notify(await _uid(info), subdomain_id, notify))
+        return True
+
+    @strawberry.field
+    async def ani_assign_entry(
+        self, info: Info, entry_id: int, subdomain_id: Optional[int] = None,
+        domain: Optional[str] = None, subdomain: Optional[str] = None,
+    ) -> bool:
+        user_id = await _uid(info)
+        if subdomain_id is None and domain and subdomain:
+            new_id = await _ani.ensure_category(user_id, domain, subdomain)
+            _unwrap(await _ani.assign_entry(user_id, entry_id, new_id))
+            return True
+        _unwrap(await _ani.assign_entry(user_id, entry_id, subdomain_id))
+        return True
 
 
 yt_schema = strawberry.Schema(query=YtQuery, mutation=YtMutation)

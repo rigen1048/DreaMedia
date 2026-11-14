@@ -1,0 +1,9 @@
+# Build context must stay source-only: a host node_modules built for another
+# platform (or a stale dist) would shadow what the image installs/builds.
+node_modules/
+dist/
+.bridge/
+.env
+.env.*
+*.log
+.DS_Store

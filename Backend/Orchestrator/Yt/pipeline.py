@@ -31,6 +31,7 @@ from Orchestrator.Yt.Filter.scan import filter_words
 from Orchestrator.Yt.Filter.time import ts_proccess
 from Utility.check_internet import wait_for_internet
 from Utility.logs import log
+from Utility.notify import notify_yt_video
 
 FETCHERS: Dict[str, Callable[[str], Awaitable[Result[FetchPayload, str]]]] = {
     "tracking": yt_rss,
@@ -78,7 +79,15 @@ async def run_subscription(store: PgStore, sub: PgSubscription) -> Result[str, s
                 # last_seen fell out of the feed window; take latest as the new anchor.
                 payload = msg[1]
                 latest = payload[0][min(payload[0])]
-                await store.save_videos(sub, ({1: latest},))
+                inserted_now = await store.save_videos_detailed(sub, ({1: latest},))
+                if inserted_now:
+                    meta = await store.channel_meta(sub.user_id, sub.sub_id)
+                    for video in inserted_now:
+                        await notify_yt_video(
+                            sub.user_id, sub.sub_id, meta.get("name") or sub.link,
+                            sub.kind, video, meta.get("domain", "uncategorized"),
+                            meta.get("subdomain", "uncategorized"),
+                        )
                 await store.update_schedule(sub, last_seen=latest["id"])
                 return Success("done")
             return Failure(str(msg))
@@ -95,9 +104,23 @@ async def run_subscription(store: PgStore, sub: PgSubscription) -> Result[str, s
             return Success("done")
         payload = filtered.unwrap()
 
-    # 4. Save new videos.
-    inserted = await store.save_videos(sub, payload)
+    # 4. Save new videos + emit one backend message per genuinely new video
+    #    (scoped by domain/subdomain/channel notification flags).
+    inserted_videos = await store.save_videos_detailed(sub, payload)
+    inserted = len(inserted_videos)
     latest_id = payload[0][min(payload[0])]["id"] if payload and payload[0] else None
+    if inserted_videos:
+        meta = await store.channel_meta(sub.user_id, sub.sub_id)
+        for video in inserted_videos:
+            await notify_yt_video(
+                sub.user_id,
+                sub.sub_id,
+                meta.get("name") or sub.link,
+                sub.kind,
+                video,
+                meta.get("domain", "uncategorized"),
+                meta.get("subdomain", "uncategorized"),
+            )
 
     # 5. Schedule the next check.
     if sub.kind == "random":

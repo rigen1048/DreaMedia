@@ -1,22 +1,38 @@
-# Backend follow-ups — Feed and msg contract
+# Backend notes
 
-The frontend/backend contract is now explicit: **Feed** is query-driven through the `/graphql` supergraph; **msg** is an exclusive backend-to-frontend HTTP message lane surfaced by the bell. Feed rows must never be used as bell messages. The backend exposes notification-history reads and seen-state updates; the frontend uses GraphQL for feed reads and feed seen-state changes.
+The backend is the source of truth for Postgres, ingestion, encryption,
+notification production and durable writes. The frontend owns presentation and
+one small service: the notification receiver.
 
-The preserved GitHub `main` was pulled through `b8f2aeb70ad028fc86b0e6b7877a31a937ba2c98` (`Frontend contract acceptance…`). That upstream pull added the URL resolver, stable feed IDs, seen-state writes, subscription mode/active changes, category CRUD, Ani Canon/cursor/range/easy completion, notification history, and cookie logout handling. Those changes came from upstream. The structural refactor moves the original backend under `/Backend` as Git-tracked renames; backend implementation files remain unchanged.
+## Contract
 
-## Backend owner follow-ups
+- **Data:** every read/write goes through one GraphQL endpoint
+  (`Backend/Graphql/children.py` + `supergraph.py`). Older REST management
+  routes still exist for compatibility and tooling, but the UI no longer uses
+  them.
+- **Messages:** `Utility.notify.notify()` writes the encrypted history row and
+  POSTs the same message to `FRONTEND_NOTIFY_URL` (the frontend bridge). Only
+  pushes that arrive through that receiver reach the bell.
+- **Scope gates:** `notify_yt_video()` and `notify_ani_release()` call
+  `PgStore.notify_enabled` / `AniStore.notify_enabled`, i.e.
+  `domain.notify AND subdomain.notify AND channel/entry.notify AND label='none'`
+  (plus subscription/entry `active`). Muting a parent silences children without
+  mutating their own flags.
 
-| Priority | Item | Current contract / frontend behavior |
-|---|---|---|
-| P2 | Wire operational events that should reach the bell (for example, a subscribed channel being deleted or becoming unavailable) to the existing backend `Utility.notify.notify()` helper. | `GET /notifications` reads message history and `POST /notifications/seen` acknowledges IDs. `notify()` can insert a message record, but no operational producer call sites are currently wired. The frontend bell displays only these records and never synthesizes messages from Feed data. |
-| P2 | Decide whether notification mode should also be configurable per domain/subdomain. | The API configures Track/Wordscan/Playlist/Random per channel and supports category Active/Inactive, add, rename, delete, and assignment. There is no category-level notification-mode field/route; the frontend does not fake one. |
-| P3 | Keep the current Ani progress model, or later support out-of-order per-episode history. | The API supports a forward-only cursor (season/episode/seconds), watched seasons, season ranges, and Complete All. The UI uses those operations rather than local-only per-episode checkboxes. |
+## Decisions worth keeping
 
-## Frontend API split
+| Area | Decision |
+| --- | --- |
+| Sessions | In-memory, httpOnly cookie; restart re-authenticates and re-derives the vault key |
+| Cursors | Forward-only anime cursor (season/episode/seconds) + watched seasons; no per-episode history |
+| Playlists | Links are inserted immediately; title/thumbnail enrichment runs in the background (oEmbed → yt-dlp → id stub) so a YouTube bot-wall can never lose a link |
+| Blocked / completed | Single `label` column (`none`/`completed`/`blocked`) shared by both media types; both labels suppress delivery |
+| Muting | Separate `notify` flags at domain, subdomain and channel/entry level |
 
-- **Feed queries:** `POST /graphql` with `ytFeed(limit)`, `ytSidebar`, `ytChannels(includeBlocked)`, and `aniEvents(includeSeen)` on the supergraph.
-- **Feed seen-state:** GraphQL mutations `ytMarkSeen(videoIds, seen)` and `aniEventsSeen(eventIds, seen)`.
-- **Bell messages only:** `GET /notifications` returns `{id, media, kind, payload, pushed, seen, created_at}`; `POST /notifications/seen` accepts `{ids, seen}`.
-- **HTTP REST outside Feed:** auth routes; YouTube subscribe/mode/active/label/category-management routes; Ani management metadata (`GET /ani/feed/management`) and tracking/progress writes. No `/yt/feed/*` or `/ani/feed/events` REST read is used for user-facing Feed content.
+## Remaining follow-ups
 
-Postgres, schema/migrations, media ingestion, auth, message production, and durable state remain backend-owned. The frontend owns no DB or demo fallback.
+- Wire purely operational events (channel deleted upstream, source unreachable)
+  through `notify()` so they appear beside release messages.
+- Optional per-domain default notification *type* (mode) if the UI ever needs
+  it; today modes are per channel by design.
+- Watch history beyond the linear cursor remains out of scope.

@@ -75,6 +75,25 @@ class CardStore:
             return Failure("card not found")
         return Success({"deleted": card_id})
 
+    async def rename_card(
+        self, user_id: int, card_id: int, name: str
+    ) -> Result[Dict[str, Any], str]:
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        cleaned = name.strip()
+        if not cleaned:
+            return Failure("playlist name is required")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "UPDATE yt_cards SET name_enc = $3 WHERE id = $1 AND user_id = $2",
+                card_id, user_id, encrypt(key, cleaned),
+            )
+        if result.endswith("0"):
+            return Failure("card not found")
+        return Success({"id": card_id, "name": cleaned})
+
     async def add_item(
         self, user_id: int, card_id: int, video_id: str, url: str, title: str,
         thumbnail: Optional[str],
@@ -102,6 +121,22 @@ class CardStore:
                 encrypt(key, title), encrypt(key, thumbnail) if thumbnail else None, position,
             )
         return Success(item_id)
+
+    async def update_item_meta(
+        self, user_id: int, item_id: int, title: str, thumbnail: Optional[str]
+    ) -> Result[bool, str]:
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "UPDATE yt_card_items i SET title_enc = $3, thumbnail_enc = $4 FROM yt_cards c "
+                "WHERE c.id = i.card_id AND c.user_id = $1 AND i.id = $2",
+                user_id, item_id, encrypt(key, title),
+                encrypt(key, thumbnail) if thumbnail else None,
+            )
+        return Success(not result.endswith("0"))
 
     async def set_item_done(
         self, user_id: int, item_id: int, done: bool

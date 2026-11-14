@@ -4,3 +4,7 @@ __pycache__/
 .uv-cache/
 backups/
 .env
+
+.bridge/
+.bridge.log
+.bridge.pid

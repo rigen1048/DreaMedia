@@ -229,3 +229,41 @@ CREATE TABLE IF NOT EXISTS ani_events (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_ani_events_entry ON ani_events(entry_id, seen);
+
+-- ==================== Feature-completion migrations ====================
+-- Idempotent: this file is replayed on every start, so post-original columns
+-- are added here behind IF NOT EXISTS / DO guards.
+
+-- Notification scoping: disable notifications for an entire domain, an
+-- entire subdomain, or a single channel. Effective delivery is
+-- domain.notify AND subdomain.notify AND channel.notify AND label = 'none'.
+ALTER TABLE yt_domains    ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE yt_subdomains ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE yt_channels   ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE ani_domains    ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE ani_subdomains ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- Anime card metadata: Type / Release / Time / season + episode counts.
+ALTER TABLE ani_entries ADD COLUMN IF NOT EXISTS anime_type TEXT;
+ALTER TABLE ani_entries ADD COLUMN IF NOT EXISTS airing_time TEXT;
+-- Watchlist split: watchlist rows carry confirmed | maybe.
+ALTER TABLE ani_entries ADD COLUMN IF NOT EXISTS watch_state TEXT;
+
+-- List buckets: watching | next_sequel | new_anime | watchlist.
+DO $$
+BEGIN
+    ALTER TABLE ani_entries DROP CONSTRAINT IF EXISTS ani_entries_list_check;
+    ALTER TABLE ani_entries DROP CONSTRAINT IF EXISTS ani_entries_watch_state_check;
+    ALTER TABLE ani_entries
+        ADD CONSTRAINT ani_entries_list_check
+        CHECK (list IN ('watching', 'next_sequel', 'new_anime', 'watchlist', 'confirmed', 'maybe'));
+    ALTER TABLE ani_entries
+        ADD CONSTRAINT ani_entries_watch_state_check
+        CHECK (watch_state IS NULL OR watch_state IN ('confirmed', 'maybe'));
+END $$;
+
+ALTER TABLE yt_randomsubs ADD COLUMN IF NOT EXISTS claimed_at BIGINT;
+CREATE INDEX IF NOT EXISTS idx_yt_channels_subdomain ON yt_channels(subdomain_id);
+CREATE INDEX IF NOT EXISTS idx_ani_entries_subdomain ON ani_entries(subdomain_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);

@@ -2,6 +2,10 @@
 # Postgres only holds ciphertext — per-user keys derive from passwords at
 # login and live only in the app's in-memory vault (D8/D9).
 # ACCESS (D54): 'wifi' publishes on 0.0.0.0 (LAN), 'computer' on 127.0.0.1 only.
+#
+# Flow: db (Postgres 17) → backend (FastAPI + GraphQL) → frontend (nginx + SPA,
+# proxies /graphql, /auth, … to backend and /bridge/ to the notification
+# receiver), with bridge (REST + SSE) as a sibling the backend pushes into.
 services:
   db:
     image: postgres:17-alpine
@@ -13,19 +17,43 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "${ACCESS_HOST:-127.0.0.1}:5432:5432"
+      - "${ACCESS_HOST:-127.0.0.1}:${DREAMEDIA_PG_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dreamedia"]
+      test: ["CMD-SHELL", "pg_isready -U dreamedia -d dreamedia"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 12
+      start_period: 5s
+
+  bridge:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile.bridge
+    restart: unless-stopped
+    environment:
+      BRIDGE_HOST: 0.0.0.0
+      BRIDGE_PORT: "3100"
+      BRIDGE_STORE: /data/inbox.json
+      BRIDGE_BACKEND_URL: http://backend:8000
+      FRONTEND_NOTIFY_TOKEN: ${FRONTEND_NOTIFY_TOKEN:-}
+      BRIDGE_ALLOW_ORIGIN: ${BRIDGE_ALLOW_ORIGIN:-*}
+    volumes:
+      # Bind mount, not a named volume: bell history must survive the
+      # "docker compose down -v" that start.py performs on every launch.
+      - ./.bridge:/data
+    # No published port: the bell is reached through the frontend's /bridge/
+    # proxy and pushes come from the backend over the compose network.
 
   backend:
     build: ./Backend
     restart: unless-stopped
     environment:
-      DREAMEDIA_PG_DSN: postgresql://dreamedia:${DREAMEDIA_PG_PASSWORD}@db:5432/dreamedia
+      DREAMEDIA_PG_HOST: db
+      DREAMEDIA_PG_PORT: "5432"
+      DREAMEDIA_PG_PASSWORD: ${DREAMEDIA_PG_PASSWORD:?Set DREAMEDIA_PG_PASSWORD in the root .env}
       BACKUP_DIR: /backups
+      FRONTEND_NOTIFY_URL: http://bridge:3100/api/notifications
+      FRONTEND_NOTIFY_TOKEN: ${FRONTEND_NOTIFY_TOKEN:-}
     volumes:
       - ./backups:/backups
     ports:
@@ -33,6 +61,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      bridge:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
 
   frontend:
     build: ./Frontend
@@ -40,7 +76,10 @@ services:
     ports:
       - "${ACCESS_HOST:-127.0.0.1}:3000:3000"
     depends_on:
-      - backend
+      backend:
+        condition: service_started
+      bridge:
+        condition: service_started
 
 volumes:
   pgdata:

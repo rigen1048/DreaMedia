@@ -1,0 +1,12 @@
+# Never bake local state into the image.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+backups/
+.env
+.env.*
+*.dump
+.manus/
