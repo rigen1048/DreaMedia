@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import * as api from "../../app/api";
 import { useApp, useWorkspace } from "../../app/state";
+import { advanceMessage } from "../../lib/format";
 
 export function Dialog({
   title,
@@ -190,24 +191,47 @@ export function AddSourceDialog({ onClose }: { onClose: () => void }) {
 }
 
 export function AddAnimeDialog({ onClose }: { onClose: () => void }) {
-  const { act } = useApp();
+  const { notify, refresh } = useApp();
   const workspace = useWorkspace();
   const [title, setTitle] = useState("");
   const [list, setList] = useState("watching");
   const [domain, setDomain] = useState("");
   const [subdomain, setSubdomain] = useState("");
+  const [progress, setProgress] = useState<"fresh" | "current" | "finished">("fresh");
+  const [season, setSeason] = useState(1);
+  const [episode, setEpisode] = useState(0);
+  const [finishedSeasons, setFinishedSeasons] = useState(1);
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
     if (!title.trim() || busy) return;
     setBusy(true);
-    const ok = await act(
-      () =>
-        api.aniTrack(title.trim(), list, domain.trim() || undefined, subdomain.trim() || undefined),
-      "Anime tracked — seasons and episode counts resolved",
-    );
-    setBusy(false);
-    if (ok) onClose();
+    try {
+      const created = await api.aniTrack(
+        title.trim(),
+        list,
+        domain.trim() || undefined,
+        subdomain.trim() || undefined,
+      );
+      let message = "Anime tracked — seasons and episode counts resolved";
+      if (progress === "current") {
+        await api.aniSetCursor(created.aniTrack, Math.max(1, season), Math.max(0, episode), null);
+        message = `Tracked — resuming at S${Math.max(1, season)} E${Math.max(0, episode)}`;
+      } else if (progress === "finished") {
+        const decision = await api.aniAdvanceSeason(
+          created.aniTrack,
+          Math.max(1, finishedSeasons),
+        );
+        message = advanceMessage(decision.aniAdvanceSeason);
+      }
+      await refresh();
+      notify(message, "ok");
+      onClose();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not track that anime", "error");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -229,15 +253,88 @@ export function AddAnimeDialog({ onClose }: { onClose: () => void }) {
           />
         </label>
 
-        <label className="field">
-          <span>Initial bucket</span>
-          <select className="select" value={list} onChange={(event) => setList(event.target.value)}>
-            <option value="watching">Watching</option>
-            <option value="next_sequel">Next sequel</option>
-            <option value="new_anime">New anime</option>
-            <option value="watchlist">Watchlist</option>
-          </select>
-        </label>
+        <div className="field">
+          <span>Where are you with it?</span>
+          <div className="filterbar">
+            {[
+              ["fresh", "Just starting"],
+              ["current", "On an episode"],
+              ["finished", "Finished a season"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                className="chipbtn"
+                data-active={progress === value}
+                onClick={() => setProgress(value as typeof progress)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {progress === "current" && (
+          <div className="modal__row">
+            <label className="field">
+              <span>Season</span>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                value={season}
+                onChange={(event) => setSeason(Number(event.target.value))}
+              />
+            </label>
+            <label className="field">
+              <span>Episode watched</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                value={episode}
+                onChange={(event) => setEpisode(Number(event.target.value))}
+              />
+            </label>
+          </div>
+        )}
+
+        {progress === "finished" && (
+          <div className="modal__row">
+            <label className="field">
+              <span>Seasons finished</span>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                value={finishedSeasons}
+                onChange={(event) => setFinishedSeasons(Number(event.target.value))}
+              />
+            </label>
+            <div className="field" style={{ justifyContent: "flex-end" }}>
+              <span>Then the backend decides</span>
+              <p className="faint" style={{ margin: 0, fontSize: 10.5, lineHeight: 1.45 }}>
+                Season {Math.max(1, finishedSeasons) + 1} already out → it jumps there; still
+                scheduled → Next sequel with the release date and a notification.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {progress === "fresh" && (
+          <label className="field">
+            <span>Initial bucket</span>
+            <select
+              className="select"
+              value={list}
+              onChange={(event) => setList(event.target.value)}
+            >
+              <option value="watching">Watching</option>
+              <option value="next_sequel">Next sequel</option>
+              <option value="new_anime">New anime</option>
+              <option value="watchlist">Watchlist</option>
+            </select>
+          </label>
+        )}
 
         <div className="modal__row">
           <label className="field">

@@ -323,6 +323,19 @@ class YtMutation:
         return True
 
     @strawberry.field
+    async def yt_fetch_now(self, info: Info) -> int:
+        """Queue every active subscription of this user and wake the manager.
+
+        Returns how many subscriptions are due now — the UI shows it in the
+        toast, the polling itself stays in the one background manager.
+        """
+        from Orchestrator.Yt import manager
+
+        queued = await _yt.request_fetch_now(await _uid(info))
+        manager.wake()
+        return queued
+
+    @strawberry.field
     async def yt_mark_seen(
         self, info: Info, video_ids: List[int], seen: bool = True
     ) -> int:
@@ -518,6 +531,18 @@ class AniSeason:
     release_date: Optional[str]
     next_airing_at: Optional[int]
     next_airing_ep: Optional[int]
+
+
+@strawberry.type
+class AniAdvance:
+    """What "finish this season" decided, straight from the cached chain."""
+
+    action: str                     # watching | awaiting | completed
+    season: int
+    episode: Optional[int]
+    title: Optional[str]
+    release_date: Optional[str]
+    episodes_total: Optional[int]
 
 
 @strawberry.type
@@ -717,6 +742,26 @@ class AniMutation:
     async def ani_finish(self, info: Info, entry_id: int) -> bool:
         _unwrap(await _ani.mark_all_watched(await _uid(info), entry_id))
         return True
+
+    @strawberry.field
+    async def ani_advance_season(
+        self, info: Info, entry_id: int, from_season: Optional[int] = None
+    ) -> AniAdvance:
+        """Finish a season and let the backend decide where the entry lands:
+        the next season is already out → watching at its first episode, it has
+        a future date → Next sequel with that date, no next season → completed.
+        """
+        data = _unwrap(
+            await _ani.advance_season(await _uid(info), entry_id, from_season)
+        )
+        return AniAdvance(
+            action=data["action"],
+            season=data["season"],
+            episode=data.get("episode"),
+            title=data.get("title"),
+            release_date=data.get("release_date"),
+            episodes_total=data.get("episodes_total"),
+        )
 
     @strawberry.field
     async def ani_events_seen(

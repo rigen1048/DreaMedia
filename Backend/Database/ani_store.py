@@ -577,6 +577,135 @@ class AniStore:
             return Failure("entry has no seasons")
         return await self.mark_range(user_id, entry_id, 1, max_season)
 
+    async def advance_season(
+        self, user_id: int, entry_id: int, from_season: Optional[int] = None
+    ) -> Result[Dict[str, Any], str]:
+        """Finish one season and step into the next one — the decision is made
+        from the cached chain, never guessed by the UI:
+
+        watching   the next season already aired → cursor to its episode 1,
+                   the entry goes back to the Watching list
+        awaiting   the next season has a future date → the entry waits in
+                   Next sequel with that release date, and its schedule row is
+                   due now so the pipeline confirms the date and notifies
+        completed  the chain ends here
+
+        Finishing season N also flags every earlier season watched (you cannot
+        finish 3 without finishing 1 and 2).
+        """
+        key = await vault.get(user_id)
+        pool = await get_pool()
+        now = int(time.time())
+        today = time.strftime("%Y-%m-%d", time.gmtime(now))
+        async with pool.acquire() as con:
+            async with con.transaction():
+                entry = await con.fetchrow(
+                    "SELECT cursor_season, cursor_episode FROM ani_entries "
+                    "WHERE id = $1 AND user_id = $2",
+                    entry_id, user_id,
+                )
+                if entry is None:
+                    return Failure("entry not found")
+                season_no = int(from_season or entry["cursor_season"] or 1)
+                current = await con.fetchrow(
+                    "SELECT season_no, episodes_total, episodes_aired FROM ani_seasons "
+                    "WHERE entry_id = $1 AND season_no = $2",
+                    entry_id, season_no,
+                )
+                if current is None:
+                    return Failure(f"season {season_no} not in this entry's chain")
+
+                await con.execute(
+                    "UPDATE ani_seasons SET watched = TRUE "
+                    "WHERE entry_id = $1 AND season_no <= $2",
+                    entry_id, season_no,
+                )
+                done_ep = int(
+                    current["episodes_total"]
+                    or current["episodes_aired"]
+                    or entry["cursor_episode"]
+                    or 0
+                )
+
+                nxt = await con.fetchrow(
+                    "SELECT season_no, title_enc, status, episodes_total, episodes_aired, "
+                    "start_date, release_date, next_airing_at, next_airing_ep "
+                    "FROM ani_seasons WHERE entry_id = $1 AND season_no = $2",
+                    entry_id, season_no + 1,
+                )
+                if nxt is None:
+                    await con.execute(
+                        "UPDATE ani_entries SET cursor_season = $3, cursor_episode = $4, "
+                        "cursor_position_seconds = NULL WHERE id = $1 AND user_id = $2",
+                        entry_id, user_id, season_no, done_ep,
+                    )
+                    return Success({
+                        "action": "completed",
+                        "season": season_no,
+                        "episode": done_ep,
+                        "title": None,
+                        "release_date": None,
+                        "episodes_total": current["episodes_total"],
+                    })
+
+                title = decrypt(key, nxt["title_enc"]) if key else None
+                aired = int(nxt["episodes_aired"] or 0)
+                status = (nxt["status"] or "").upper()
+                start = nxt["start_date"]
+                released = (
+                    aired >= 1
+                    or status == "FINISHED"
+                    or (bool(start) and str(start)[:10] <= today)
+                )
+
+                if released:
+                    await con.execute(
+                        "UPDATE ani_entries SET list = 'watching', cursor_season = $3, "
+                        "cursor_episode = 1, cursor_position_seconds = NULL "
+                        "WHERE id = $1 AND user_id = $2",
+                        entry_id, user_id, season_no + 1,
+                    )
+                    return Success({
+                        "action": "watching",
+                        "season": season_no + 1,
+                        "episode": 1,
+                        "title": title,
+                        "release_date": nxt["release_date"] or start,
+                        "episodes_total": nxt["episodes_total"],
+                    })
+
+                release = nxt["release_date"] or start
+                await con.execute(
+                    "UPDATE ani_entries SET cursor_season = $3, cursor_episode = $4, "
+                    "cursor_position_seconds = NULL WHERE id = $1 AND user_id = $2",
+                    entry_id, user_id, season_no, done_ep,
+                )
+                await con.execute(
+                    "UPDATE ani_entries SET list = 'next_sequel' WHERE id = $1 AND user_id = $2",
+                    entry_id, user_id,
+                )
+                if start:
+                    await con.execute(
+                        "UPDATE ani_seasons SET release_date = COALESCE(release_date, $3) "
+                        "WHERE entry_id = $1 AND season_no = $2",
+                        entry_id, season_no + 1, start,
+                    )
+                # Due now: the pipeline re-checks this season and raises the
+                # next_sequel_date notification with the confirmed date.
+                await con.execute(
+                    "UPDATE ani_schedule SET next_check_ts = $3 "
+                    "WHERE entry_id = $1 AND season_no = $2",
+                    entry_id, season_no + 1, now,
+                )
+                return Success({
+                    "action": "awaiting",
+                    "season": season_no + 1,
+                    "episode": 0,
+                    "title": title,
+                    "release_date": release,
+                    "episodes_total": nxt["episodes_total"],
+                })
+
 
     async def ensure_category(
         self, user_id: int, domain: str, subdomain: Optional[str]

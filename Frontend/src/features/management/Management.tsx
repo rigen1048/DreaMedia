@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Ban, FolderTree, Plus, Search, Tv, Undo2 } from "lucide-react";
+import { Ban, FolderTree, Plus, RefreshCw, Search, Tv, Undo2 } from "lucide-react";
 import * as api from "../../app/api";
 import { useApp, useWorkspace } from "../../app/state";
 import { EmptyState } from "../../app/ui";
@@ -19,11 +19,31 @@ type TabKey = (typeof TABS)[number]["key"];
 
 export default function Management() {
   const workspace = useWorkspace();
+  const { notify, refresh } = useApp();
   const [tab, setTab] = useState<TabKey>("channels");
   const [search, setSearch] = useState("");
   const [scope, setScope] = useState<"all" | "muted" | "inactive">("all");
   const [animeList, setAnimeList] = useState("all");
   const [dialog, setDialog] = useState<"source" | "anime" | null>(null);
+  const [fetching, setFetching] = useState(false);
+
+  const fetchNow = async () => {
+    setFetching(true);
+    try {
+      const result = await api.ytFetchNow();
+      await refresh();
+      notify(
+        result.ytFetchNow
+          ? `Fetching ${result.ytFetchNow} source${result.ytFetchNow === 1 ? "" : "s"} now — new uploads land in Notifications`
+          : "Nothing to fetch — add a source first",
+        result.ytFetchNow ? "ok" : "info",
+      );
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Fetch failed", "error");
+    } finally {
+      setFetching(false);
+    }
+  };
 
   const muted =
     workspace.ytChannels.filter((channel) => !channel.notifyEnabled && channel.label !== "blocked")
@@ -96,9 +116,23 @@ export default function Management() {
         <span className="grow" />
 
         {tab === "channels" && (
-          <button className="btn btn--sm btn--primary" onClick={() => setDialog("source")}>
-            <Plus size={13} /> Add source
-          </button>
+          <>
+            <button
+              className="btn btn--sm"
+              onClick={() => void fetchNow()}
+              disabled={fetching}
+              title="Check every active source right now instead of waiting for the next poll"
+            >
+              <RefreshCw
+                size={13}
+                style={fetching ? { animation: "spin 1s linear infinite" } : undefined}
+              />
+              {fetching ? "Fetching…" : "Fetch now"}
+            </button>
+            <button className="btn btn--sm btn--primary" onClick={() => setDialog("source")}>
+              <Plus size={13} /> Add source
+            </button>
+          </>
         )}
         {tab === "anime" && (
           <button className="btn btn--sm btn--primary" onClick={() => setDialog("anime")}>

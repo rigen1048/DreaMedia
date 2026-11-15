@@ -121,17 +121,29 @@ type counters and seen-state. The bell covers backend messages only and opens
 `/bridge` messages with a live delivery indicator.
 
 **Management** — channels table with inline editors (type, WordScan terms,
-random frequency, category attach, notify switch, pause/block, delete), category
-cards for domains and subdomains (create, rename, delete, mute at any level),
-anime cards with metadata (type, seasons, episodes, release, `S`/`E`, progress,
-airing countdown) plus list buckets, watchlist certainty, notify switches and
-per-season state, and a blocked/cleanup lane.
+random frequency, category attach, notify switch, pause/block, delete) and a
+**Fetch now** button that makes every active source due immediately and wakes
+the manager, so a freshly added channel shows its videos without waiting for
+the next poll. Category cards for domains and subdomains (create, rename,
+delete, mute at any level), anime cards with metadata (type, seasons, episodes,
+release, `S`/`E`, progress, airing countdown) plus list buckets, watchlist
+certainty, notify switches and per-season state (with each season's date), and
+a blocked/cleanup lane.
+
+Tracking an anime asks where you are: **just starting**, **on S*n* E*m***, or
+**finished *n* seasons**. For the last one the backend decides by itself
+whether the next season is already out — it jumps there and puts the entry back
+in Watching — or is still scheduled, in which case the entry waits in Next
+sequel with the announced date and a bell message when it airs. The same
+**Next season** button on any card (Management or Todo) does that bump later.
 
 **Todo** — standalone playlists built from pasted video links (multiple named
 cards, progress, check-off, item removal; links are stored instantly and
-metadata is enriched in the background) and an anime queue driven by the same
-cursors as Management (`+1 episode`, season done, finish) with next-airing
-context.
+metadata is enriched in the background). The whole row — thumbnail and title —
+is the link to the video, cards size to their content instead of stretching to
+the tallest card in the row, and long lists scroll inside a capped area. The
+anime queue below is driven by the same cursors as Management (`+1 episode`,
+`Next season`, finish) with next-airing and next-season dates.
 
 **Admin** (admin role only, fourth rail item) — backups with sizes and ages
 (take one now, download, pick one to restore), a restore panel that accepts an
@@ -199,12 +211,12 @@ show the page.
 ## Checks
 
 ```bash
-# 29 browser checks against the running stack (real UI, real GraphQL),
+# 35 browser checks against the running stack (real UI, real GraphQL),
 # including a real backup → upload → destructive restore round-trip
 python3 qa/e2e.py
 python3 qa/shots.py        # regenerate the screenshots in docs/screenshots
 
-# 66 backend tests: units, API/GraphQL integration, black-box scenarios, admin
+# 72 backend tests: units, API/GraphQL integration, black-box scenarios, admin
 cd Backend && DREAMEDIA_PG_PASSWORD=... .venv/bin/python -m pytest -q
 cd ../Frontend && npm run check && npm run build
 ```
@@ -222,6 +234,13 @@ pipeline itself runs unmodified. It covers, among others:
 | Anime release day | Same release date + same episode count on Friday morning ⇒ `release_confirmed`, filed under **Today**, no duplicate |
 | Anime date moved | Release date changed ⇒ `release_changed` carrying old and new dates |
 | Anime already aired | Episode count increased ⇒ `episode_released` ("Episode released") in **Today** |
+
+`Backend/tests/test_progress.py` covers the two shortcuts: finishing a season
+decides by itself between *watching the next one*, *waiting in Next sequel with
+the announced date* (its schedule row is due immediately so the bell fires) and
+*completed*, using a hand-built season chain so no AniList state can make it
+flaky; "fetch now" queues only the caller's rows and wakes the manager instead
+of starting a second worker.
 
 `Backend/tests/test_admin.py` covers the admin surface: anonymous and normal
 users are refused on every admin field, settings floors are enforced, a real

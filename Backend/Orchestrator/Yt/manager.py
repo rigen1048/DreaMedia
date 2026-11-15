@@ -24,6 +24,30 @@ from Orchestrator.Yt.pipeline import run_subscription
 from Utility.logs import log
 
 
+# "Fetch now" (UI): the store nudges due timestamps, then the mutation rings
+# this bell so the pass happens immediately instead of at the next tick.
+# Still a single manager — no second worker, no duplicate claims.
+_WAKE = asyncio.Event()
+
+
+def wake() -> None:
+    """Ask the manager loop to look for due rows right away."""
+    _WAKE.set()
+
+
+async def _nap(seconds: float) -> None:
+    """Sleep for `seconds`, returning early when wake() is called."""
+    if _WAKE.is_set():
+        _WAKE.clear()
+        return
+    try:
+        await asyncio.wait_for(_WAKE.wait(), timeout=max(0.0, seconds))
+    except asyncio.TimeoutError:
+        pass
+    finally:
+        _WAKE.clear()
+
+
 async def run_once(store: PgStore) -> int:
     """One pass: claim everything due, run it, release claims. Returns count."""
     if restore_in_progress():
@@ -62,17 +86,17 @@ async def run_forever(store: PgStore | None = None) -> None:
             next_ts = await store.next_due_ts()
             if next_ts is None:
                 log.debug("nothing scheduled; sleeping %ss", MANAGER_IDLE_SLEEP_SECONDS)
-                await asyncio.sleep(MANAGER_IDLE_SLEEP_SECONDS)
+                await _nap(MANAGER_IDLE_SLEEP_SECONDS)
             else:
                 wait = max(5.0, next_ts - time.time())
                 log.debug("next due in %.0fs", wait)
-                await asyncio.sleep(min(wait, MANAGER_IDLE_SLEEP_SECONDS * 10))
+                await _nap(min(wait, MANAGER_IDLE_SLEEP_SECONDS * 10))
         except asyncio.CancelledError:
             log.info("yt manager cancelled")
             raise
         except Exception:
             log.exception("yt manager loop error; backing off")
-            await asyncio.sleep(45)
+            await _nap(45)
 
 
 if __name__ == "__main__":

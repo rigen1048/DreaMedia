@@ -3,7 +3,7 @@ import { CalendarClock, ChevronDown, ListTree, Plus, Sparkles } from "lucide-rea
 import * as api from "../../app/api";
 import { useApp, useWorkspace } from "../../app/state";
 import { EmptyState, MiniSwitch, Switch, Thumb } from "../../app/ui";
-import { timeAgo, formatDate } from "../../lib/format";
+import { advanceMessage, timeAgo, formatDate } from "../../lib/format";
 import type { AniEntry, AniList } from "../../lib/types";
 
 const LISTS: { value: AniList; label: string }[] = [
@@ -105,8 +105,18 @@ function AnimeCard({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const { act } = useApp();
+  const { act, notify, refresh } = useApp();
   const workspace = useWorkspace();
+
+  const advance = async (fromSeason: number) => {
+    try {
+      const result = await api.aniAdvanceSeason(entry.id, fromSeason);
+      await refresh();
+      notify(advanceMessage(result.aniAdvanceSeason), "ok");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not advance", "error");
+    }
+  };
 
   const totalEps = entry.episodeCount || 0;
   const progress = totalEps
@@ -285,14 +295,10 @@ function AnimeCard({
             </button>
             <button
               className="btn btn--sm"
-              onClick={() =>
-                void act(
-                  () => api.aniMarkRange(entry.id, 1, entry.seasons.length || 1),
-                  "Seasons marked watched",
-                )
-              }
+              title="Finish this season and move on — the backend checks whether the next one is already out"
+              onClick={() => void advance(entry.cursorSeason ?? 1)}
             >
-              Watch all
+              Next season
             </button>
             <button
               className="btn btn--sm btn--primary"
@@ -314,6 +320,16 @@ function AnimeCard({
                 </span>
                 <span>
                   {season.episodesAired ?? 0}/{season.episodesTotal ?? "?"} ep
+                </span>
+                <span
+                  style={{
+                    textAlign: "right",
+                    whiteSpace: "nowrap",
+                    color: season.episodesAired ? "var(--faint)" : "var(--ani)",
+                  }}
+                  title={season.episodesAired ? "Airing since" : "Announced release"}
+                >
+                  {formatDate(season.releaseDate ?? season.startDate)}
                 </span>
                 <MiniSwitch
                   checked={season.watched}
