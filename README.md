@@ -149,10 +149,25 @@ Keyboard: `1` `2` `3` switch modes, `/` searches, `Esc` closes panels.
 ## Checks
 
 ```bash
-# from the repo root, against the running stack
-python3 e2e.py             # 18 browser checks over the real UI
+# 18 browser checks against the running stack (real UI, real GraphQL)
+python3 qa/e2e.py
+python3 qa/shots.py        # regenerate the screenshots in docs/screenshots
 
-# unit/integration
+# 54 backend tests: units, API/GraphQL integration, and black-box scenarios
 cd Backend && DREAMEDIA_PG_PASSWORD=... .venv/bin/python -m pytest -q
 cd ../Frontend && npm run check && npm run build
 ```
+
+`Backend/tests/test_scenarios.py` is the black-box lane: it drives the real
+app over HTTP/GraphQL (cookies, Postgres, scheduler tick) and fakes only the
+two upstreams it cannot own — the YouTube RSS feed and AniList — so the
+pipeline itself runs unmodified. It covers, among others:
+
+| Case | What it proves |
+| --- | --- |
+| YT last-seen anchor | A channel whose last-seen video is the 3rd newest yields exactly two messages; the next upload produces only the new one |
+| WordScan | Keyword filtering fires on matching titles only, and the anchor still advances past non-matching uploads |
+| Mute scope | A muted channel stores the video but sends no message; a muted domain silences it without rewriting the channel flag |
+| Anime release day | Same release date + same episode count on Friday morning ⇒ `release_confirmed`, filed under **Today**, no duplicate |
+| Anime date moved | Release date changed ⇒ `release_changed` carrying old and new dates |
+| Anime already aired | Episode count increased ⇒ `episode_released` ("Episode released") in **Today** |

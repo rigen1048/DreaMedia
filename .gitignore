@@ -9,3 +9,4 @@ backups/*
 .bridge/
 .bridge.log
 .bridge.pid
+qa/shots/
