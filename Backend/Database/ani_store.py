@@ -102,6 +102,13 @@ class AniStore:
             return
         pool = await get_pool()
         async with pool.acquire() as con:
+            # The row can vanish between scheduling and running: the user deleted
+            # the entry, or a restore replaced the database under the workers.
+            # Writing seasons then trips the foreign key, so skip instead.
+            if not await con.fetchval(
+                "SELECT 1 FROM ani_entries WHERE id = $1 AND user_id = $2", entry_id, user_id
+            ):
+                return
             async with con.transaction():
                 await self._upsert_seasons(con, key, entry_id, payload)
 
