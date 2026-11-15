@@ -24,6 +24,7 @@ type AppState = {
   signup: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   act: (operation: () => Promise<unknown>, success?: string) => Promise<boolean>;
+  notify: (message: string, tone?: Toast["tone"]) => void;
   toasts: Toast[];
   dismissToast: (id: number) => void;
 };
@@ -124,6 +125,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       signup,
       logout,
       act,
+      notify: pushToast,
       toasts,
       dismissToast,
     };
@@ -135,6 +137,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     query.data,
     query.error,
     query.isPending,
+    pushToast,
     refresh,
     signup,
     toasts,

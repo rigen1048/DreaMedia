@@ -158,6 +158,10 @@ async def main() -> None:
     assert key, "vault key missing"
 
     async with pool.acquire() as con:
+        # A demo box must be able to show the admin page. On a fresh database
+        # signup already made this user admin; on a seeded/restored one it
+        # would be a plain user, which is exactly the lockout the audit found.
+        await con.execute("UPDATE users SET role = 'admin' WHERE id = $1", user_id)
         await con.execute("DELETE FROM yt_cards WHERE user_id = $1", user_id)
         await con.execute("DELETE FROM yt_channels WHERE user_id = $1", user_id)
         await con.execute("DELETE FROM yt_domains WHERE user_id = $1", user_id)

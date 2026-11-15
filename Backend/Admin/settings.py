@@ -81,3 +81,23 @@ async def set_value(key: str, value: str) -> Result[str, str]:
             str(typed),
         )
     return Success(str(typed))
+
+
+async def describe() -> list[dict]:
+    """Every editable key with its current value and hardcoded floor.
+
+    The admin page renders floors next to the inputs so nobody has to learn
+    about them from a rejected save.
+    """
+    values = await get_all()
+    described = []
+    for key, (typ, floor) in _FLOORS.items():
+        described.append(
+            {
+                "key": key,
+                "value": values.get(key, ""),
+                "floor": None if floor is None else str(int(floor)),
+                "kind": "int" if typ is int else "text",
+            }
+        )
+    return described

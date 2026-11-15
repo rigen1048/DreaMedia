@@ -20,6 +20,7 @@ chromium`, or a system chromium at /usr/bin/chromium).
 import asyncio
 import json
 import os
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -39,6 +40,20 @@ def chromium_path() -> str | None:
         if os.path.exists(candidate):
             return candidate
     return None  # fall back to Playwright's own download
+
+
+async def js(page, query: str, variables: dict | None = None):
+    """Run a GraphQL operation in the page so it uses the real session cookie."""
+    return await page.evaluate(
+        """async ({query, variables}) => {
+          const r = await fetch('/graphql', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({query, variables})});
+          const body = await r.json();
+          if (body.errors) throw new Error(body.errors[0].message);
+          return body.data;
+        }""",
+        {"query": query, "variables": variables or {}},
+    )
 
 
 def ok(name: str, condition: bool, extra: str = "") -> None:
@@ -215,6 +230,99 @@ async def main() -> None:
         await page.get_by_role("button", name="Mark all read").click()
         await page.wait_for_timeout(1200)
         ok("bell mark all read", "0 new" in (await page.locator(".bell-panel__head").inner_text()).lower())
+
+        # -------- admin: page, backup, upload, destructive restore round-trip
+        await page.get_by_role("button", name="Admin").click()
+        await page.wait_for_selector(".table", timeout=15000)
+        ok("admin page reachable", await page.locator("h1", has_text="Admin").count() == 1)
+
+        stamp2 = time.strftime("%H%M%S")
+        marker = f"Restore marker {stamp2}"
+        await js(page, "mutation($n:String!){ ytCreateDomain(name:$n) }", {"n": marker})
+
+        before = await js(page, "{ adminBackups { file mtime } }")
+        await page.get_by_role("button", name="Back up now").click()
+        await page.wait_for_timeout(5000)
+        after = await js(page, "{ adminBackups { file size mtime } }")
+        newest = after["adminBackups"][0] if after["adminBackups"] else None
+        ok(
+            "backup written from the admin page",
+            newest is not None and (not before["adminBackups"] or newest["file"] != before["adminBackups"][0]["file"]),
+            newest["file"] if newest else "none",
+        )
+
+        # Download the dump through the browser session, exactly as an admin
+        # rescuing the box would, then prove the restore brings data back.
+        download = await ctx.request.get(f"{BASE}/admin/backups/{newest['file']}")
+        body = await download.body()
+        dump_path = Path(tempfile.gettempdir()) / "dreamedia-e2e-restore.dump"
+        dump_path.write_bytes(body)
+        ok("dump downloadable", download.status == 200 and len(body) > 10_000, f"{len(body)} bytes")
+
+        domains = await js(page, "{ ytDomains { id name } }")
+        marker_id = next(row["id"] for row in domains["ytDomains"] if row["name"] == marker)
+        await js(page, "mutation($id:Int!){ ytDeleteDomain(domainId:$id) }", {"id": marker_id})
+        gone = await js(page, "{ ytDomains { name } }")
+        ok("marker removed before restore", all(row["name"] != marker for row in gone["ytDomains"]))
+
+        await page.locator(".chipbtn", has_text="Restore").first.click()
+        await page.wait_for_selector("input[type=file]", state="attached", timeout=10000)
+        await page.set_input_files("input[type=file]", str(dump_path))
+        await page.wait_for_function(
+            "() => document.querySelector('.restore-confirm strong')?.textContent?.includes('dreamedia-')",
+            timeout=60000,
+        )
+        ok("upload accepted", True)
+
+        await page.fill("input[aria-label='Type RESTORE to confirm']", "RESTORE")
+        await page.get_by_role("button", name="Restore database").click()
+        # A successful restore drops every session, so the app must fall back
+        # to the login screen on its own.
+        await page.wait_for_selector("input[placeholder='your-handle']", timeout=180000)
+        ok("restore signed every session out", True)
+
+        await page.fill("input[placeholder='your-handle']", "demo")
+        await page.fill("input[type=password]", "demo1234")
+        await page.click("form.auth-card button.btn--primary")
+        await page.wait_for_selector(".rail", timeout=20000)
+        restored = await js(page, "{ ytDomains { id name } }")
+        marker_row = next((row for row in restored["ytDomains"] if row["name"] == marker), None)
+        ok("restore brought the deleted data back", marker_row is not None, marker)
+        if marker_row:
+            await js(page, "mutation($id:Int!){ ytDeleteDomain(domainId:$id) }", {"id": marker_row["id"]})
+
+        # -------- a normal user must not see or reach admin
+        outsider = f"e2euser{stamp2}"
+        signup = urllib.request.Request(
+            f"{BASE}/auth/signup",
+            data=json.dumps({"username": outsider, "password": "outsider-pass"}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(signup) as resp:
+            created = json.loads(resp.read())
+        ok("second account created", created.get("ok") is True, created.get("role", ""))
+
+        other_ctx = await browser.new_context(viewport={"width": 1280, "height": 800})
+        other = await other_ctx.new_page()
+        await other.goto(BASE, wait_until="networkidle")
+        await other.fill("input[placeholder='your-handle']", outsider)
+        await other.fill("input[type=password]", "outsider-pass")
+        await other.click("form.auth-card button.btn--primary")
+        await other.wait_for_selector(".rail", timeout=20000)
+        ok("admin nav hidden for normal users", await other.get_by_role("button", name="Admin").count() == 0)
+        await other.goto(f"{BASE}/admin", wait_until="networkidle")
+        await other.wait_for_timeout(1200)
+        ok("normal user cannot open /admin", await other.locator(".backup-row").count() == 0)
+        forbidden = await other.evaluate(
+            """async () => {
+              const r = await fetch('/graphql', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({query:'{ adminUsers { id } }'})});
+              const body = await r.json();
+              return body.errors?.[0]?.message ?? 'no error';
+            }"""
+        )
+        ok("admin fields refuse a normal user", "Admin only" in str(forbidden), str(forbidden))
+        await other_ctx.close()
 
         ok("no page errors", not errors, "; ".join(errors[:3]))
 

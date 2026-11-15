@@ -1,6 +1,6 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { useLocation } from "wouter";
-import { Bell, ListChecks, LogOut, SlidersHorizontal } from "lucide-react";
+import { Bell, ListChecks, LogOut, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import BellPanel from "../features/bell/Bell";
 import { initials } from "../lib/format";
 import { useApp, useWorkspace } from "./state";
@@ -33,11 +33,25 @@ const MODES = [
   },
 ];
 
+/** Admin is not a mode for everyone: it only exists for the admin role. */
+const ADMIN_MODE = {
+  href: "/admin",
+  match: ["/admin"],
+  label: "Admin",
+  title: "Admin",
+  icon: ShieldCheck,
+  key: "4",
+};
+
 export default function Shell({ children }: { children: ReactNode }) {
   const [location, navigate] = useLocation();
   const { viewer, logout, toasts, dismissToast } = useApp();
   const workspace = useWorkspace();
-  const active = MODES.find((mode) => mode.match.includes(location)) ?? MODES[0];
+  const modes = useMemo(
+    () => (viewer?.role === "admin" ? [...MODES, ADMIN_MODE] : MODES),
+    [viewer?.role],
+  );
+  const active = modes.find((mode) => mode.match.includes(location)) ?? modes[0];
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -48,7 +62,7 @@ export default function Shell({ children }: { children: ReactNode }) {
         target instanceof HTMLSelectElement;
       if (typing) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
-      const mode = MODES.find((item) => item.key === event.key);
+      const mode = modes.find((item) => item.key === event.key);
       if (mode) {
         event.preventDefault();
         navigate(mode.href);
@@ -63,13 +77,15 @@ export default function Shell({ children }: { children: ReactNode }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [navigate]);
+  }, [modes, navigate]);
 
   const subtitle =
     active.label === "Feed"
       ? `${workspace.ytFeed.length} videos · ${workspace.aniEvents.length} anime events`
       : active.label === "Manage"
         ? `${workspace.ytChannels.length} sources · ${workspace.ytDomains.length + workspace.aniDomains.length} categories`
+        : active.label === "Admin"
+        ? "backups · restore · settings · users"
         : `${workspace.ytCards.length} playlists · ${workspace.aniEntries.length} anime`;
 
   return (
@@ -79,7 +95,7 @@ export default function Shell({ children }: { children: ReactNode }) {
           d<span>/</span>m
         </div>
         <nav className="rail__nav">
-          {MODES.map((mode) => {
+          {modes.map((mode) => {
             const Icon = mode.icon;
             const isActive = mode === active;
             return (

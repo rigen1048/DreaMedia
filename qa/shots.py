@@ -76,6 +76,24 @@ async def main() -> None:
             await page.wait_for_timeout(800)
             await page.screenshot(path=str(OUT / "07-bell.png"))
 
+        # Admin (only reachable for the admin role; the demo account is one).
+        if await page.get_by_role("button", name="Admin").count():
+            await page.get_by_role("button", name="Admin").click()
+            await page.wait_for_selector(".table", timeout=15000)
+            if await page.get_by_role("button", name="Back up now").count():
+                await page.get_by_role("button", name="Back up now").click()
+                await page.wait_for_timeout(4000)
+            await page.screenshot(path=str(OUT / "09-admin-backups.png"), full_page=True)
+            await page.locator(".chipbtn", has_text="Restore").first.click()
+            await page.wait_for_timeout(600)
+            await page.screenshot(path=str(OUT / "09b-admin-restore.png"), full_page=True)
+            await page.locator(".chipbtn", has_text="Users").first.click()
+            await page.wait_for_timeout(500)
+            await page.screenshot(path=str(OUT / "09c-admin-users.png"), full_page=True)
+            await page.locator(".chipbtn", has_text="Settings").first.click()
+            await page.wait_for_timeout(400)
+            await page.screenshot(path=str(OUT / "09d-admin-settings.png"), full_page=True)
+
         narrow = await ctx.new_page()
         await narrow.set_viewport_size({"width": 390, "height": 844})
         await narrow.goto(BASE, wait_until="networkidle")

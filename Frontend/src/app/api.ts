@@ -1,4 +1,4 @@
-import { gql } from "../lib/gql";
+import { API_BASE, gql } from "../lib/gql";
 import type { Workspace } from "../lib/types";
 
 const WORKSPACE_QUERY = `
@@ -381,3 +381,122 @@ export const aniSetSubdomainNotify = (subdomainId: number, notify: boolean) =>
     }`,
     { id: subdomainId, notify },
   );
+
+/* ----------------------------------------------------------------- admin */
+export type AdminBackup = { file: string; size: number; mtime: number };
+export type AdminSetting = { key: string; value: string; floor: string | null; kind: string };
+export type AdminUser = { id: number; username: string; role: string; createdAt: string };
+export type RestoreStatus = {
+  phase: "idle" | "queued" | "snapshot" | "restoring" | "rollback" | "done" | "failed";
+  active: boolean;
+  file: string | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+  snapshot: string | null;
+  error: string | null;
+  message: string | null;
+  sessionsDropped: number;
+};
+export type AdminOverview = {
+  backupCount: number;
+  latestBackupFile: string | null;
+  latestBackupAt: number | null;
+  keepLatest: number;
+  frequencyHours: number;
+  backupDir: string;
+  userCount: number;
+  adminCount: number;
+  restore: RestoreStatus;
+};
+
+export type AdminData = {
+  adminOverview: AdminOverview;
+  adminBackups: AdminBackup[];
+  adminSettings: AdminSetting[];
+  adminUsers: AdminUser[];
+};
+
+export function fetchAdmin(): Promise<AdminData> {
+  return gql<AdminData>(`query Admin {
+    adminOverview {
+      backupCount latestBackupFile latestBackupAt keepLatest frequencyHours backupDir
+      userCount adminCount
+      restore { phase active file startedAt finishedAt snapshot error message sessionsDropped }
+    }
+    adminBackups { file size mtime }
+    adminSettings { key value floor kind }
+    adminUsers { id username role createdAt }
+  }`);
+}
+
+export const adminRunBackup = () =>
+  gql<{ adminRunBackup: string }>(`mutation RunBackup { adminRunBackup }`);
+
+export const adminStartRestore = (filename: string) =>
+  gql<{ adminStartRestore: boolean }>(
+    `mutation StartRestore($filename: String!) { adminStartRestore(filename: $filename) }`,
+    { filename },
+  );
+
+export const adminSetSetting = (key: string, value: string) =>
+  gql<{ adminSetSetting: string }>(
+    `mutation SetSetting($key: String!, $value: String!) {
+      adminSetSetting(key: $key, value: $value)
+    }`,
+    { key, value },
+  );
+
+export const adminSetUserRole = (userId: number, role: string) =>
+  gql<{ adminSetUserRole: string }>(
+    `mutation SetRole($userId: Int!, $role: String!) {
+      adminSetUserRole(userId: $userId, role: $role)
+    }`,
+    { userId, role },
+  );
+
+export const adminDeleteUser = (userId: number) =>
+  gql<{ adminDeleteUser: boolean }>(
+    `mutation DeleteUser($userId: Int!) { adminDeleteUser(userId: $userId) }`,
+    { userId },
+  );
+
+export const adminResetPassword = (userId: number, password: string) =>
+  gql<{ adminResetPassword: boolean }>(
+    `mutation ResetPassword($userId: Int!, $password: String!) {
+      adminResetPassword(userId: $userId, password: $password)
+    }`,
+    { userId, password },
+  );
+
+/* Three REST calls, deliberately outside GraphQL: a multipart upload, a
+   binary download, and the progress poll that must answer while mutations
+   are 503'd during a restore. */
+export async function uploadRestoreDump(file: File): Promise<{ file: string; size: number }> {
+  const body = new FormData();
+  body.append("file", file);
+  const response = await fetch(`${API_BASE}/admin/restore/upload`, {
+    method: "POST",
+    credentials: "include",
+    body,
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    ok?: boolean;
+    file?: string;
+    size?: number;
+    error?: string;
+  };
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.error ?? `Upload failed (${response.status}).`);
+  }
+  return { file: payload.file!, size: payload.size ?? file.size };
+}
+
+export async function fetchRestoreStatus(): Promise<RestoreStatus> {
+  const response = await fetch(`${API_BASE}/admin/restore/status`, { credentials: "include" });
+  if (!response.ok) throw new Error(`status ${response.status}`);
+  const payload = (await response.json()) as RestoreStatus & { ok: boolean };
+  return payload;
+}
+
+export const backupDownloadUrl = (file: string) =>
+  `${API_BASE}/admin/backups/${encodeURIComponent(file)}`;
