@@ -184,6 +184,9 @@ export const ytCreateCard = (name: string) =>
     name,
   });
 
+export const ytFetchNow = () =>
+  gql<{ ytFetchNow: number }>(`mutation FetchNow { ytFetchNow }`);
+
 export const ytRenameCard = (cardId: number, name: string) =>
   gql<{ ytRenameCard: boolean }>(
     `mutation RenameCard($id: Int!, $name: String!) { ytRenameCard(cardId: $id, name: $name) }`,
@@ -301,6 +304,25 @@ export const aniFinish = (entryId: number) =>
   gql<{ aniFinish: boolean }>(`mutation Finish($id: Int!) { aniFinish(entryId: $id) }`, {
     id: entryId,
   });
+
+export type AdvanceDecision = {
+  action: "watching" | "awaiting" | "completed";
+  season: number;
+  episode: number | null;
+  title: string | null;
+  releaseDate: string | null;
+  episodesTotal: number | null;
+};
+
+export const aniAdvanceSeason = (entryId: number, fromSeason?: number | null) =>
+  gql<{ aniAdvanceSeason: AdvanceDecision }>(
+    `mutation Advance($id: Int!, $from: Int) {
+      aniAdvanceSeason(entryId: $id, fromSeason: $from) {
+        action season episode title releaseDate episodesTotal
+      }
+    }`,
+    { id: entryId, from: fromSeason ?? null },
+  );
 
 export const aniEventsSeen = (eventIds: number[], seen = true) =>
   gql<{ aniEventsSeen: number }>(

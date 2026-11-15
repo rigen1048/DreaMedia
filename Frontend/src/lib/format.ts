@@ -71,3 +71,20 @@ export function initials(name: string | null | undefined): string {
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("");
 }
+
+/** Plain sentence for what "finish this season" decided on the backend. */
+export function advanceMessage(decision: {
+  action: string;
+  season: number;
+  episode: number | null;
+  releaseDate: string | null;
+}): string {
+  if (decision.action === "watching") {
+    return `Season ${decision.season} is already out — moved to S${decision.season} E${decision.episode ?? 1}`;
+  }
+  if (decision.action === "awaiting") {
+    const when = decision.releaseDate ? formatDate(decision.releaseDate) : "date TBA";
+    return `Season ${decision.season} is not out yet (${when}) — waiting in Next sequel, you will be notified`;
+  }
+  return `No season after this one — the chain ends at season ${decision.season}`;
+}

@@ -87,6 +87,45 @@ class PgStore:
                 )
         return Success(channel_id)
 
+    async def request_fetch_now(self, user_id: int) -> int:
+        """Make every active subscription of one user due right now.
+
+        The UI's "Fetch now" is a *nudge*, not a second worker: rows keep the
+        manager's claim discipline (working flags untouched), and the caller
+        wakes the manager loop so the pass happens immediately instead of at
+        the next scheduled tick. Returns how many rows were queued.
+        """
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            tracking = await con.execute(
+                """
+                UPDATE yt_tracking t SET ts = 0
+                FROM yt_channels c
+                WHERE c.id = t.channel_id AND c.user_id = $1
+                  AND t.active AND NOT t.working
+                """,
+                user_id,
+            )
+            playlists = await con.execute(
+                """
+                UPDATE yt_playlists p SET ts = 0
+                FROM yt_channels c
+                WHERE c.id = p.channel_id AND c.user_id = $1
+                  AND p.active AND NOT p.working
+                """,
+                user_id,
+            )
+            randoms = await con.execute(
+                """
+                UPDATE yt_randomsubs r SET ts = 0
+                FROM yt_channels c
+                WHERE c.id = r.channel_id AND c.user_id = $1
+                  AND r.active AND NOT r.working
+                """,
+                user_id,
+            )
+        return sum(int(result.split()[-1]) for result in (tracking, playlists, randoms))
+
     async def claim_due(self) -> List[PgSubscription]:
         """Atomically claim due rows (working=true) and return them.
 
@@ -1173,4 +1212,3 @@ def _to_unix(published: Any) -> Optional[int]:
         except ValueError:
             continue
     return None
-

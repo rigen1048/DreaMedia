@@ -167,6 +167,23 @@ async def main() -> None:
         await pl.locator(".pl-item .check").first.click()
         await page.wait_for_timeout(1200)
         ok("playlist item checked", await pl.locator(".pl-item .check").first.get_attribute("data-checked") == "true")
+
+        # The row (thumbnail + title) is the link — no tiny icon to hunt for.
+        link = pl.locator(".pl-item__link").first
+        href = await link.get_attribute("href")
+        ok("playlist row opens the video", bool(href and "youtu" in href), href or "")
+        ok(
+            "every row is a link",
+            await pl.locator(".pl-item__link").count() == items,
+            f"{await pl.locator('.pl-item__link').count()}/{items}",
+        )
+        # A short playlist must not be stretched to the tallest card in the row.
+        box = await pl.bounding_box()
+        ok(
+            "playlist card sizes to its content",
+            box is not None and box["height"] < 300,
+            f"{round(box['height']) if box else '?'}px",
+        )
         await page.screenshot(path=str(OUT / "13-todo-qa.png"), full_page=True)
 
         # queue +1 episode
@@ -176,6 +193,40 @@ async def main() -> None:
         await page.wait_for_timeout(1400)
         after = await qc.inner_text()
         ok("queue cursor advanced", before != after, after.split("\n")[2][:40] if "\n" in after else "")
+
+        # -------- progress shortcuts: fetch now + season bump
+        await page.goto(f"{BASE}/sources", wait_until="networkidle")
+        await page.get_by_role("button", name="Channels", exact=True).click()
+        await page.wait_for_timeout(400)
+        await page.get_by_role("button", name="Fetch now").click()
+        await page.wait_for_timeout(2500)
+        fetch_toast = (await page.locator(".toast").first.inner_text()).replace("\n", " ")
+        ok(
+            "fetch now queues the sources",
+            "Fetching" in fetch_toast or "Nothing to fetch" in fetch_toast,
+            fetch_toast[:60],
+        )
+
+        await page.get_by_role("button", name="Anime").first.click()
+        await page.wait_for_timeout(600)
+        await page.locator(".ani-card").first.get_by_role("button", name="Seasons").click()
+        await page.wait_for_timeout(400)
+        await page.get_by_role("button", name="Next season").first.click()
+        await page.wait_for_timeout(2500)
+        bump_toast = (await page.locator(".toast").last.inner_text()).replace("\n", " ")
+        ok(
+            "finishing a season decides the next one",
+            ("already out" in bump_toast) or ("not out yet" in bump_toast) or ("chain ends" in bump_toast),
+            bump_toast[:70],
+        )
+        await page.get_by_role("button", name="Track anime").click()
+        await page.wait_for_timeout(500)
+        ok(
+            "track dialog asks where you are",
+            await page.locator(".modal .chipbtn", has_text="Finished a season").count() == 1,
+        )
+        await page.get_by_role("button", name="Cancel").first.click()
+        await page.wait_for_timeout(300)
 
         # -------- bridge push -> bell
         viewer = await page.evaluate(

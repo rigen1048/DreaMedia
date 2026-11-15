@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ExternalLink, ListVideo, Plus, Trash2 } from "lucide-react";
+import { Check, ListVideo, Plus, Trash2 } from "lucide-react";
 import * as api from "../../app/api";
 import { useApp, useWorkspace } from "../../app/state";
 import { ConfirmButton, EmptyState, Thumb } from "../../app/ui";
-import { timeAgo, formatDate } from "../../lib/format";
+import { advanceMessage, timeAgo, formatDate } from "../../lib/format";
 import type { PlaylistCard } from "../../lib/types";
 
 export default function Todo() {
@@ -219,7 +219,7 @@ function Playlist({ card }: { card: PlaylistCard }) {
         <span>{percent}%</span>
       </div>
 
-      <div className="playlist-items">
+      <div className="playlist-items" data-open={open}>
         {card.items.length === 0 && (
           <div style={{ padding: "6px 2px", fontSize: 11.5, color: "var(--faint)" }}>
             No links yet — add the first video.
@@ -238,28 +238,21 @@ function Playlist({ card }: { card: PlaylistCard }) {
             >
               {item.done && <Check size={9} />}
             </button>
-            {item.thumbnail ? (
-              <img src={item.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" />
-            ) : (
-              <span
-                style={{ width: 44, height: 26, borderRadius: 4, background: "var(--panel-3)" }}
-              />
-            )}
-            <span className="pl-item__title" title={item.title ?? item.url ?? ""}>
-              {item.title ?? item.url ?? item.videoId}
-            </span>
-            {item.url && (
-              <a
-                className="icon-btn"
-                style={{ width: 22, height: 22 }}
-                href={item.url}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Open video"
-              >
-                <ExternalLink size={11} />
-              </a>
-            )}
+            <a
+              className="pl-item__link"
+              href={item.url ?? `https://www.youtube.com/watch?v=${item.videoId}`}
+              target="_blank"
+              rel="noreferrer"
+              title={item.title ?? item.url ?? ""}
+              aria-label={`Open ${item.title ?? item.url ?? "video"}`}
+            >
+              {item.thumbnail ? (
+                <img src={item.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" />
+              ) : (
+                <span className="thumb-fallback" />
+              )}
+              <span className="pl-item__title">{item.title ?? item.url ?? item.videoId}</span>
+            </a>
             <ConfirmButton
               label="Remove item"
               className="icon-btn icon-btn--danger"
@@ -298,7 +291,7 @@ function Playlist({ card }: { card: PlaylistCard }) {
 
 function QueueCard({ entryId }: { entryId: number }) {
   const workspace = useWorkspace();
-  const { act } = useApp();
+  const { act, notify, refresh } = useApp();
   const entry = workspace.aniEntries.find((item) => item.id === entryId);
   const ref = useRef<HTMLElement | null>(null);
   const [highlight, setHighlight] = useState(false);
@@ -319,6 +312,7 @@ function QueueCard({ entryId }: { entryId: number }) {
   const episode = entry.cursorEpisode ?? 0;
   const currentSeason = entry.seasons.find((item) => item.seasonNo === season);
   const seasonEps = currentSeason?.episodesTotal ?? null;
+  const nextSeason = entry.seasons.find((item) => item.seasonNo === season + 1);
   const percent = seasonEps
     ? Math.min(100, Math.round((episode / seasonEps) * 100))
     : entry.episodeCount
@@ -332,6 +326,16 @@ function QueueCard({ entryId }: { entryId: number }) {
         : entry.list === "new_anime"
           ? "new anime"
           : (entry.watchState ?? "watchlist");
+
+  const advance = async () => {
+    try {
+      const result = await api.aniAdvanceSeason(entry.id, season);
+      await refresh();
+      notify(advanceMessage(result.aniAdvanceSeason), "ok");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not advance", "error");
+    }
+  };
 
   return (
     <article
@@ -377,6 +381,11 @@ function QueueCard({ entryId }: { entryId: number }) {
                 (entry.episodeCount && entry.airedCount >= entry.episodeCount ? "aired" : "no schedule")}
             </span>
           )}
+          {nextSeason && (nextSeason.releaseDate || nextSeason.startDate) && (
+            <span title="Next season">
+              S{nextSeason.seasonNo} · {formatDate(nextSeason.releaseDate ?? nextSeason.startDate)}
+            </span>
+          )}
         </div>
 
         <div className="progress progress--ani" style={{ margin: "3px 0 3px" }}>
@@ -399,14 +408,9 @@ function QueueCard({ entryId }: { entryId: number }) {
               </button>
               <button
                 className="btn btn--sm"
-                onClick={() =>
-                  void act(
-                    () => api.aniSetWatched(entry.id, season, true),
-                    `Season ${season} watched`,
-                  )
-                }
+                onClick={() => void advance()}
               >
-                Season done
+                Next season
               </button>
               <button
                 className="btn btn--sm btn--ghost"
