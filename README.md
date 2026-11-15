@@ -65,15 +65,17 @@ need `uv`, `bun` and Node 20+.
 ```bash
 cp .env.example .env      # set DREAMEDIA_PG_PASSWORD
 python3 start.py          # docker stack: db, backend, bridge, frontend
-python3 start.py --fresh  # same, but start from an empty database
 # or run the pieces locally (uv + bun + node):
 python3 start.py --dev
 ```
 
 `start.py` backs up Postgres (and validates the dump), tears the stack down,
-rebuilds it, restores the newest dump and waits until `:3000` actually answers
-before printing the URLs — it exits non-zero instead of leaving you with a
-half-started stack. Bell history lives in `./.bridge` and survives the wipe.
+rebuilds it against a **clean** database and waits until `:3000` actually
+answers before printing the URLs — it exits non-zero instead of leaving you
+with a half-started stack. Nothing is ever loaded back automatically: the
+safety dump sits in `backups/` until *you* restore it from **Admin → Restore**
+(backup list → restore, or upload a file). Bell history lives in `./.bridge`
+and survives the wipe.
 
 Open <http://localhost:3000>. Health: app `:3000/health`, bridge
 `:3000/bridge/health` (the receiver has no published port by design).
@@ -200,7 +202,8 @@ boring: the dump is validated with `pg_restore -l` before it is accepted, the
 restore writes a rollback snapshot first, workers pause for the whole window,
 the API refuses mutations with 503, and on success every session is dropped
 (including the admin who started it) so nobody keeps a cookie minted against
-the old data. If `pg_restore` fails, the snapshot is restored automatically.
+the old data. Only when *your* restore fails does the pre-restore snapshot get
+loaded back, so a bad dump can never leave the database half-empty.
 You must type `RESTORE` to arm the button.
 
 Locked out with no admin account (restored old dump, deleted the account,

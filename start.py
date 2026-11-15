@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """DreaMedia launcher (D52) — replaces start.sh.
 
-Default run : backup → full wipe → clean rebuild → AUTO-RESTORE latest dump
---fresh     : backup only, no restore (clean slate, safety dump kept)
+Default run : backup → full wipe → clean rebuild → empty database
+Restoring is deliberately manual: Admin → Restore → upload a dump from backups/
+Nothing is ever pushed back into Postgres behind your back.
 
 Ctrl+C stops the backend + frontend; Postgres stays up (docker compose down).
 """
@@ -155,41 +156,8 @@ def backup(backup_dir: Path, keep: int, env) -> Path | None:
     return out
 
 
-def restore_latest(backup_dir: Path, env) -> bool:
-    dumps = sorted(backup_dir.glob("dreamedia-*.dump"), key=lambda p: p.stat().st_mtime, reverse=True)
-    latest = None
-    for candidate in dumps:
-        check = subprocess.run(["docker", "compose", "exec", "-T", "db", "pg_restore", "-l"],
-                               cwd=ROOT, input=candidate.read_bytes(), capture_output=True, env=env)
-        if check.returncode == 0:
-            latest = candidate
-            break
-        print(f"  ⚠ skipping invalid dump: {candidate.name}")
-    if latest is None:
-        if dumps:
-            sys.exit("✗ All dumps are invalid. NOT starting against an empty database.")
-        print("→ No dump to restore; starting empty.")
-        return False
-    print(f"→ Auto-restoring {latest.name} (D52)...")
-    with latest.open("rb") as fh:
-        result = subprocess.run(
-            ["docker", "compose", "exec", "-T", "db", "pg_restore",
-             "-U", "dreamedia", "-d", "dreamedia", "--clean", "--if-exists"],
-            cwd=ROOT, stdin=fh, stderr=subprocess.PIPE, env=env,
-        )
-    if result.returncode != 0:
-        # A failed restore can leave the db empty or partial — do NOT start.
-        sys.exit(
-            "RESTORE FAILED: " + result.stderr.decode()[-300:] + "\n"
-            "  Not starting against an empty/partial database. Fix and rerun."
-        )
-    print("  ✓ restore complete")
-    return True
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="DreaMedia launcher (D52)")
-    parser.add_argument("--fresh", action="store_true", help="backup only, no restore (clean slate)")
     parser.add_argument("--dev", action="store_true",
                         help="dev mode: local uvicorn + bun dev in the foreground "
                              "(default: full docker stack — db, backend, frontend)")
@@ -253,12 +221,10 @@ def main() -> None:
             break
         time.sleep(1)
 
-    # 4. restore (unless --fresh)
-    restored = False
-    if args.fresh:
-        print("→ --fresh: skipping restore. Clean slate; your dump is safe in backups/.")
-    else:
-        restored = restore_latest(backup_dir, env)
+    # 4. no automatic restore on purpose — loading data back is a manual,
+    # deliberate action (Admin → Restore → upload a dump from backups/).
+    print("→ Empty database. Your safety dump stays in "
+          f"{backup_dir}; restore it from Admin → Restore when you want it.")
 
     # 5. app services
     if not args.dev:
@@ -281,8 +247,8 @@ def main() -> None:
             sys.exit("✗ The stack started but never became healthy (see logs above)")
 
         bridge_ok = wait_for("http://127.0.0.1:3100/health", seconds=30)
-        if not restored:
-            print("→ Empty database: open the app and use 'Sign up' to create your account.")
+        print("→ Empty database: open the app, sign up, then Admin → Restore if you")
+        print("  want an old dump back (it is never loaded automatically).")
         print()
         print("=" * 50)
         print(f"🐴 DreaMedia is up: http://localhost:3000"
