@@ -10,3 +10,5 @@ backups/*
 .bridge.log
 .bridge.pid
 qa/shots/
+Backend/backups/*.dump
+.last-pgpass-sha
