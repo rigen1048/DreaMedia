@@ -155,35 +155,46 @@ async def main() -> None:
         await page.fill("input[placeholder='New playlist name']", pl_name)
         await page.get_by_role("button", name="Playlist", exact=True).click()
         await page.wait_for_timeout(2000)
-        pl = page.locator(".playlist-card").last
-        ok("playlist created", await pl.count() == 1)
-        await pl.locator("input[placeholder*='Paste links']").fill(
+        tile = page.locator(".playlist-tile", has_text=pl_name).first
+        ok("playlist tile created", await tile.count() == 1)
+        tile_box = await tile.bounding_box()
+        ok(
+            "tile stays small",
+            tile_box is not None and tile_box["height"] < 140,
+            f"{round(tile_box['height']) if tile_box else '?'}px",
+        )
+
+        # The card is a button: clicking it slides the list in from the right.
+        await tile.click()
+        await page.wait_for_selector(".drawer", timeout=8000)
+        ok("playlist opens in a drawer", await page.locator(".drawer .drawer__title").count() == 1)
+        await page.locator(".drawer input[placeholder*='Paste links']").fill(
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ, https://youtu.be/9bZkp7q19f0"
         )
-        await pl.get_by_role("button", name="Add", exact=True).click()
+        await page.locator(".drawer").get_by_role("button", name="Add", exact=True).click()
         await page.wait_for_timeout(1800)
-        items = await pl.locator(".pl-item").count()
+        items = await page.locator(".drawer .pl-item").count()
         ok("playlist items added", items >= 2, f"count={items}")
-        await pl.locator(".pl-item .check").first.click()
+        await page.locator(".drawer .pl-item .check").first.click()
         await page.wait_for_timeout(1200)
-        ok("playlist item checked", await pl.locator(".pl-item .check").first.get_attribute("data-checked") == "true")
+        ok(
+            "playlist item checked",
+            await page.locator(".drawer .pl-item .check").first.get_attribute("data-checked") == "true",
+        )
 
         # The row (thumbnail + title) is the link — no tiny icon to hunt for.
-        link = pl.locator(".pl-item__link").first
+        link = page.locator(".drawer .pl-item__link").first
         href = await link.get_attribute("href")
         ok("playlist row opens the video", bool(href and "youtu" in href), href or "")
         ok(
             "every row is a link",
-            await pl.locator(".pl-item__link").count() == items,
-            f"{await pl.locator('.pl-item__link').count()}/{items}",
+            await page.locator(".drawer .pl-item__link").count() == items,
+            f"{await page.locator('.drawer .pl-item__link').count()}/{items}",
         )
-        # A short playlist must not be stretched to the tallest card in the row.
-        box = await pl.bounding_box()
-        ok(
-            "playlist card sizes to its content",
-            box is not None and box["height"] < 300,
-            f"{round(box['height']) if box else '?'}px",
-        )
+        await page.screenshot(path=str(OUT / "13-todo-drawer-qa.png"), full_page=True)
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(400)
+        ok("drawer closes on Escape", await page.locator(".drawer").count() == 0)
         await page.screenshot(path=str(OUT / "13-todo-qa.png"), full_page=True)
 
         # queue +1 episode
@@ -219,6 +230,18 @@ async def main() -> None:
             ("already out" in bump_toast) or ("not out yet" in bump_toast) or ("chain ends" in bump_toast),
             bump_toast[:70],
         )
+
+        # The bump can overshoot; the S/E editor is the way back.
+        editor = page.locator(".ani-detail .progress-edit").first
+        await editor.locator("input[aria-label='Season']").fill("1")
+        await editor.locator("input[aria-label='Episode']").fill("3")
+        await editor.get_by_role("button", name="Update").click()
+        await page.wait_for_timeout(1800)
+        fix_toast = (await page.locator(".toast").last.inner_text()).replace("\n", " ")
+        ok("progress can be corrected", "S1 E3" in fix_toast, fix_toast[:60])
+        cursor_text = await page.locator(".ani-card").first.inner_text()
+        ok("card shows the corrected cursor", "S1" in cursor_text and "E3" in cursor_text, "S1 E3")
+
         await page.get_by_role("button", name="Track anime").click()
         await page.wait_for_timeout(500)
         ok(

@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ListVideo, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, ListVideo, Plus } from "lucide-react";
 import * as api from "../../app/api";
 import { useApp, useWorkspace } from "../../app/state";
-import { ConfirmButton, EmptyState, Thumb } from "../../app/ui";
+import { EmptyState, Thumb } from "../../app/ui";
 import { advanceMessage, timeAgo, formatDate } from "../../lib/format";
 import type { PlaylistCard } from "../../lib/types";
+import { PlaylistDrawer } from "./PlaylistDrawer";
+import { ProgressEditor } from "../management/ProgressEditor";
 
 export default function Todo() {
   const workspace = useWorkspace();
   const { act } = useApp();
   const [name, setName] = useState("");
+  const [openCard, setOpenCard] = useState<number | null>(null);
 
   const createPlaylist = async () => {
     if (!name.trim()) return;
@@ -107,11 +110,15 @@ export default function Todo() {
         ) : (
           <div className="playlist-grid">
             {workspace.ytCards.map((card) => (
-              <Playlist key={card.id} card={card} />
+              <PlaylistTile key={card.id} card={card} onOpen={() => setOpenCard(card.id)} />
             ))}
           </div>
         )}
       </section>
+
+      {openCard !== null && (
+        <PlaylistDrawer cardId={openCard} onClose={() => setOpenCard(null)} />
+      )}
 
       <section className="todo-section">
         <div className="section-head">
@@ -158,134 +165,52 @@ export default function Todo() {
   );
 }
 
-function Playlist({ card }: { card: PlaylistCard }) {
-  const { refresh } = useApp();
-  const [draftName, setDraftName] = useState(card.name ?? "");
-  const [links, setLinks] = useState("");
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => setDraftName(card.name ?? ""), [card.name]);
-
+function PlaylistTile({ card, onOpen }: { card: PlaylistCard; onOpen: () => void }) {
   const percent = card.total ? Math.round((card.done / card.total) * 100) : 0;
-
-  const saveName = async () => {
-    const next = draftName.trim();
-    if (!next || next === card.name) return;
-    await api.ytRenameCard(card.id, next);
-    await refresh();
-  };
-
-  const addLinks = async () => {
-    const parsed = links
-      .split(/[\s,]+/)
-      .map((link) => link.trim())
-      .filter((link) => link.length > 4);
-    if (!parsed.length) return;
-    setLinks("");
-    await api.ytAddCardItems(card.id, parsed);
-    await refresh();
-  };
+  const preview = card.items.slice(0, 3);
 
   return (
-    <article className="playlist-card">
-      <div className="playlist-card__head">
-        <ListVideo size={14} style={{ color: "var(--accent)" }} />
-        <input
-          className="playlist-card__name"
-          value={draftName}
-          onChange={(event) => setDraftName(event.target.value)}
-          onBlur={() => void saveName()}
-          onKeyDown={(event) => event.key === "Enter" && event.currentTarget.blur()}
-          aria-label="Playlist name"
-        />
-        <span className="count" style={{ fontSize: 10.5, color: "var(--faint)" }}>
-          {card.done}/{card.total}
-        </span>
-        <ConfirmButton
-          label={`Delete playlist ${card.name}`}
-          onConfirm={async () => {
-            await api.ytDeleteCard(card.id);
-            await refresh();
-          }}
-        >
-          <Trash2 size={12} />
-        </ConfirmButton>
-      </div>
+    <button
+      className="playlist-tile"
+      onClick={onOpen}
+      aria-label={`Open playlist ${card.name ?? "untitled"}`}
+    >
+      <span className="playlist-tile__head">
+        <ListVideo size={13} style={{ color: "var(--accent)" }} />
+        <span className="playlist-tile__name">{card.name ?? "Untitled"}</span>
+        <span className="count">{card.done}/{card.total}</span>
+      </span>
 
-      <div className="playlist-progress">
-        <div className="progress">
+      <span className="playlist-tile__peek">
+        {preview.map((item) =>
+          item.thumbnail ? (
+            <img
+              key={item.id}
+              src={item.thumbnail}
+              alt=""
+              loading="lazy"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <span key={item.id} className="playlist-tile__thumb-fallback" />
+          ),
+        )}
+        {preview.length === 0 && (
+          <span className="playlist-tile__empty">No videos yet — open to add</span>
+        )}
+        {card.items.length > 3 && (
+          <span className="playlist-tile__more">+{card.items.length - 3}</span>
+        )}
+      </span>
+
+      <span className="playlist-tile__foot">
+        <span className="progress">
           <span style={{ width: `${percent}%` }} />
-        </div>
-        <span>{percent}%</span>
-      </div>
-
-      <div className="playlist-items" data-open={open}>
-        {card.items.length === 0 && (
-          <div style={{ padding: "6px 2px", fontSize: 11.5, color: "var(--faint)" }}>
-            No links yet — add the first video.
-          </div>
-        )}
-        {card.items.slice(0, open ? undefined : 4).map((item) => (
-          <div className="pl-item" key={item.id} data-done={item.done}>
-            <button
-              className="check"
-              data-checked={item.done}
-              aria-label={item.done ? "Mark not done" : "Mark done"}
-              onClick={async () => {
-                await api.ytSetCardItemDone(item.id, !item.done);
-                await refresh();
-              }}
-            >
-              {item.done && <Check size={9} />}
-            </button>
-            <a
-              className="pl-item__link"
-              href={item.url ?? `https://www.youtube.com/watch?v=${item.videoId}`}
-              target="_blank"
-              rel="noreferrer"
-              title={item.title ?? item.url ?? ""}
-              aria-label={`Open ${item.title ?? item.url ?? "video"}`}
-            >
-              {item.thumbnail ? (
-                <img src={item.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" />
-              ) : (
-                <span className="thumb-fallback" />
-              )}
-              <span className="pl-item__title">{item.title ?? item.url ?? item.videoId}</span>
-            </a>
-            <ConfirmButton
-              label="Remove item"
-              className="icon-btn icon-btn--danger"
-              onConfirm={async () => {
-                await api.ytDeleteCardItem(item.id);
-                await refresh();
-              }}
-            >
-              <Trash2 size={11} />
-            </ConfirmButton>
-          </div>
-        ))}
-
-        {card.items.length > 4 && (
-          <button className="link-btn" onClick={() => setOpen(!open)}>
-            {open ? "Show less" : `Show all ${card.items.length}`}
-          </button>
-        )}
-      </div>
-
-      <div className="playlist-add">
-        <input
-          className="input"
-          value={links}
-          onChange={(event) => setLinks(event.target.value)}
-          placeholder="Paste links — one per line or comma separated"
-          onKeyDown={(event) => event.key === "Enter" && void addLinks()}
-        />
-        <button className="btn btn--sm" disabled={!links.trim()} onClick={() => void addLinks()}>
-          Add
-        </button>
-      </div>
-    </article>
+        </span>
+        <span className="faint">{percent}%</span>
+        <ChevronRight size={13} className="playlist-tile__chevron" />
+      </span>
+    </button>
   );
 }
 
@@ -418,6 +343,7 @@ function QueueCard({ entryId }: { entryId: number }) {
               >
                 Finish
               </button>
+              <ProgressEditor entryId={entry.id} season={season} episode={episode} compact />
             </>
           ) : (
             <button

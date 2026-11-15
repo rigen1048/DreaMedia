@@ -730,6 +730,14 @@ class AniMutation:
         return True
 
     @strawberry.field
+    async def ani_set_progress(
+        self, info: Info, entry_id: int, season: int, episode: int
+    ) -> bool:
+        """Correct the watch position, backwards included (unlike the +1 cursor)."""
+        _unwrap(await _ani.set_progress(await _uid(info), entry_id, season, episode))
+        return True
+
+    @strawberry.field
     async def ani_mark_range(
         self, info: Info, entry_id: int, from_season: int, to_season: int
     ) -> bool:
