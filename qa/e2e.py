@@ -315,7 +315,9 @@ async def main() -> None:
         await js(page, "mutation($n:String!){ ytCreateDomain(name:$n) }", {"n": marker})
 
         before = await js(page, "{ adminBackups { file mtime } }")
-        await page.get_by_role("button", name="Back up now").click()
+        # A box with no dumps yet shows the same action in the header and in the
+        # empty state, so pick the header button explicitly.
+        await page.get_by_role("button", name="Back up now").first.click()
         await page.wait_for_timeout(5000)
         after = await js(page, "{ adminBackups { file size mtime } }")
         newest = after["adminBackups"][0] if after["adminBackups"] else None
