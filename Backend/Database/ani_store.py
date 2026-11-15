@@ -531,6 +531,57 @@ class AniStore:
             )
         return Success({"season": season, "episode": episode, "position_seconds": position_seconds})
 
+    async def set_progress(
+        self, user_id: int, entry_id: int, season: int, episode: int
+    ) -> Result[Dict[str, Any], str]:
+        """Explicit progress correction — the one path that may move backwards.
+
+        set_cursor is deliberately forward-only (D44) because a normal "+1"
+        must never lose progress. But bumping a season by mistake (or adding an
+        anime one season too far) needs a way back, so this entry point trusts
+        the user and re-derives the season flags from the new position:
+        seasons before the cursor are watched, the cursor season only when its
+        episode count is known and reached, everything after is not watched.
+        """
+        if season < 1:
+            return Failure("season must be >= 1")
+        episode = max(0, int(episode))
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            async with con.transaction():
+                entry = await con.fetchrow(
+                    "SELECT list FROM ani_entries WHERE id = $1 AND user_id = $2",
+                    entry_id, user_id,
+                )
+                if entry is None:
+                    return Failure("entry not found")
+                season_exists = await con.fetchval(
+                    "SELECT 1 FROM ani_seasons WHERE entry_id = $1 AND season_no = $2",
+                    entry_id, season,
+                )
+                if not season_exists:
+                    return Failure(f"season {season} not in this entry's chain")
+                await con.execute(
+                    "UPDATE ani_entries SET cursor_season = $3, cursor_episode = $4, "
+                    "cursor_position_seconds = NULL WHERE id = $1 AND user_id = $2",
+                    entry_id, user_id, season, episode,
+                )
+                # A correction is also an answer to "where are you?": an entry
+                # waiting for a sequel becomes watchable again.
+                if entry["list"] == "next_sequel":
+                    await con.execute(
+                        "UPDATE ani_entries SET list = 'watching' WHERE id = $1 AND user_id = $2",
+                        entry_id, user_id,
+                    )
+                await con.execute(
+                    "UPDATE ani_seasons SET watched = "
+                    "(season_no < $2) OR "
+                    "(season_no = $2 AND episodes_total IS NOT NULL AND $3 >= episodes_total) "
+                    "WHERE entry_id = $1",
+                    entry_id, season, episode,
+                )
+        return Success({"season": season, "episode": episode})
+
     async def mark_range(
         self, user_id: int, entry_id: int, from_season: int, to_season: int
     ) -> Result[Dict[str, Any], str]:

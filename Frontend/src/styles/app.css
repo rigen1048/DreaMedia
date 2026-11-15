@@ -1029,80 +1029,251 @@
 
 .playlist-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-  gap: 11px;
+  grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+  gap: 10px;
   align-items: start;
 }
 
-.playlist-card {
+/* A tile is a summary + one big click target; the video list lives in the
+   right-hand drawer, so the grid never grows with playlist length. */
+.playlist-tile {
+  display: grid;
+  gap: 8px;
+  padding: 10px 11px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  /* Cards size to their content: a two-item playlist must not be stretched
-     to the tallest card in the row (it left a dead gap above the add box). */
+  text-align: left;
+  color: inherit;
+  transition:
+    border-color 0.14s ease,
+    background 0.14s ease,
+    transform 0.14s ease;
 }
 
-.playlist-card__head {
+.playlist-tile:hover {
+  border-color: var(--accent-line);
+  background: var(--panel-2);
+  transform: translateY(-1px);
+}
+
+.playlist-tile:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-line);
+}
+
+.playlist-tile__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.playlist-tile__name {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: var(--font-display);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.playlist-tile .count {
+  font-size: 10.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.playlist-tile__peek {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+}
+
+.playlist-tile__peek img,
+.playlist-tile__thumb-fallback {
+  width: 56px;
+  height: 32px;
+  border-radius: 5px;
+  object-fit: cover;
+  border: 1px solid var(--line-soft);
+  background: var(--panel-3);
+  display: block;
+}
+
+.playlist-tile__more {
+  font-size: 10.5px;
+  color: var(--faint);
+  margin-left: 2px;
+}
+
+.playlist-tile__empty {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.playlist-tile__foot {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.playlist-tile__foot .progress {
+  flex: 1;
+}
+
+.playlist-tile__foot .faint {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.playlist-tile__chevron {
+  color: var(--faint);
+}
+
+.playlist-tile:hover .playlist-tile__chevron {
+  color: var(--accent);
+}
+
+/* ---------- playlist drawer ---------- */
+.drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(6, 7, 9, 0.55);
+  backdrop-filter: blur(2px);
+  display: flex;
+  justify-content: flex-end;
+  animation: fade 0.16s ease;
+}
+
+.drawer {
+  width: min(460px, 100vw);
+  height: 100%;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  box-shadow: -18px 0 40px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  animation: drawer-in 0.2s cubic-bezier(0.22, 0.8, 0.3, 1);
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.drawer__head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 10px 8px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--line-soft);
 }
 
-.playlist-card__name {
-  font-size: 12.5px;
+.drawer__title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
   font-weight: 600;
   font-family: var(--font-display);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 6px;
-  padding: 2px 5px;
-  min-width: 0;
-  flex: 1;
+  padding: 3px 5px;
+  color: var(--text);
 }
 
-.playlist-card__name:hover {
+.drawer__title:hover {
   border-color: var(--line);
 }
 
-.playlist-card__name:focus {
+.drawer__title:focus {
   outline: none;
   border-color: var(--accent-line);
   background: var(--bg-soft);
 }
 
-.playlist-progress {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 11px 8px;
-}
-
-.playlist-progress .progress {
-  flex: 1;
-}
-
-.playlist-progress span {
-  font-size: 10px;
+.drawer__head .count {
+  font-size: 10.5px;
   color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
 
-.playlist-items {
+.drawer__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 13px 4px;
+}
+
+.drawer__meta .progress {
+  flex: 1;
+}
+
+.drawer__meta span {
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.drawer__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px 10px;
   display: grid;
   align-content: start;
-  flex: 1;
-  max-height: 164px;
-  overflow-y: auto;
-  padding: 0 5px;
+  gap: 1px;
   scrollbar-gutter: stable;
 }
 
-.playlist-items[data-open="true"] {
-  max-height: 236px;
+.drawer__body .pl-item {
+  padding: 7px 6px;
+}
+
+.drawer__body .pl-item__link {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
+.drawer__body .pl-item__link img,
+.drawer__body .pl-item__link .thumb-fallback {
+  width: 64px;
+  height: 36px;
+}
+
+.drawer__body .pl-item__title {
+  font-size: 12px;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.drawer__empty {
+  margin: 18px 6px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.drawer__foot {
+  display: flex;
+  gap: 7px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.drawer__foot .input {
+  height: 32px;
+  font-size: 11.5px;
 }
 
 .pl-item {
@@ -1184,19 +1355,6 @@
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
-}
-
-.playlist-add {
-  display: flex;
-  gap: 6px;
-  padding: 8px;
-  border-top: 1px solid var(--line-soft);
-  margin-top: 6px;
-}
-
-.playlist-add .input {
-  height: 30px;
-  font-size: 11.5px;
 }
 
 .queue-grid {
@@ -1282,6 +1440,45 @@
   padding: 0 6px;
   font-size: 11px;
   text-align: center;
+}
+
+.progress-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.progress-edit__label {
+  font-size: 10.5px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.progress-edit .ep-input {
+  width: 42px;
+  height: 24px;
+  font-size: 10.5px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.progress-edit .ep-input:focus {
+  outline: none;
+  border-color: var(--accent-line);
+}
+
+.progress-edit .btn {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 10.5px;
+}
+
+.progress-edit--compact .progress-edit__label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 /* ================================================================== bell */

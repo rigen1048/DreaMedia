@@ -187,6 +187,62 @@ async def test_advance_is_owner_scoped_and_rejects_unknown_seasons():
     assert "not in this entry" in missing.failure()
 
 
+async def test_set_progress_corrects_an_overshot_season():
+    """A wrong bump must be fixable, and the season flags must follow."""
+    user_id = await _user()
+    entry_id = await _seed_chain(user_id, [
+        {"season_no": 1, "status": "FINISHED", "total": 12, "aired": 12},
+        {"season_no": 2, "status": "FINISHED", "total": 12, "aired": 12},
+        {"season_no": 3, "status": "RELEASING", "total": 12, "aired": 4},
+    ])
+    store = AniStore()
+    bumped = await store.advance_season(user_id, entry_id, 1)
+    assert isinstance(bumped, Success), bumped
+    assert bumped.unwrap()["action"] == "watching"  # lands on S2E1
+
+    fixed = await store.set_progress(user_id, entry_id, 1, 5)
+    assert isinstance(fixed, Success), fixed
+    entry = await _entry(entry_id)
+    assert (entry["cursor_season"], entry["cursor_episode"]) == (1, 5)
+    assert entry["list"] == "watching"
+
+    pool = await db.get_pool()
+    async with pool.acquire() as con:
+        flags = {
+            row["season_no"]: row["watched"]
+            for row in await con.fetch(
+                "SELECT season_no, watched FROM ani_seasons WHERE entry_id = $1", entry_id
+            )
+        }
+    # Mid-season 1 means nothing is finished yet — the bump had flagged S1.
+    assert flags == {1: False, 2: False, 3: False}
+
+    # Setting the last episode of a season marks it (and earlier ones) watched.
+    await store.set_progress(user_id, entry_id, 2, 12)
+    async with pool.acquire() as con:
+        flags = {
+            row["season_no"]: row["watched"]
+            for row in await con.fetch(
+                "SELECT season_no, watched FROM ani_seasons WHERE entry_id = $1", entry_id
+            )
+        }
+    assert flags == {1: True, 2: True, 3: False}
+
+
+async def test_set_progress_validates_season_and_owner():
+    owner = await _user()
+    stranger = await _user(OTHER)
+    entry_id = await _seed_chain(owner, [
+        {"season_no": 1, "status": "FINISHED", "total": 12, "aired": 12},
+    ])
+    store = AniStore()
+    assert isinstance(await store.set_progress(stranger, entry_id, 1, 1), Failure)
+    missing = await store.set_progress(owner, entry_id, 9, 1)
+    assert isinstance(missing, Failure)
+    assert "not in this entry" in missing.failure()
+    assert isinstance(await store.set_progress(owner, entry_id, 0, 1), Failure)
+
+
 async def test_fetch_now_marks_subscriptions_due_and_wakes_the_manager():
     from Orchestrator.Yt import manager
 

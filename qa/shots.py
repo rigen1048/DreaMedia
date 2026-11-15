@@ -68,6 +68,14 @@ async def main() -> None:
         await page.wait_for_timeout(1200)
         await page.screenshot(path=str(OUT / "06-todo.png"), full_page=True)
 
+        tile = page.locator(".playlist-tile").first
+        if await tile.count():
+            await tile.click()
+            await page.wait_for_timeout(700)
+            await page.screenshot(path=str(OUT / "06b-todo-drawer.png"))
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(300)
+
         await page.goto(BASE, wait_until="networkidle")
         await page.wait_for_timeout(1000)
         bell = page.locator(".bell")

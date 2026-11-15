@@ -50,6 +50,8 @@ browser ──GraphQL /graphql──────────────▶ Fast
 | ![Feed](docs/screenshots/notifications.png) | ![Channels](docs/screenshots/channels.png) |
 | **Management · anime** | **Todo** |
 | ![Anime](docs/screenshots/anime.png) | ![Todo](docs/screenshots/todo.png) |
+| **Todo · playlist drawer** | **Management · anime detail** |
+| ![Drawer](docs/screenshots/todo-drawer.png) | ![Detail](docs/screenshots/anime-detail.png) |
 | **Admin · backups** | **Admin · restore** |
 | ![Admin](docs/screenshots/admin.png) | ![Restore](docs/screenshots/admin-restore.png) |
 
@@ -136,14 +138,19 @@ whether the next season is already out — it jumps there and puts the entry bac
 in Watching — or is still scheduled, in which case the entry waits in Next
 sequel with the announced date and a bell message when it airs. The same
 **Next season** button on any card (Management or Todo) does that bump later.
+Bumps are forward-only on purpose, so overshooting needs a way back: every
+expanded anime card (and each Todo queue card) carries a small **S/E** editor
+that sets the cursor anywhere — backwards included — and re-derives which
+seasons count as watched from the new position.
 
 **Todo** — standalone playlists built from pasted video links (multiple named
-cards, progress, check-off, item removal; links are stored instantly and
-metadata is enriched in the background). The whole row — thumbnail and title —
-is the link to the video, cards size to their content instead of stretching to
-the tallest card in the row, and long lists scroll inside a capped area. The
-anime queue below is driven by the same cursors as Management (`+1 episode`,
-`Next season`, finish) with next-airing and next-season dates.
+cards; links are stored instantly and metadata is enriched in the background).
+The grid holds compact tiles (name, progress, three thumbnails); clicking one
+slides the full list in from the right in a drawer — thumbnail + title per row,
+each row the link to the video, check-off, delete and the add box. Nothing
+grows with playlist length, and the drawer closes on Escape or a click
+outside. The anime queue below is driven by the same cursors as Management
+(`+1 episode`, `Next season`, finish) with next-airing and next-season dates.
 
 **Admin** (admin role only, fourth rail item) — backups with sizes and ages
 (take one now, download, pick one to restore), a restore panel that accepts an
@@ -211,12 +218,12 @@ show the page.
 ## Checks
 
 ```bash
-# 35 browser checks against the running stack (real UI, real GraphQL),
+# 39 browser checks against the running stack (real UI, real GraphQL),
 # including a real backup → upload → destructive restore round-trip
 python3 qa/e2e.py
 python3 qa/shots.py        # regenerate the screenshots in docs/screenshots
 
-# 72 backend tests: units, API/GraphQL integration, black-box scenarios, admin
+# 74 backend tests: units, API/GraphQL integration, black-box scenarios, admin
 cd Backend && DREAMEDIA_PG_PASSWORD=... .venv/bin/python -m pytest -q
 cd ../Frontend && npm run check && npm run build
 ```

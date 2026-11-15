@@ -5,6 +5,7 @@ import { useApp, useWorkspace } from "../../app/state";
 import { EmptyState, MiniSwitch, Switch, Thumb } from "../../app/ui";
 import { advanceMessage, timeAgo, formatDate } from "../../lib/format";
 import type { AniEntry, AniList } from "../../lib/types";
+import { ProgressEditor } from "./ProgressEditor";
 
 const LISTS: { value: AniList; label: string }[] = [
   { value: "watching", label: "Watching" },
@@ -276,6 +277,12 @@ function AnimeCard({
             <strong>Seasons</strong>
             <span>{entry.seasons.length} tracked</span>
             <span className="grow" />
+            <ProgressEditor
+              entryId={entry.id}
+              season={entry.cursorSeason ?? 1}
+              episode={entry.cursorEpisode ?? 0}
+              compact
+            />
             <button
               className="btn btn--sm"
               onClick={() =>
