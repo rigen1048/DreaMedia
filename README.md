@@ -223,7 +223,7 @@ show the page.
 python3 qa/e2e.py
 python3 qa/shots.py        # regenerate the screenshots in docs/screenshots
 
-# 74 backend tests: units, API/GraphQL integration, black-box scenarios, admin
+# 75 backend tests: units, API/GraphQL integration, black-box scenarios, admin
 cd Backend && DREAMEDIA_PG_PASSWORD=... .venv/bin/python -m pytest -q
 cd ../Frontend && npm run check && npm run build
 ```

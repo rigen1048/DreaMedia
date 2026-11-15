@@ -290,3 +290,23 @@ async def test_manager_nap_returns_early_on_wake():
     started = time.monotonic()
     await asyncio.gather(manager._nap(5), _ring())
     assert time.monotonic() - started < 1.0
+
+
+async def test_refresh_seasons_skips_an_entry_that_vanished():
+    """A restore can replace the database under the anime worker, leaving a due
+    row that points at an entry id nobody owns any more. Refreshing it used to
+    raise a foreign-key violation; it must now be a quiet no-op."""
+    user_id = await _user()
+    entry_id = await _seed_chain(user_id, [
+        {"season_no": 1, "status": "RELEASING", "total": 12, "aired": 3},
+    ])
+    pool = await db.get_pool()
+    async with pool.acquire() as con:
+        await con.execute("DELETE FROM ani_entries WHERE id = $1", entry_id)
+    payload = {1: {"id": 9001, "title": "Season 1", "status": "RELEASING", "episodes": 12}}
+    await AniStore().refresh_seasons(user_id, entry_id, payload)  # no raise
+    async with pool.acquire() as con:
+        left = await con.fetchval(
+            "SELECT count(*) FROM ani_seasons WHERE entry_id = $1", entry_id
+        )
+    assert left == 0
