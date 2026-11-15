@@ -220,7 +220,7 @@ CREATE TABLE IF NOT EXISTS ani_events (
     kind          TEXT NOT NULL CHECK (kind IN (
                       'next_episode_date', 'next_sequel_date', 'new_anime_date',
                       'episode_postponed', 'next_sequel', 'release_confirmed',
-                      'release_changed')),
+                      'release_changed', 'episode_released')),
     tier          TEXT NOT NULL CHECK (tier IN ('awaited', 'unwatched')),  -- D21
     event_hash    BYTEA UNIQUE,          -- deterministic identity (random nonces
                                          -- make ciphertext dedupe impossible)
@@ -267,3 +267,11 @@ ALTER TABLE yt_randomsubs ADD COLUMN IF NOT EXISTS claimed_at BIGINT;
 CREATE INDEX IF NOT EXISTS idx_yt_channels_subdomain ON yt_channels(subdomain_id);
 CREATE INDEX IF NOT EXISTS idx_ani_entries_subdomain ON ani_entries(subdomain_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
+
+-- Episode actually aired (aired-count increase while already releasing).
+-- Replayed on every start, so drop+re-add keeps the constraint in sync.
+ALTER TABLE ani_events DROP CONSTRAINT IF EXISTS ani_events_kind_check;
+ALTER TABLE ani_events ADD CONSTRAINT ani_events_kind_check CHECK (kind IN (
+    'next_episode_date', 'next_sequel_date', 'new_anime_date',
+    'episode_postponed', 'next_sequel', 'release_confirmed',
+    'release_changed', 'episode_released'));

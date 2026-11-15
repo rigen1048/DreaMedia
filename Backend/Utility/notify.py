@@ -164,6 +164,7 @@ _ANI_RELEASE_KINDS = {
     "next_sequel": "Next sequel",
     "release_confirmed": "Release confirmed",
     "release_changed": "Release changed",
+    "episode_released": "Episode released",
 }
 
 

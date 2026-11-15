@@ -77,6 +77,22 @@ async def run_subscription(store: AniStore, due: AniDue) -> Result[str, str]:
     new_state = classify_transition(old_state, release_ts, aired, status, now)
     tier = _tier(due)
 
+    # Episode actually aired: the aired count moved up while the season is
+    # already out. This is the "it has already released" signal — without it
+    # a same-day check that only compares dates would keep saying "today".
+    old_aired = int(stored.get("episodes_aired") or 0)
+    if (
+        aired > old_aired
+        and old_state in ("announced", "airing")
+        and release_ts is not None
+        and now >= release_ts
+    ):
+        await store.emit_event(due.user_id, due.entry_id, due.season_no, "episode_released", tier, {
+            "episode": aired,
+            "previous": old_aired,
+            "aired_at": now,
+        })
+
     if old_state == "unknown" and new_state == "announced":
         kind = "new_anime_date" if due.season_no == 1 else "next_sequel_date"
         await store.emit_event(due.user_id, due.entry_id, due.season_no, kind, tier, {

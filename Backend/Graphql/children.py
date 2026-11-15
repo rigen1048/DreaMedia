@@ -474,6 +474,7 @@ class YtMutation:
 # ============================ Anime ============================
 _EVENT_GROUP = {
     "next_episode_date": ("release", "today", "Episode airing"),
+    "episode_released": ("release", "today", "Episode released"),
     "release_confirmed": ("release", "today", "Release confirmed"),
     "next_sequel_date": ("release", "sequel", "Sequel announced"),
     "next_sequel": ("release", "sequel", "Next sequel"),

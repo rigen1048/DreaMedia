@@ -103,8 +103,8 @@ ANI = [
      [("next_episode_date", 3, 9)]),
     ("Dandadan", "TV", "Shonen", "Comedy", "watching", None, "none", True,
      [(1, "FINISHED", 12, 12, "2024-10-04", "finished", True),
-      (2, "RELEASING", 12, 9, "2026-07-04", "airing", False)],
-     [("next_episode_date", 2, 30)]),
+     (2, "RELEASING", 12, 9, "2026-07-04", "airing", False)],
+     [("episode_released", 2, 3), ("next_episode_date", 2, 30)]),
     ("Chainsaw Man — Reze Arc", "MOVIE", "Shonen", "Action", "next_sequel", None, "none", True,
      [(1, "FINISHED", 12, 12, "2022-10-12", "finished", True),
       (2, "NOT_YET_RELEASED", 1, 0, "2027-03-14", "announced", False)],
@@ -135,6 +135,7 @@ ANI = [
 
 EVENT_PAYLOADS = {
     "next_episode_date": {"episode": 8, "airing_at": NOW + 2 * DAY},
+    "episode_released": {"episode": 9, "previous": 8},
     "next_sequel_date": {"release": "2027-03-14", "title": "Reze Arc"},
     "release_changed": {"old": "2027-01-10", "new": "2027-03-14"},
     "release_confirmed": {"release": "2027-03-14"},
