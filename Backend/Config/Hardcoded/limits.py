@@ -27,6 +27,10 @@ RETRY_DELAY_SECONDS: float = 5.0
 # but never below this floor — a user must not be able to set retention 0.
 MIN_BACKUPS_KEPT: int = 2
 
+# Restore uploads (admin page): refuse a dump bigger than this before it can
+# fill the disk. Generous for a home server, still a guard.
+MAX_RESTORE_UPLOAD_BYTES: int = 4 * 1024**3
+
 # Session lifetime (D27): sliding TTL. Dies with the process — same
 # lifecycle as the vault (D9). HydraWatch's 18-minute cap is not coming back.
 SESSION_TTL_SECONDS: int = 24 * 3600

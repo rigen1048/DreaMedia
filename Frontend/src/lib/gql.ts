@@ -13,7 +13,7 @@ type GraphQLResponse<T> = {
   errors?: Array<{ message: string; path?: Array<string | number> }>;
 };
 
-const API_BASE = import.meta.env.VITE_DREAMEDIA_API_BASE ?? "";
+export const API_BASE = import.meta.env.VITE_DREAMEDIA_API_BASE ?? "";
 
 /**
  * The frontend talks to ONE endpoint: the backend supergraph at /graphql.

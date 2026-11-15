@@ -50,6 +50,8 @@ browser ──GraphQL /graphql──────────────▶ Fast
 | ![Feed](docs/screenshots/notifications.png) | ![Channels](docs/screenshots/channels.png) |
 | **Management · anime** | **Todo** |
 | ![Anime](docs/screenshots/anime.png) | ![Todo](docs/screenshots/todo.png) |
+| **Admin · backups** | **Admin · restore** |
+| ![Admin](docs/screenshots/admin.png) | ![Restore](docs/screenshots/admin-restore.png) |
 
 Categories and the bell: [`docs/screenshots`](docs/screenshots).
 
@@ -131,7 +133,15 @@ metadata is enriched in the background) and an anime queue driven by the same
 cursors as Management (`+1 episode`, season done, finish) with next-airing
 context.
 
-Keyboard: `1` `2` `3` switch modes, `/` searches, `Esc` closes panels.
+**Admin** (admin role only, fourth rail item) — backups with sizes and ages
+(take one now, download, pick one to restore), a restore panel that accepts an
+uploaded `.dump` from any machine, runtime settings with their hardcoded
+floors, and user management (promote/demote, reset password, delete). Restore
+is a tracked background job with progress, a pre-restore snapshot, and a
+forced sign-out for everyone when it finishes.
+
+Keyboard: `1` `2` `3` switch modes (`4` opens Admin for admins), `/` searches,
+`Esc` closes panels.
 
 ## Repository map
 
@@ -142,18 +152,59 @@ Keyboard: `1` `2` `3` switch modes, `/` searches, `Esc` closes panels.
 | `Backend/Database` | schema.sql (idempotent migrations), stores, vault/crypto |
 | `Backend/Orchestrator` | YouTube and Ani pipelines, filters, schedulers |
 | `Backend/Utility/notify.py` | history lane + receiver push + scope gates |
+| `Backend/Admin` | settings, backup, restore (tracked), users/roles |
+| `Backend/Graphql/admin.py` | admin queries/mutations on the same schema |
 | `Frontend/src/app` | shell, GraphQL client, provider, UI primitives |
-| `Frontend/src/features` | notifications, management, todo, bell, auth |
+| `Frontend/src/features` | notifications, management, todo, bell, auth, admin |
 | `Frontend/server/notify-bridge.mjs` | REST receiver, SSE, JSON inbox |
+| `qa/` | browser checks (`e2e.py`) and screenshot capture (`shots.py`) |
+
+## Admin and recovery
+
+The first account to sign up becomes admin; the rail grows a fourth item for
+that role. The page is a normal part of the app and speaks the same GraphQL
+schema as everything else — with three deliberate REST exceptions:
+
+| Operation | Why it is not GraphQL |
+| --- | --- |
+| `POST /admin/restore/upload` | multipart file upload |
+| `GET /admin/backups/{file}` | binary download of a dump |
+| `GET /admin/restore/status` | must answer *while* a restore runs, and the middleware 503s every mutation during one |
+
+Everything else (settings, backup list, run backup, start restore, users,
+roles, password resets) is GraphQL under `admin*` fields, and each resolver
+re-checks the role against the database — the hidden nav item is convenience,
+not authorisation.
+
+**Restoring replaces the database for every user.** The flow is deliberately
+boring: the dump is validated with `pg_restore -l` before it is accepted, the
+restore writes a rollback snapshot first, workers pause for the whole window,
+the API refuses mutations with 503, and on success every session is dropped
+(including the admin who started it) so nobody keeps a cookie minted against
+the old data. If `pg_restore` fails, the snapshot is restored automatically.
+You must type `RESTORE` to arm the button.
+
+Locked out with no admin account (restored old dump, deleted the account,
+forgot which signup was first)? The page cannot help — that is the one case
+that needs the shell:
+
+```bash
+docker compose exec backend python -m scripts.admin list
+docker compose exec backend python -m scripts.admin promote <username>
+```
+
+`scripts/seed_demo.py` promotes the demo account to admin so the demo box can
+show the page.
 
 ## Checks
 
 ```bash
-# 18 browser checks against the running stack (real UI, real GraphQL)
+# 29 browser checks against the running stack (real UI, real GraphQL),
+# including a real backup → upload → destructive restore round-trip
 python3 qa/e2e.py
 python3 qa/shots.py        # regenerate the screenshots in docs/screenshots
 
-# 54 backend tests: units, API/GraphQL integration, and black-box scenarios
+# 66 backend tests: units, API/GraphQL integration, black-box scenarios, admin
 cd Backend && DREAMEDIA_PG_PASSWORD=... .venv/bin/python -m pytest -q
 cd ../Frontend && npm run check && npm run build
 ```
@@ -171,3 +222,12 @@ pipeline itself runs unmodified. It covers, among others:
 | Anime release day | Same release date + same episode count on Friday morning ⇒ `release_confirmed`, filed under **Today**, no duplicate |
 | Anime date moved | Release date changed ⇒ `release_changed` carrying old and new dates |
 | Anime already aired | Episode count increased ⇒ `episode_released` ("Episode released") in **Today** |
+
+`Backend/tests/test_admin.py` covers the admin surface: anonymous and normal
+users are refused on every admin field, settings floors are enforced, a real
+`pg_dump` uploads and stages, junk uploads are rejected by `pg_restore -l`,
+restore guards reject traversal and concurrent runs, and the last admin can be
+neither demoted nor deleted. The destructive restore itself runs in
+`qa/e2e.py`, where the database is disposable: the browser takes a backup,
+downloads it, deletes a domain, uploads the dump, types `RESTORE`, waits to be
+signed out, signs back in, and finds the deleted domain restored.

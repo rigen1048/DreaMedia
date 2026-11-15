@@ -2,9 +2,19 @@ import { Route, Switch } from "wouter";
 import Management from "../features/management/Management";
 import Notifications from "../features/notifications/Notifications";
 import Todo from "../features/todo/Todo";
+import Admin from "../features/admin/Admin";
 import Login from "../features/auth/Login";
 import { AppProvider, useApp } from "./state";
 import Shell from "./Shell";
+
+function AdminGate() {
+  const { viewer } = useApp();
+  // Hiding the nav item is not authorisation; the backend re-checks the role
+  // on every admin field. This only keeps a stale URL from showing an empty
+  // page to a normal user.
+  if (viewer?.role !== "admin") return <Notifications />;
+  return <Admin />;
+}
 
 function Gate() {
   const { viewer, loading, authError, refresh } = useApp();
@@ -46,6 +56,7 @@ function Gate() {
         <Route path="/management" component={Management} />
         <Route path="/todo" component={Todo} />
         <Route path="/track" component={Todo} />
+        <Route path="/admin" component={AdminGate} />
         <Route component={Notifications} />
       </Switch>
     </Shell>

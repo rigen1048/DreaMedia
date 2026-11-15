@@ -73,6 +73,45 @@ async def logout(token: str) -> None:
             await vault.drop(entry[0])
 
 
+async def drop_all_sessions() -> int:
+    """Invalidate every live session and lock every vault key.
+
+    Called after a database restore: the users table may now describe a
+    different world, so cookies issued against the old one must not survive.
+    The admin who ran the restore is logged out too — deliberately.
+    """
+    async with _sessions_lock:
+        count = len(_sessions)
+        user_ids = {uid for uid, _ in _sessions.values()}
+        _sessions.clear()
+    for user_id in user_ids:
+        await vault.drop(user_id)
+    return count
+
+
+async def drop_user_sessions(user_id: int) -> int:
+    """Invalidate one user's sessions (role change, password reset, delete)."""
+    async with _sessions_lock:
+        tokens = [t for t, (uid, _) in _sessions.items() if uid == user_id]
+        for token in tokens:
+            _sessions.pop(token, None)
+    if tokens:
+        await vault.drop(user_id)
+    return len(tokens)
+
+
+def hash_password(password: str) -> str:
+    """Argon2id hash for admin-driven password resets."""
+    return _hasher.hash(password)
+
+
+def password_problem(password: str) -> str | None:
+    """Same rule as signup, exposed so admin resets cannot weaken it."""
+    if len(password or "") < MIN_PASSWORD_LEN:
+        return f"Password must be at least {MIN_PASSWORD_LEN} characters"
+    return None
+
+
 async def signup(username: str, password: str) -> Result[dict, str]:
     if err := _validate(username, password):
         return Failure(err)
