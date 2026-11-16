@@ -10,14 +10,34 @@ import { ProgressEditor } from "../management/ProgressEditor";
 
 export default function Todo() {
   const workspace = useWorkspace();
-  const { act } = useApp();
+  const { notify, refresh } = useApp();
   const [name, setName] = useState("");
   const [openCard, setOpenCard] = useState<number | null>(null);
+  const nameRef = useRef<HTMLInputElement | null>(null);
 
   const createPlaylist = async () => {
-    if (!name.trim()) return;
-    const ok = await act(() => api.ytCreateCard(name.trim()), "Playlist created");
-    if (ok) setName("");
+    const next = name.trim();
+    if (!next) {
+      // This button used to be disabled while the field was empty: it looked
+      // exactly like an enabled one and silently swallowed the click. Ask for
+      // the name instead, and put the caret where it is needed.
+      nameRef.current?.focus();
+      notify("Give the playlist a name first", "error");
+      return;
+    }
+    try {
+      const { ytCreateCard: cardId } = await api.ytCreateCard(next);
+      setName("");
+      await refresh();
+      notify("Playlist created", "ok");
+      // Open it straight away — the next step is always pasting links.
+      setOpenCard(cardId);
+    } catch (error) {
+      notify(
+        error instanceof Error ? error.message : "The backend rejected this change.",
+        "error",
+      );
+    }
   };
 
   const [listFilter, setListFilter] = useState("all");
@@ -81,18 +101,20 @@ export default function Todo() {
           <span className="grow" />
           <div style={{ display: "flex", gap: 6 }}>
             <input
+              ref={nameRef}
               className="input"
               style={{ width: 190, height: 30, fontSize: 12 }}
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="New playlist name"
+              aria-label="New playlist name"
               onKeyDown={(event) => {
                 if (event.key === "Enter") void createPlaylist();
               }}
             />
             <button
               className="btn btn--sm"
-              disabled={!name.trim()}
+              title="Create a playlist, then paste video links"
               onClick={() => void createPlaylist()}
             >
               <Plus size={13} /> Playlist

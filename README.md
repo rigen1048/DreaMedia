@@ -151,7 +151,9 @@ The grid holds compact tiles (name, progress, three thumbnails); clicking one
 slides the full list in from the right in a drawer — thumbnail + title per row,
 each row the link to the video, check-off, delete and the add box. Nothing
 grows with playlist length, and the drawer closes on Escape or a click
-outside. The anime queue below is driven by the same cursors as Management
+outside. Creating a playlist opens its drawer straight away so you can paste
+links, and the create button says what is missing instead of ignoring the
+click when the name is empty. The anime queue below is driven by the same cursors as Management
 (`+1 episode`, `Next season`, finish) with next-airing and next-season dates.
 
 **Admin** (admin role only, fourth rail item) — backups with sizes and ages
@@ -221,7 +223,7 @@ show the page.
 ## Checks
 
 ```bash
-# 39 browser checks against the running stack (real UI, real GraphQL),
+# 44 browser checks against the running stack (real UI, real GraphQL),
 # including a real backup → upload → destructive restore round-trip
 python3 qa/e2e.py
 python3 qa/shots.py        # regenerate the screenshots in docs/screenshots
