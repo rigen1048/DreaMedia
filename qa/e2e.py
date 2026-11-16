@@ -152,9 +152,33 @@ async def main() -> None:
         # -------- todo: create playlist + add links
         await page.goto(f"{BASE}/todo", wait_until="networkidle")
         pl_name = "QA playlist " + str(int(asyncio.get_event_loop().time()))
-        await page.fill("input[placeholder='New playlist name']", pl_name)
+        tiles_before = await page.locator(".playlist-tile").count()
+        # Clicking "Playlist" with an empty name must explain itself, not do
+        # nothing (that was the reported "add button is not working").
         await page.get_by_role("button", name="Playlist", exact=True).click()
-        await page.wait_for_timeout(2000)
+        await page.wait_for_timeout(700)
+        hint = (await page.locator(".toast").last.inner_text()).replace("\n", " ")
+        ok("empty name is refused with a hint", "name" in hint.lower(), hint[:48])
+        ok(
+            "the empty click created nothing",
+            await page.locator(".playlist-tile").count() == tiles_before,
+            f"{tiles_before} tiles",
+        )
+        focused = await page.evaluate("document.activeElement?.getAttribute('aria-label')")
+        ok("the name field takes focus", focused == "New playlist name", str(focused))
+
+        await page.fill("input[aria-label='New playlist name']", pl_name)
+        await page.get_by_role("button", name="Playlist", exact=True).click()
+        # Creating opens the new playlist immediately so links can be pasted.
+        await page.wait_for_selector(".drawer", timeout=8000)
+        ok(
+            "creating a playlist opens it for links",
+            await page.locator(".drawer .drawer__title").input_value() == pl_name,
+        )
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(400)
+        ok("drawer closes on Escape", await page.locator(".drawer").count() == 0)
+
         tile = page.locator(".playlist-tile", has_text=pl_name).first
         ok("playlist tile created", await tile.count() == 1)
         tile_box = await tile.bounding_box()
@@ -194,7 +218,7 @@ async def main() -> None:
         await page.screenshot(path=str(OUT / "13-todo-drawer-qa.png"), full_page=True)
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(400)
-        ok("drawer closes on Escape", await page.locator(".drawer").count() == 0)
+        ok("drawer closes again after adding", await page.locator(".drawer").count() == 0)
         await page.screenshot(path=str(OUT / "13-todo-qa.png"), full_page=True)
 
         # queue +1 episode
