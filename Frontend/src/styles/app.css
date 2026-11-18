@@ -237,6 +237,32 @@
 }
 
 /* ========================================================= notifications */
+.refresh-progress {
+  position: relative;
+  height: 2px;
+  margin: -6px 0 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.refresh-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  border-radius: inherit;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent);
+  animation: refresh-slide 1.05s ease-in-out infinite;
+}
+
+@keyframes refresh-slide {
+  0% { transform: translateX(-110%); }
+  55% { transform: translateX(210%); }
+  100% { transform: translateX(310%); }
+}
+
 .notif-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 292px;

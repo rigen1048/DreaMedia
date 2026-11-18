@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  Ban,
   BellOff,
   BellRing,
   ChevronDown,
@@ -181,7 +182,7 @@ function ChannelRow({
         </div>
 
         <div>
-          <Switch
+                <Switch
             checked={channel.notify}
             label={`Notify for ${channel.name}`}
             onChange={(next) => void act(() => api.ytSetNotify(channel.id, next))}
@@ -398,6 +399,19 @@ function ChannelRow({
               >
                 <ExternalLink size={12} /> Open
               </a>
+            )}
+            {channel.label !== "blocked" && (
+              <button
+                className="btn btn--sm btn--danger"
+                onClick={() =>
+                  void act(
+                    () => api.ytSetLabel(channel.id, "blocked", "Blocked from management"),
+                    "Source blocked",
+                  )
+                }
+              >
+                <Ban size={12} /> Block
+              </button>
             )}
             <ConfirmButton
               label={`Delete ${channel.name}`}

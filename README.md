@@ -134,16 +134,23 @@ release, `S`/`E`, progress, airing countdown) plus list buckets, watchlist
 certainty, notify switches and per-season state (with each season's date), and
 a blocked/cleanup lane.
 
-Tracking an anime asks where you are: **just starting**, **on S*n* E*m***, or
-**finished *n* seasons**. For the last one the backend decides by itself
-whether the next season is already out — it jumps there and puts the entry back
-in Watching — or is still scheduled, in which case the entry waits in Next
-sequel with the announced date and a bell message when it airs. The same
-**Next season** button on any card (Management or Todo) does that bump later.
-Bumps are forward-only on purpose, so overshooting needs a way back: every
-expanded anime card (and each Todo queue card) carries a small **S/E** editor
-that sets the cursor anywhere — backwards included — and re-derives which
-seasons count as watched from the new position.
+Tracking an anime has two clear entry modes: **Watching** and **Watchlist**.
+Watching records a **Watch till** cursor (season, episode and time in seconds).
+Watchlist entries use one of **Not yet**, **Confirmed**, **Completed** (with an
+optional completed-through season), or **Blocked**. The backend still decides
+whether a completed season's sequel is already out — it jumps there and puts
+the entry back in Watching — or is still scheduled, in which case the entry
+waits in Next sequel with the announced date and a bell message when it airs.
+The same **Next season** button on any card (Management or Todo) does that bump
+later. Every expanded anime card (and each Todo queue card) carries a small
+**S/E** editor that sets the cursor anywhere and re-derives watched seasons.
+
+Notifications expose a visible animated progress bar while Refresh is fetching.
+Mutation helpers await the active workspace refetch, so mute/unmute, block, and
+tracking controls reflect their backend state immediately without a browser
+reload. YouTube management also provides an explicit **Block** action beside
+the notification switch; **Fetch now** queues all active source types,
+including Random, and reports the backend-driven result in the UI.
 
 **Todo** — standalone playlists built from pasted video links (multiple named
 cards; links are stored instantly and metadata is enriched in the background).
@@ -223,7 +230,7 @@ show the page.
 ## Checks
 
 ```bash
-# 44 browser checks against the running stack (real UI, real GraphQL),
+# 49 browser checks against the running stack (real UI, real GraphQL),
 # including a real backup → upload → destructive restore round-trip
 python3 qa/e2e.py
 python3 qa/shots.py        # regenerate the screenshots in docs/screenshots

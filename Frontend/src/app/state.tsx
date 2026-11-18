@@ -18,6 +18,7 @@ type AppState = {
   viewer: Workspace["viewer"];
   workspace: Workspace | null;
   loading: boolean;
+  refreshing: boolean;
   authError: string | null;
   refresh: () => Promise<unknown>;
   login: (username: string, password: string) => Promise<void>;
@@ -46,6 +47,7 @@ const EMPTY: Workspace = {
 export function AppProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
   const toastId = useRef(0);
 
   const pushToast = useCallback((message: string, tone: Toast["tone"] = "info") => {
@@ -67,13 +69,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     retry: false,
   });
 
-  const refresh = useCallback(() => query.refetch(), [query]);
+  const refresh = useCallback(async () => {
+    setManualRefreshing(true);
+    try {
+      return await query.refetch();
+    } finally {
+      setManualRefreshing(false);
+    }
+  }, [query]);
 
   const act = useCallback(
     async (operation: () => Promise<unknown>, success?: string) => {
       try {
         await operation();
-        await queryClient.invalidateQueries({ queryKey: ["workspace"] });
+        // Invalidate alone can leave controlled switches/selects showing the
+        // pre-mutation snapshot until a later poll. Refetch the active query
+        // before returning so every caller renders the server's new state.
+        await queryClient.refetchQueries({ queryKey: ["workspace"], type: "active" });
         if (success) pushToast(success, "ok");
         return true;
       } catch (error) {
@@ -119,6 +131,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       viewer: workspace?.viewer ?? null,
       workspace,
       loading: query.isPending && !query.data,
+      refreshing: manualRefreshing || query.isFetching,
       authError: unauthorized ? null : query.error instanceof Error ? query.error.message : null,
       refresh,
       login,
@@ -133,9 +146,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     act,
     dismissToast,
     login,
+    manualRefreshing,
     logout,
     query.data,
     query.error,
+    query.isFetching,
     query.isPending,
     pushToast,
     refresh,

@@ -77,6 +77,26 @@ async def main() -> None:
         await page.wait_for_selector(".rail", timeout=15000)
         ok("login", True)
 
+        # Hold the real GraphQL response briefly so the refresh affordance is observable.
+        await page.goto(BASE, wait_until="networkidle")
+        await page.wait_for_timeout(1000)
+
+        async def hold_refresh(route):
+            await asyncio.sleep(0.5)
+            await route.continue_()
+
+        await page.route("**/graphql*", hold_refresh)
+        refresh_button = page.locator('button[title="Refresh notifications"]')
+        await refresh_button.wait_for(state="visible", timeout=15000)
+        await refresh_button.click()
+        await page.locator(".refresh-progress[role=status]").wait_for(state="visible", timeout=3000)
+        ok(
+            "notification refresh shows loading bar",
+            await page.locator(".refresh-progress[role=status]").is_visible(),
+        )
+        await page.locator(".refresh-progress").wait_for(state="hidden", timeout=5000)
+        await page.unroute("**/graphql", hold_refresh)
+
         # -------- categories: create / rename / subdomain mute
         await page.goto(f"{BASE}/sources", wait_until="networkidle")
         await page.get_by_role("button", name="Categories").click()
@@ -103,7 +123,10 @@ async def main() -> None:
         sub_row = page.locator(".sub-row", has_text=f"Muted sub {stamp}")
         ok("subdomain created", await sub_row.count() == 1)
         await sub_row.locator(".mini-switch").click()
-        await page.wait_for_timeout(1000)
+        for _ in range(20):
+            if await sub_row.locator(".mini-switch").get_attribute("aria-checked") == "false":
+                break
+            await page.wait_for_timeout(250)
         ok("subdomain muted", await sub_row.locator(".mini-switch").get_attribute("aria-checked") == "false")
         await page.screenshot(path=str(OUT / "10-categories-qa.png"), full_page=True)
 
@@ -130,6 +153,16 @@ async def main() -> None:
         await page.locator(".ch-row").first.locator(".switch").click()
         await page.wait_for_timeout(1200)
         ok("channel muted", "MUTED" in await page.locator(".ch-row").first.inner_text())
+        ok("channel has explicit block action", await page.get_by_role("button", name="Block", exact=True).count() == 1)
+        await page.locator(".ch-row").first.locator(".switch").click()
+        for _ in range(20):
+            if await page.locator(".ch-row").first.locator(".switch").get_attribute("aria-checked") == "true":
+                break
+            await page.wait_for_timeout(250)
+        ok(
+            "channel unmuted without browser reload",
+            await page.locator(".ch-row").first.locator(".switch").get_attribute("aria-checked") == "true",
+        )
         await page.screenshot(path=str(OUT / "11-channels-qa.png"), full_page=True)
         # unmute again so demo data stays clean
         await page.locator(".ch-row").first.locator(".switch").click()
@@ -269,8 +302,20 @@ async def main() -> None:
         await page.get_by_role("button", name="Track anime").click()
         await page.wait_for_timeout(500)
         ok(
-            "track dialog asks where you are",
-            await page.locator(".modal .chipbtn", has_text="Finished a season").count() == 1,
+            "track dialog offers only Watching or Watchlist",
+            await page.locator(".modal .chipbtn", has_text="Watching").count() == 1
+            and await page.locator(".modal .chipbtn", has_text="Watchlist").count() == 1
+            and await page.locator(".modal .chipbtn").count() == 2,
+        )
+        await page.get_by_role("button", name="Watchlist", exact=True).click()
+        ok(
+            "watchlist offers the four requested states",
+            await page.locator(".modal select option").all_inner_texts() == ["Not yet", "Confirmed", "Completed", "Blocked"],
+        )
+        await page.get_by_role("button", name="Watching", exact=True).click()
+        ok(
+            "watching offers season episode and time",
+            await page.locator(".modal input[type=number]").count() == 3,
         )
         await page.get_by_role("button", name="Cancel").first.click()
         await page.wait_for_timeout(300)
