@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { CalendarClock, ChevronDown, ListTree, Plus, Sparkles } from "lucide-react";
+import { Ban, CalendarClock, ChevronDown, ListTree, Plus, Sparkles } from "lucide-react";
 import * as api from "../../app/api";
 import { useApp, useWorkspace } from "../../app/state";
 import { EmptyState, MiniSwitch, Switch, Thumb } from "../../app/ui";
@@ -242,6 +242,17 @@ function AnimeCard({
             </select>
 
             <span className="grow" />
+            {entry.label !== "blocked" && (
+              <button
+                className="btn btn--sm btn--danger"
+                onClick={() =>
+                  void act(() => api.aniUpdateEntry(entry.id, { label: "blocked" }), "Anime blocked")
+                }
+                title="Block this anime and suppress notifications"
+              >
+                <Ban size={11} /> Block
+              </button>
+            )}
             <span
               title={
                 entry.notifyEnabled ? "Release notifications on" : "Release notifications muted"

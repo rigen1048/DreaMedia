@@ -31,8 +31,10 @@ type Row =
 
 export default function Notifications() {
   const workspace = useWorkspace();
-  const { act, refresh } = useApp();
+  const { act, refresh, refreshing } = useApp();
   const [, navigate] = useLocation();
+  const [refreshingLocal, setRefreshingLocal] = useState(false);
+  const isRefreshing = refreshing || refreshingLocal;
 
   const [source, setSource] = useState<Source>("youtube");
   const [mode, setMode] = useState<"all" | YtKind>("all");
@@ -199,6 +201,18 @@ export default function Notifications() {
     navigate(`/todo?entry=${row.event.entryId}`);
   };
 
+  const handleRefresh = async () => {
+    setRefreshingLocal(true);
+    try {
+      await Promise.all([
+        refresh(),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 300)),
+      ]);
+    } finally {
+      setRefreshingLocal(false);
+    }
+  };
+
   return (
     <div>
       <div className="page-head">
@@ -220,8 +234,14 @@ export default function Notifications() {
               <b>{mutedCount}</b> muted
             </span>
           </div>
-          <button className="btn btn--ghost btn--sm" onClick={() => void refresh()} title="Refresh">
-            <RefreshCw size={13} />
+          <button
+            className="btn btn--ghost btn--sm"
+            onClick={() => void handleRefresh()}
+            title={isRefreshing ? "Refreshing notifications" : "Refresh notifications"}
+            disabled={isRefreshing}
+          >
+            <RefreshCw size={13} className={isRefreshing ? "spin" : undefined} />
+            {isRefreshing ? "Refreshing…" : "Refresh"}
           </button>
           <button
             className="btn btn--sm"
@@ -232,6 +252,8 @@ export default function Notifications() {
           </button>
         </div>
       </div>
+
+      {isRefreshing && <div className="refresh-progress" role="status" aria-label="Refreshing notifications" />}
 
       <div className="notif-layout">
         <div className="notif-main">

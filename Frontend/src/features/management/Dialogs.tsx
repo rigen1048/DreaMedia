@@ -2,7 +2,6 @@ import { useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import * as api from "../../app/api";
 import { useApp, useWorkspace } from "../../app/state";
-import { advanceMessage } from "../../lib/format";
 
 export function Dialog({
   title,
@@ -194,13 +193,14 @@ export function AddAnimeDialog({ onClose }: { onClose: () => void }) {
   const { notify, refresh } = useApp();
   const workspace = useWorkspace();
   const [title, setTitle] = useState("");
-  const [list, setList] = useState("watching");
+  const [list, setList] = useState<"watching" | "watchlist">("watching");
   const [domain, setDomain] = useState("");
   const [subdomain, setSubdomain] = useState("");
-  const [progress, setProgress] = useState<"fresh" | "current" | "finished">("fresh");
-  const [season, setSeason] = useState(1);
-  const [episode, setEpisode] = useState(0);
-  const [finishedSeasons, setFinishedSeasons] = useState(1);
+  const [watchlistState, setWatchlistState] = useState<"not_yet" | "confirmed" | "completed" | "blocked">("not_yet");
+  const [watchTillSeason, setWatchTillSeason] = useState(1);
+  const [watchTillEpisode, setWatchTillEpisode] = useState(0);
+  const [watchTillTime, setWatchTillTime] = useState(0);
+  const [completedSeason, setCompletedSeason] = useState(1);
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
@@ -214,15 +214,24 @@ export function AddAnimeDialog({ onClose }: { onClose: () => void }) {
         subdomain.trim() || undefined,
       );
       let message = "Anime tracked — seasons and episode counts resolved";
-      if (progress === "current") {
-        await api.aniSetCursor(created.aniTrack, Math.max(1, season), Math.max(0, episode), null);
-        message = `Tracked — resuming at S${Math.max(1, season)} E${Math.max(0, episode)}`;
-      } else if (progress === "finished") {
-        const decision = await api.aniAdvanceSeason(
+      if (list === "watching") {
+        await api.aniSetCursor(
           created.aniTrack,
-          Math.max(1, finishedSeasons),
+          Math.max(1, watchTillSeason),
+          Math.max(0, watchTillEpisode),
+          Math.max(0, watchTillTime),
         );
-        message = advanceMessage(decision.aniAdvanceSeason);
+        message = `Watching — till S${Math.max(1, watchTillSeason)} E${Math.max(0, watchTillEpisode)}`;
+      } else if (watchlistState === "completed") {
+        await api.aniUpdateEntry(created.aniTrack, { label: "completed" });
+        await api.aniSetProgress(created.aniTrack, Math.max(1, completedSeason), 0);
+        message = `Watchlist — completed through Season ${Math.max(1, completedSeason)}`;
+      } else if (watchlistState === "blocked") {
+        await api.aniUpdateEntry(created.aniTrack, { label: "blocked" });
+        message = "Watchlist — blocked";
+      } else if (watchlistState === "confirmed") {
+        await api.aniUpdateEntry(created.aniTrack, { watchState: "confirmed" });
+        message = "Watchlist — confirmed";
       }
       await refresh();
       notify(message, "ok");
@@ -254,18 +263,17 @@ export function AddAnimeDialog({ onClose }: { onClose: () => void }) {
         </label>
 
         <div className="field">
-          <span>Where are you with it?</span>
+          <span>Track as</span>
           <div className="filterbar">
             {[
-              ["fresh", "Just starting"],
-              ["current", "On an episode"],
-              ["finished", "Finished a season"],
+              ["watching", "Watching"],
+              ["watchlist", "Watchlist"],
             ].map(([value, label]) => (
               <button
                 key={value}
                 className="chipbtn"
-                data-active={progress === value}
-                onClick={() => setProgress(value as typeof progress)}
+                data-active={list === value}
+                onClick={() => setList(value as typeof list)}
               >
                 {label}
               </button>
@@ -273,68 +281,50 @@ export function AddAnimeDialog({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        {progress === "current" && (
+        {list === "watching" && (
           <div className="modal__row">
             <label className="field">
-              <span>Season</span>
+              <span>Watch till · Season</span>
               <input
                 className="input"
                 type="number"
                 min={1}
-                value={season}
-                onChange={(event) => setSeason(Number(event.target.value))}
+                value={watchTillSeason}
+                onChange={(event) => setWatchTillSeason(Number(event.target.value))}
               />
             </label>
             <label className="field">
-              <span>Episode watched</span>
+              <span>Episode</span>
               <input
                 className="input"
                 type="number"
                 min={0}
-                value={episode}
-                onChange={(event) => setEpisode(Number(event.target.value))}
+                value={watchTillEpisode}
+                onChange={(event) => setWatchTillEpisode(Number(event.target.value))}
               />
+            </label>
+            <label className="field">
+              <span>Time (seconds)</span>
+              <input className="input" type="number" min={0} value={watchTillTime} onChange={(event) => setWatchTillTime(Number(event.target.value))} />
             </label>
           </div>
         )}
 
-        {progress === "finished" && (
+        {list === "watchlist" && (
           <div className="modal__row">
             <label className="field">
-              <span>Seasons finished</span>
-              <input
-                className="input"
-                type="number"
-                min={1}
-                value={finishedSeasons}
-                onChange={(event) => setFinishedSeasons(Number(event.target.value))}
-              />
+              <span>Watchlist status</span>
+              <select className="select" value={watchlistState} onChange={(event) => setWatchlistState(event.target.value as typeof watchlistState)}>
+                <option value="not_yet">Not yet</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="completed">Completed</option>
+                <option value="blocked">Blocked</option>
+              </select>
             </label>
-            <div className="field" style={{ justifyContent: "flex-end" }}>
-              <span>Then the backend decides</span>
-              <p className="faint" style={{ margin: 0, fontSize: 10.5, lineHeight: 1.45 }}>
-                Season {Math.max(1, finishedSeasons) + 1} already out → it jumps there; still
-                scheduled → Next sequel with the release date and a notification.
-              </p>
-            </div>
+            {watchlistState === "completed" && <label className="field"><span>Completed through season (optional)</span><input className="input" type="number" min={1} value={completedSeason} onChange={(event) => setCompletedSeason(Number(event.target.value))} /></label>}
           </div>
         )}
 
-        {progress === "fresh" && (
-          <label className="field">
-            <span>Initial bucket</span>
-            <select
-              className="select"
-              value={list}
-              onChange={(event) => setList(event.target.value)}
-            >
-              <option value="watching">Watching</option>
-              <option value="next_sequel">Next sequel</option>
-              <option value="new_anime">New anime</option>
-              <option value="watchlist">Watchlist</option>
-            </select>
-          </label>
-        )}
 
         <div className="modal__row">
           <label className="field">
