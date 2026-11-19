@@ -59,8 +59,27 @@ async def run_backup() -> Result[str, str]:
     if proc.returncode != 0:
         return Failure(f"pg_dump failed: {stderr.decode().strip()}")
 
+    # Verify before declaring success (owner mandate: every backup verified).
+    # A dump pg_restore can't list is deleted and reported as a failure —
+    # a backup that doesn't restore is a rumor.
+    from Admin.restore import _pg_restore_bin
+
+    pg_restore = _pg_restore_bin()
+    if pg_restore:
+        check = await asyncio.create_subprocess_exec(
+            pg_restore, "-l", str(out),
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        _, check_err = await check.communicate()
+        if check.returncode != 0:
+            out.unlink(missing_ok=True)
+            return Failure(
+                f"backup failed verification (pg_restore -l): {check_err.decode()[-200:]}"
+            )
+
     await prune_old_backups(backup_dir)
-    log.info("backup written: %s", out)
+    log.info("backup written and verified: %s", out)
     return Success(str(out))
 
 

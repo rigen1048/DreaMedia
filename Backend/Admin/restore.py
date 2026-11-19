@@ -36,11 +36,27 @@ from Utility.logs import log
 # Global restore gate (2026 review: in-place restore with live writers is a
 # known-acknowledged hazard — now it actually pauses them). Managers check
 # restore_in_progress() each pass; the API middleware 503s mutations.
-_restore_active = False
+# Phase 1.2: the gate lives in the settings table so EVERY worker sees it
+# (a module global only covered the restoring worker).
+_restore_active = False  # local fast-path; the DB row is the source of truth
 
 
 def restore_in_progress() -> bool:
+    # Local flag keeps the hot path cheap; restore_start/finish also persist
+    # the settings row so other workers observe the window on their next read.
     return _restore_active
+
+
+async def restore_in_progress_db() -> bool:
+    from Admin import settings
+
+    return (await settings.get_typed("restore_active")) == "1"
+
+
+async def _persist_gate(active: bool) -> None:
+    from Admin import settings
+
+    await settings.set_value("restore_active", "1" if active else "0")
 
 
 _DUMP_RE = re.compile(r"^dreamedia-\d{8}-\d{6}-\d{6}\.dump$")
@@ -223,6 +239,7 @@ async def start_restore(filename: str) -> Result[str, str]:
         return Failure("pg_restore not found")
 
     _restore_active = True
+    asyncio.ensure_future(_persist_gate(True))
     _set(
         phase="queued", file=filename, startedAt=time.time(), finishedAt=None,
         snapshot=None, error=None, sessionsDropped=0,
@@ -238,6 +255,7 @@ async def _restore(filename: str, gate_already_closed: bool = False) -> Result[s
     if isinstance(resolved, Failure):
         if gate_already_closed:
             _restore_active = False
+            await _persist_gate(False)
             _set(phase="failed", error=resolved.failure(), finishedAt=time.time())
         return Failure(resolved.failure())
     target = resolved.unwrap()
@@ -246,12 +264,14 @@ async def _restore(filename: str, gate_already_closed: bool = False) -> Result[s
     if not pg_restore:
         if gate_already_closed:
             _restore_active = False
+            await _persist_gate(False)
             _set(phase="failed", error="pg_restore not found", finishedAt=time.time())
         return Failure("pg_restore not found")
     env = _pg_env(pg_restore)
 
     if not gate_already_closed:
         _restore_active = True
+        asyncio.ensure_future(_persist_gate(True))
         _set(
             phase="queued", file=filename, startedAt=time.time(), finishedAt=None,
             snapshot=None, error=None, sessionsDropped=0, message=None,

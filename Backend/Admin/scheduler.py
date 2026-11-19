@@ -14,6 +14,7 @@ from pathlib import Path
 
 from returns.result import Failure
 
+from Database.leader import is_leader
 from Admin import backup, settings
 from Utility.logs import log
 
@@ -49,6 +50,9 @@ async def run_if_due() -> bool:
 async def run_forever() -> None:
     log.info("backup scheduler started (D33)")
     while True:
+        if not await is_leader():
+            await asyncio.sleep(_TICK_SECONDS)
+            continue
         try:
             await run_if_due()
         except asyncio.CancelledError:
