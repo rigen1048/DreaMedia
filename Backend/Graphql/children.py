@@ -316,6 +316,16 @@ class YtMutation:
         return channel_id
 
     @strawberry.field
+    async def yt_set_blocked_category(
+        self, info: Info, channel_id: int,
+        domain: Optional[str] = None, subdomain: Optional[str] = None,
+    ) -> bool:
+        _unwrap(await _yt.set_blocked_category(
+            await _uid(info), channel_id, domain, subdomain
+        ))
+        return True
+
+    @strawberry.field
     async def yt_set_label(
         self, info: Info, channel_id: int, label: str, reason: Optional[str] = None
     ) -> bool:
@@ -588,6 +598,18 @@ class AniDomain:
 
 
 @strawberry.type
+class AniTodo:
+    id: int
+    entry_id: Optional[int]
+    title: Optional[str]
+    season_no: int
+    episode: int
+    position_seconds: int
+    done: bool
+    created_at: int
+
+
+@strawberry.type
 class AniQuery:
     @strawberry.field
     async def ani_events(
@@ -642,6 +664,12 @@ class AniQuery:
             )
             for e in view
         ]
+
+    @strawberry.field
+    async def ani_todo(self, info: Info) -> List[AniTodo]:
+        """Halfway-watch bookmarks (cleanup #2) — explicitly separate from
+        the YT custom playlists."""
+        return [AniTodo(**t) for t in await _ani.todo_list(await _uid(info))]
 
     @strawberry.field
     async def ani_domains(self, info: Info) -> List[AniDomain]:
@@ -779,6 +807,44 @@ class AniMutation:
         self, info: Info, event_ids: List[int], seen: bool = True
     ) -> int:
         return await _ani.mark_events_seen(await _uid(info), event_ids, seen)
+
+    @strawberry.field
+    async def ani_todo_add(
+        self, info: Info, season_no: int, episode: int,
+        position_seconds: int = 0, entry_id: Optional[int] = None,
+        title: Optional[str] = None,
+    ) -> int:
+        return _unwrap(await _ani.todo_add(
+            await _uid(info), season_no=season_no, episode=episode,
+            position_seconds=position_seconds, entry_id=entry_id, title=title,
+        ))
+
+    @strawberry.field
+    async def ani_todo_update(
+        self, info: Info, todo_id: int, done: Optional[bool] = None,
+        episode: Optional[int] = None, position_seconds: Optional[int] = None,
+    ) -> bool:
+        _unwrap(await _ani.todo_update(
+            await _uid(info), todo_id, done=done, episode=episode,
+            position_seconds=position_seconds,
+        ))
+        return True
+
+    @strawberry.field
+    async def ani_todo_delete(self, info: Info, todo_id: int) -> bool:
+        _unwrap(await _ani.todo_delete(await _uid(info), todo_id))
+        return True
+
+    @strawberry.field
+    async def ani_set_blocked_category(
+        self, info: Info, entry_id: int,
+        domain: Optional[str] = None, subdomain: Optional[str] = None,
+    ) -> bool:
+        """Blocked/reserved entries carry their OWN domain/subdomain (cleanup #4)."""
+        _unwrap(await _ani.set_blocked_category(
+            await _uid(info), entry_id, domain, subdomain
+        ))
+        return True
 
     @strawberry.field
     async def ani_delete_entry(self, info: Info, entry_id: int) -> bool:

@@ -162,6 +162,24 @@ CREATE TABLE IF NOT EXISTS ani_subdomains (
     UNIQUE (domain_id, name_hash)
 );
 
+-- Global anime catalog cache (cleanup 2026-11-08): public AniList facts,
+-- no user linkage. Per-user state/snapshots live in ani_entries/ani_seasons.
+CREATE TABLE IF NOT EXISTS ani_metadata (
+    anilist_id     INTEGER PRIMARY KEY,
+    season_no      INTEGER NOT NULL,        -- chain position (global fact)
+    title          TEXT,
+    format         TEXT,
+    episodes_total INTEGER,
+    episodes_aired INTEGER,
+    status         TEXT,
+    start_date     TEXT,
+    release_date   TEXT,
+    next_airing_at BIGINT,
+    next_airing_ep INTEGER,
+    cover          TEXT,
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS ani_entries (
     id            SERIAL PRIMARY KEY,
     user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -230,6 +248,21 @@ CREATE TABLE IF NOT EXISTS ani_events (
 );
 CREATE INDEX IF NOT EXISTS idx_ani_events_entry ON ani_events(entry_id, seen);
 
+-- Anime halfway-watch todo (cleanup #2): "AoT S3 E5 at 7:27".
+-- Separate table from yt_cards (cleanup #3) — different domain, different data.
+CREATE TABLE IF NOT EXISTS ani_todo (
+    id            SERIAL PRIMARY KEY,
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    entry_id      INTEGER REFERENCES ani_entries(id) ON DELETE CASCADE,  -- NULL if untracked
+    title_enc     BYTEA,                    -- required when entry_id IS NULL
+    season_no     INTEGER NOT NULL,
+    episode       INTEGER NOT NULL,
+    position_seconds INTEGER NOT NULL DEFAULT 0,
+    done          BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_ani_todo_user ON ani_todo(user_id, done);
+
 -- ==================== Feature-completion migrations ====================
 -- Idempotent: this file is replayed on every start, so post-original columns
 -- are added here behind IF NOT EXISTS / DO guards.
@@ -264,6 +297,13 @@ BEGIN
 END $$;
 
 ALTER TABLE yt_randomsubs ADD COLUMN IF NOT EXISTS claimed_at BIGINT;
+
+-- Cleanup #4: blocked/reserved channels + entries carry their OWN
+-- domain/subdomain (separate from feed categories) + the text reason.
+ALTER TABLE yt_channels  ADD COLUMN IF NOT EXISTS blocked_domain_enc BYTEA;
+ALTER TABLE yt_channels  ADD COLUMN IF NOT EXISTS blocked_subdomain_enc BYTEA;
+ALTER TABLE ani_entries  ADD COLUMN IF NOT EXISTS blocked_domain_enc BYTEA;
+ALTER TABLE ani_entries  ADD COLUMN IF NOT EXISTS blocked_subdomain_enc BYTEA;
 CREATE INDEX IF NOT EXISTS idx_yt_channels_subdomain ON yt_channels(subdomain_id);
 CREATE INDEX IF NOT EXISTS idx_ani_entries_subdomain ON ani_entries(subdomain_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);

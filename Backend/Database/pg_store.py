@@ -591,6 +591,23 @@ class PgStore:
         return result
 
     # ---------------- Access tier (mutations, D16/D17/D22) ----------------
+    async def set_blocked_category(
+        self, user_id: int, channel_id: int,
+        domain: Optional[str], subdomain: Optional[str],
+    ) -> Result[str, str]:
+        """Blocked/reserved channels carry their OWN domain/subdomain (cleanup #4)."""
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "UPDATE yt_channels SET blocked_domain_enc = $3, blocked_subdomain_enc = $4 "
+                "WHERE id = $1 AND user_id = $2",
+                channel_id, user_id, encrypt(key, domain), encrypt(key, subdomain),
+            )
+        return Success("ok") if result.endswith("1") else Failure("channel not found")
+
     async def set_label(
         self, user_id: int, channel_id: int, label: str, reason: Optional[str] = None
     ) -> Result[Dict[str, Any], str]:
