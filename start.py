@@ -39,6 +39,16 @@ def load_env() -> dict[str, str]:
             env.setdefault(key.strip(), value.strip().strip('"').strip("'"))
     if not env.get("DREAMEDIA_PG_PASSWORD"):
         sys.exit("✗ DREAMEDIA_PG_PASSWORD is empty in .env (required, see .env.example)")
+    # Bridge token (2026 review: fail-closed bridge needs one). Generate once,
+    # persist to .env so the backend and the bridge share it across restarts.
+    if not env.get("FRONTEND_NOTIFY_TOKEN"):
+        import secrets
+
+        token = secrets.token_hex(24)
+        with env_file.open("a") as fh:
+            fh.write(f"\nFRONTEND_NOTIFY_TOKEN={token}\n")
+        env["FRONTEND_NOTIFY_TOKEN"] = token
+        print("→ Generated FRONTEND_NOTIFY_TOKEN and saved it to .env")
     return env
 
 

@@ -51,3 +51,16 @@ In production nginx does the same, with buffering disabled for SSE.
 | GET | `/health` | liveness + subscriber count |
 
 State persists to `.bridge/inbox.json` (configurable via `BRIDGE_STORE`).
+
+## Package manager: **bun only**
+
+The frontend is installed, checked and built with [bun](https://bun.sh):
+
+```sh
+bun install --frozen-lockfile
+bun run check   # tsc
+bun run build
+```
+
+`package-lock.json` was removed (it drifted from `bun.lock`); npm is not a
+supported install path. CI enforces the frozen bun install + check + build.

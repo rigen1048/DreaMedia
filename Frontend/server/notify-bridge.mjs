@@ -25,6 +25,14 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.BRIDGE_PORT || process.env.PORT || 3100);
 const HOST = process.env.BRIDGE_HOST || "127.0.0.1";
 const TOKEN = process.env.FRONTEND_NOTIFY_TOKEN || "";
+// Fail closed (2026 review): an empty token used to disable auth on the push
+// lane. Now a tokenless bridge refuses every push and says so at boot.
+if (!TOKEN) {
+  console.warn(
+    "[bridge] FRONTEND_NOTIFY_TOKEN is empty — push endpoint REJECTS all posts. " +
+    "Set it in the root .env (start.py generates one on first run).",
+  );
+}
 const STORE = resolve(process.env.BRIDGE_STORE || `${HERE}/../.bridge/inbox.json`);
 const ORIGIN = process.env.BRIDGE_ALLOW_ORIGIN || "*";
 // Reads are authenticated by asking the backend who owns the browser cookie.
@@ -167,7 +175,7 @@ const server = createServer(async (req, res) => {
       service: "dreamedia-notify-bridge",
       messages: state.messages.length,
       subscribers: clients.size,
-      tokenProtected: Boolean(TOKEN),
+      tokenProtected: true,
     });
   }
 
@@ -217,7 +225,8 @@ const server = createServer(async (req, res) => {
   }
 
   if (path === "/api/notifications" && req.method === "POST") {
-    if (TOKEN && req.headers["x-dreamedia-token"] !== TOKEN) {
+    // Empty token = closed lane (fail-closed), not open (2026 review).
+    if (!TOKEN || req.headers["x-dreamedia-token"] !== TOKEN) {
       return json(res, 401, { ok: false, error: "invalid bridge token" });
     }
     let body;
@@ -281,7 +290,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`[bridge] DreaMedia notify bridge on http://${HOST}:${PORT}`);
-  console.log(`[bridge] store=${STORE} token=${TOKEN ? "required" : "open"}`);
+  console.log(`[bridge] store=${STORE} token=${TOKEN ? "required" : "CLOSED (unset)"}`);
 });
 
 function shutdown() {

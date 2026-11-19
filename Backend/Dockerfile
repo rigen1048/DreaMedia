@@ -26,4 +26,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
 # volume lives at /backups, so make the relative path resolve there.
 RUN mkdir -p /backups && ln -s /backups /app/backups
 EXPOSE 8000
-CMD ["uvicorn", "App.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Single worker BY DESIGN: sessions, vault keys, restore gates and rate
+# gates are process-local (documented single-process home-server model).
+CMD ["uvicorn", "App.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
