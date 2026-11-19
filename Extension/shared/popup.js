@@ -73,18 +73,44 @@ $("bind").addEventListener("click", async () => {
 });
 
 // ---- lists ----
+function fillOptions(select, rows, emptyLabel) {
+  // DOM APIs only — server-derived names are textContent, never innerHTML
+  // (2026 review: crafted titles could inject markup into the popup).
+  select.replaceChildren();
+  if (!rows.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = emptyLabel;
+    select.append(option);
+    return;
+  }
+  for (const row of rows) {
+    const option = document.createElement("option");
+    option.value = row.value;
+    option.textContent = row.label;
+    select.append(option);
+  }
+}
+
 async function loadLists() {
   const cards = await send("dreamedia:cards");
   if (cards.ok) {
-    $("card").innerHTML = (cards.data.cards || [])
-      .map((c) => `<option value="${c.id}">${c.name || "Untitled"} (${c.done}/${c.total})</option>`)
-      .join("") || "<option value=''>No playlists yet</option>";
+    fillOptions(
+      $("card"),
+      (cards.data.cards || []).map((c) => ({
+        value: String(c.id),
+        label: `${c.name || "Untitled"} (${c.done}/${c.total})`,
+      })),
+      "No playlists yet",
+    );
   }
   const entries = await send("dreamedia:aniEntries");
   if (entries.ok) {
-    $("entry").innerHTML = (entries.data.entries || [])
-      .map((e) => `<option value="${e.id}">${e.title}</option>`)
-      .join("") || "<option value=''>No anime tracked yet</option>";
+    fillOptions(
+      $("entry"),
+      (entries.data.entries || []).map((e) => ({ value: String(e.id), label: String(e.title ?? "") })),
+      "No anime tracked yet",
+    );
   }
 }
 loadLists();

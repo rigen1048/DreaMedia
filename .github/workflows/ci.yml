@@ -1,0 +1,49 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      # Bun is the ONLY supported package manager for the frontend
+      # (the Dockerfile builds with it; package-lock.json was removed).
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run build
+
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      # Compile check only: the test suite needs live Postgres, YouTube and
+      # AniList — those run locally, not in CI.
+      - run: uv run python -m compileall -q App Auth Admin Config Database Extension Gate Graphql Orchestrator Utility
+
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: syntax-check shared + variants
+        run: |
+          for f in Extension/shared/*.js Extension/mv2/*.js Extension/mv3/*.js; do
+            node --check "$f" || exit 1
+          done
+      - name: manifests parse
+        run: |
+          python3 -c "import json; json.load(open('Extension/mv2/manifest.json')); json.load(open('Extension/mv3/manifest.json'))"

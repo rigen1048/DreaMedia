@@ -117,6 +117,10 @@ async def signup(username: str, password: str) -> Result[dict, str]:
         return Failure(err)
     pool = await get_pool()
     async with pool.acquire() as con:
+        # Bootstrap is serialized by an advisory lock: two concurrent
+        # signups must not both see an empty users table and both become
+        # admin (2026 review race). Lock first, then re-check everything.
+        await con.execute("SELECT pg_advisory_xact_lock(735531)")
         exists = await con.fetchval(
             "SELECT 1 FROM users WHERE username = $1", username
         )

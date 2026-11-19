@@ -34,6 +34,16 @@ from Orchestrator.Yt.Feed.router import router as yt_feed_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Single-process by design (2026 review): sessions, vault keys, restore
+    # state and rate gates are process-local. Refuse to boot multi-worker.
+    import os
+
+    workers = int(os.environ.get("WEB_CONCURRENCY") or os.environ.get("UVICORN_WORKERS") or 1)
+    if workers != 1:
+        raise RuntimeError(
+            f"DreaMedia must run with exactly 1 worker (got {workers}). "
+            "Sessions/vault/gates are process-local by design — see README."
+        )
     try:
         await db.migrate()
     except Exception as exc:
