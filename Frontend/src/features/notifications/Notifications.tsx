@@ -154,12 +154,13 @@ export default function Notifications() {
   };
 
   const openRow = (row: Row) => {
+    // D57: opening a notification sends it to the trashbin (24h purge window).
     if (row.kind === "yt") {
       if (row.video.url) window.open(row.video.url, "_blank", "noopener");
-      if (!row.video.seen) void act(() => api.ytMarkSeen([row.video.id], true));
+      void act(() => api.ytTrashVideos([row.video.id]));
       return;
     }
-    if (!row.event.seen) void act(() => api.aniEventsSeen([row.event.id], true));
+    void act(() => api.aniTrashEvents([row.event.id]));
     navigate(`/todo?entry=${row.event.entryId}`);
   };
 

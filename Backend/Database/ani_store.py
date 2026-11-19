@@ -228,6 +228,69 @@ class AniStore:
             user_id, entry_id, title or "Anime", season_no, kind, payload
         )
 
+    # ---------------- Trashbin (D57) ----------------
+    async def trash_events(self, user_id: int, event_ids: List[int]) -> int:
+        """Opening an event trashes it (seen + 24h purge window)."""
+        if not event_ids:
+            return 0
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "UPDATE ani_events SET seen = TRUE, trashed_at = now() "
+                "WHERE id = ANY($1) AND user_id = $2",
+                event_ids, user_id,
+            )
+        return int(result.split()[-1])
+
+    async def restore_events(self, user_id: int, event_ids: List[int]) -> int:
+        if not event_ids:
+            return 0
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "UPDATE ani_events SET trashed_at = NULL "
+                "WHERE id = ANY($1) AND user_id = $2",
+                event_ids, user_id,
+            )
+        return int(result.split()[-1])
+
+    async def trash_feed(self, user_id: int, limit: int = 200) -> List[Dict[str, Any]]:
+        key = await vault.get(user_id)
+        if key is None:
+            return []
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            rows = await con.fetch(
+                """
+                SELECT ev.id, ev.entry_id, ev.season_no, ev.kind, ev.tier, ev.seen,
+                       ev.created_at, ev.trashed_at, ev.payload_enc, e.title_enc, e.cover_enc
+                FROM ani_events ev JOIN ani_entries e ON e.id = ev.entry_id
+                WHERE ev.user_id = $1 AND ev.trashed_at IS NOT NULL
+                ORDER BY ev.trashed_at DESC LIMIT $2
+                """,
+                user_id, limit,
+            )
+        return [
+            {
+                "id": r["id"], "entry_id": r["entry_id"], "season_no": r["season_no"],
+                "kind": r["kind"], "tier": r["tier"], "seen": r["seen"],
+                "created_at": r["created_at"].isoformat(),
+                "trashed_at": int(r["trashed_at"].timestamp()),
+                "payload": decrypt(key, r["payload_enc"]) or "{}",
+                "title": decrypt(key, r["title_enc"]), "cover": decrypt(key, r["cover_enc"]),
+            }
+            for r in rows
+        ]
+
+    async def purge_trash(self, older_than_seconds: int = 86400) -> int:
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "DELETE FROM ani_events WHERE trashed_at < now() - make_interval(secs => $1)",
+                older_than_seconds,
+            )
+        return int(result.split()[-1])
+
     # ---------------- Access tier (D16 mutations) ----------------
     async def update_entry(
         self,
@@ -400,6 +463,7 @@ class AniStore:
                 LEFT JOIN ani_subdomains sd ON sd.id = a.subdomain_id
                 LEFT JOIN ani_domains d ON d.id = sd.domain_id
                 WHERE a.user_id = $1 AND ($2 OR NOT e.seen)
+                  AND e.trashed_at IS NULL              -- D57 trashbin
                 ORDER BY e.created_at DESC
                 """,
                 user_id, include_seen,

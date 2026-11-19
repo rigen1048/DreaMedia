@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { width: 320px; margin: 0; padding: 14px; background: #141417; color: #fafafa;
+         font: 13px/1.45 ui-sans-serif, system-ui, sans-serif; }
+  h1 { font-size: 14px; margin: 0 0 10px; }
+  h1 span { color: #71717a; }
+  section { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid #27272a; }
+  section:last-child { border: 0; margin: 0; padding: 0; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #a1a1aa; margin: 0 0 6px; }
+  select, input, button { width: 100%; box-sizing: border-box; margin: 3px 0; padding: 7px 9px;
+    border-radius: 8px; border: 1px solid #3f3f46; background: #1c1c21; color: #fafafa; font: inherit; }
+  button { background: #fafafa; color: #18181b; font-weight: 600; cursor: pointer; border: 0; }
+  button.ghost { background: transparent; border: 1px solid #3f3f46; color: #d4d4d8; }
+  button:disabled { opacity: .5; cursor: default; }
+  .status { font-size: 11px; color: #a1a1aa; margin-top: 4px; min-height: 14px; }
+  .status.err { color: #f87171; }
+  .status.ok { color: #34d399; }
+  .row { display: flex; gap: 6px; } .row > * { flex: 1; }
+</style>
+</head>
+<body>
+<h1>drea<span>/</span>media</h1>
+
+<section id="setup">
+  <h2>Setup</h2>
+  <input id="backendUrl" placeholder="Backend URL (http://127.0.0.1:8000)">
+  <input id="token" placeholder="Extension token (dm_…)" type="password">
+  <button id="saveConfig" class="ghost">Save &amp; ping</button>
+  <div id="configStatus" class="status"></div>
+</section>
+
+<section>
+  <h2>Subscribe this page</h2>
+  <div class="row">
+    <select id="kind">
+      <option value="tracking">Track — every upload</option>
+      <option value="wordscan">WordScan</option>
+      <option value="random">Random</option>
+      <option value="playlist">Playlist</option>
+    </select>
+    <select id="rank" style="display:none">
+      <option value="day">Daily</option>
+      <option value="tri_day">Every 3 days</option>
+      <option value="week" selected>Weekly</option>
+      <option value="bi_week">Every 2 weeks</option>
+      <option value="month">Monthly</option>
+    </select>
+  </div>
+  <input id="words" placeholder="WordScan words, comma separated" style="display:none">
+  <button id="subscribe">Subscribe current page</button>
+  <div id="subStatus" class="status"></div>
+</section>
+
+<section>
+  <h2>Add video to playlist</h2>
+  <select id="card"></select>
+  <button id="addVideo">Add current page’s video</button>
+  <div id="cardStatus" class="status"></div>
+</section>
+
+<section>
+  <h2>Bind tab to anime (watch tracking)</h2>
+  <select id="entry"></select>
+  <div class="row">
+    <input id="season" type="number" min="1" value="1" placeholder="Season">
+    <input id="episode" type="number" min="0" value="1" placeholder="Episode">
+  </div>
+  <button id="bind">Bind &amp; track timestamps</button>
+  <div id="bindStatus" class="status"></div>
+</section>
+
+<script src="popup.js"></script>
+</body>
+</html>

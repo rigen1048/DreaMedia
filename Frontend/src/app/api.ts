@@ -531,3 +531,64 @@ export async function fetchRestoreStatus(): Promise<RestoreStatus> {
 
 export const backupDownloadUrl = (file: string) =>
   `${API_BASE}/admin/backups/${encodeURIComponent(file)}`;
+
+// ---------------- Trashbin (D57) ----------------
+export const ytTrashVideos = (videoIds: number[]) =>
+  gql<{ ytTrashVideos: number }>(
+    `mutation TrashVideos($ids: [Int!]!) { ytTrashVideos(videoIds: $ids) }`,
+    { ids: videoIds },
+  );
+
+export const ytRestoreVideos = (videoIds: number[]) =>
+  gql<{ ytRestoreVideos: number }>(
+    `mutation RestoreVideos($ids: [Int!]!) { ytRestoreVideos(videoIds: $ids) }`,
+    { ids: videoIds },
+  );
+
+export const aniTrashEvents = (eventIds: number[]) =>
+  gql<{ aniTrashEvents: number }>(
+    `mutation TrashEvents($ids: [Int!]!) { aniTrashEvents(eventIds: $ids) }`,
+    { ids: eventIds },
+  );
+
+export const aniRestoreEvents = (eventIds: number[]) =>
+  gql<{ aniRestoreEvents: number }>(
+    `mutation RestoreEvents($ids: [Int!]!) { aniRestoreEvents(eventIds: $ids) }`,
+    { ids: eventIds },
+  );
+
+export const fetchTrash = () =>
+  gql<{
+    ytTrash: Array<{
+      id: number; title: string | null; url: string | null; thumbnail: string | null;
+      channel: string | null; publishedAt: number | null; trashedAt: number;
+    }>;
+    aniTrash: Array<{
+      id: number; entryId: number; seasonNo: number | null; kind: string;
+      title: string | null; cover: string | null; payload: string;
+      createdAt: string; trashedAt: number;
+    }>;
+  }>(
+    `query Trash {
+      ytTrash { id title url thumbnail channel publishedAt trashedAt }
+      aniTrash { id entryId seasonNo kind title cover payload createdAt trashedAt }
+    }`,
+  );
+
+// ---------------- Extension tokens (D55) + portable backup (D56) ----------------
+export const extIssueToken = () =>
+  gql<{ extIssueToken: string }>(`mutation IssueToken { extIssueToken }`);
+
+export const extRevokeToken = () =>
+  gql<{ extRevokeToken: boolean }>(`mutation RevokeToken { extRevokeToken }`);
+
+export const exportData = () =>
+  gql<{ exportData: string }>(`query ExportData { exportData }`);
+
+export const importData = (payload: string) =>
+  gql<{ importData: { channels: number; cards: number; anime: number; skipped: number } }>(
+    `mutation ImportData($payload: String!) {
+      importData(payload: $payload) { channels cards anime skipped }
+    }`,
+    { payload },
+  );

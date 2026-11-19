@@ -195,6 +195,17 @@ class YtSidebarDomain:
 
 
 @strawberry.type
+class YtTrashItem:
+    id: int
+    title: Optional[str]
+    url: Optional[str]
+    thumbnail: Optional[str]
+    channel: Optional[str]
+    published_at: Optional[int]
+    trashed_at: int
+
+
+@strawberry.type
 class YtQuery:
     @strawberry.field
     async def yt_feed(self, info: Info, limit: int = 200) -> List[YtVideo]:
@@ -248,6 +259,17 @@ class YtQuery:
                 ],
             )
             for c in cards
+        ]
+
+    @strawberry.field
+    async def yt_trash(self, info: Info) -> List[YtTrashItem]:
+        rows = await _yt.trash_feed(await _uid(info))
+        return [
+            YtTrashItem(
+                id=r["id"], title=r["title"], url=r["url"], thumbnail=r["thumbnail"],
+                channel=r["channel"], published_at=r["published_at"], trashed_at=r["trashed_at"],
+            )
+            for r in rows
         ]
 
     @strawberry.field
@@ -314,6 +336,15 @@ class YtMutation:
         if domain and subdomain:
             await _yt.assign_category(user_id, channel_id, domain, subdomain)
         return channel_id
+
+    @strawberry.field
+    async def yt_trash_videos(self, info: Info, video_ids: List[int]) -> int:
+        """Opening a notification trashes it (D57); 24h later it's purged."""
+        return await _yt.trash_videos(await _uid(info), video_ids)
+
+    @strawberry.field
+    async def yt_restore_videos(self, info: Info, video_ids: List[int]) -> int:
+        return await _yt.restore_videos(await _uid(info), video_ids)
 
     @strawberry.field
     async def yt_set_blocked_category(
@@ -598,6 +629,19 @@ class AniDomain:
 
 
 @strawberry.type
+class AniTrashItem:
+    id: int
+    entry_id: int
+    season_no: Optional[int]
+    kind: str
+    title: Optional[str]
+    cover: Optional[str]
+    payload: str
+    created_at: str
+    trashed_at: int
+
+
+@strawberry.type
 class AniTodo:
     id: int
     entry_id: Optional[int]
@@ -663,6 +707,18 @@ class AniQuery:
                 seasons=[AniSeason(**s) for s in e["seasons"]],
             )
             for e in view
+        ]
+
+    @strawberry.field
+    async def ani_trash(self, info: Info) -> List[AniTrashItem]:
+        rows = await _ani.trash_feed(await _uid(info))
+        return [
+            AniTrashItem(
+                id=r["id"], entry_id=r["entry_id"], season_no=r["season_no"],
+                kind=r["kind"], title=r["title"], cover=r["cover"],
+                payload=r["payload"], created_at=r["created_at"], trashed_at=r["trashed_at"],
+            )
+            for r in rows
         ]
 
     @strawberry.field
@@ -807,6 +863,15 @@ class AniMutation:
         self, info: Info, event_ids: List[int], seen: bool = True
     ) -> int:
         return await _ani.mark_events_seen(await _uid(info), event_ids, seen)
+
+    @strawberry.field
+    async def ani_trash_events(self, info: Info, event_ids: List[int]) -> int:
+        """Opening an event trashes it (D57); 24h later it's purged."""
+        return await _ani.trash_events(await _uid(info), event_ids)
+
+    @strawberry.field
+    async def ani_restore_events(self, info: Info, event_ids: List[int]) -> int:
+        return await _ani.restore_events(await _uid(info), event_ids)
 
     @strawberry.field
     async def ani_todo_add(

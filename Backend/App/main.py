@@ -25,6 +25,7 @@ from Graphql.supergraph import supergraph_schema
 from Orchestrator.Ani import manager as ani_manager
 from Orchestrator.Ani.Access.router import router as ani_access_router
 from Orchestrator.Ani.Feed.router import router as ani_feed_router
+from Extension.router import router as ext_router
 from Orchestrator.Yt import manager as yt_manager
 from Orchestrator.Yt.Access.cards_router import router as yt_cards_router
 from Orchestrator.Yt.Access.router import router as yt_access_router
@@ -108,6 +109,7 @@ app.include_router(yt_access_router)
 app.include_router(yt_cards_router)
 app.include_router(ani_feed_router)
 app.include_router(ani_access_router)
+app.include_router(ext_router)
 
 
 from fastapi import Request

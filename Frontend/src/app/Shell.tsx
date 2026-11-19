@@ -1,6 +1,6 @@
 import { useEffect, useMemo, type ReactNode } from "react";
 import { useLocation } from "wouter";
-import { Bell, ListChecks, LogOut, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Bell, ListChecks, LogOut, Settings as SettingsIcon, ShieldCheck, SlidersHorizontal, Trash2 } from "lucide-react";
 import BellPanel from "../features/bell/Bell";
 import { initials } from "../lib/format";
 import { cn } from "@/lib/utils";
@@ -13,9 +13,10 @@ const MODES = [
   { href: "/", match: ["/", "/notifications"], label: "Feed", title: "Notifications", icon: Bell, key: "1" },
   { href: "/sources", match: ["/sources", "/management"], label: "Manage", title: "Management", icon: SlidersHorizontal, key: "2" },
   { href: "/todo", match: ["/todo", "/track"], label: "Todo", title: "Todo", icon: ListChecks, key: "3" },
+  { href: "/trash", match: ["/trash"], label: "Trash", title: "Trashbin", icon: Trash2, key: "4" },
 ] as const;
 
-const ADMIN_MODE = { href: "/admin", match: ["/admin"], label: "Admin", title: "Admin", icon: ShieldCheck, key: "4" } as const;
+const ADMIN_MODE = { href: "/admin", match: ["/admin"], label: "Admin", title: "Admin", icon: ShieldCheck, key: "5" } as const;
 
 export default function Shell({ children }: { children: ReactNode }) {
   const [location, navigate] = useLocation();
@@ -118,6 +119,13 @@ export default function Shell({ children }: { children: ReactNode }) {
               graphql live
             </span>
             <BellPanel />
+            <button
+              onClick={() => navigate("/settings")}
+              title="Settings"
+              className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
+            >
+              <SettingsIcon size={16} strokeWidth={1.8} />
+            </button>
             <span
               className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-xs font-semibold"
               title={viewer?.username}

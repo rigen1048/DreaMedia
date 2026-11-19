@@ -53,6 +53,9 @@ async def run_once(store: PgStore) -> int:
     if restore_in_progress():
         log.warning("restore in progress — yt manager idling this pass")
         return 0
+    purged = await store.purge_trash()  # D57: 24h trashbin window
+    if purged:
+        log.info("trashbin: purged %s yt video(s)", purged)
     subs = await store.claim_due()
     if not subs:
         return 0
