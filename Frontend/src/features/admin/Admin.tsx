@@ -1,23 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle,
-  DatabaseBackup,
-  Download,
-  HardDriveDownload,
-  KeyRound,
-  Loader2,
-  SlidersHorizontal,
-  RotateCcw,
-  ShieldCheck,
-  Trash2,
-  Upload,
-  Users,
+  AlertTriangle, DatabaseBackup, Download, HardDriveDownload, KeyRound, Loader2,
+  SlidersHorizontal, RotateCcw, ShieldCheck, Trash2, Upload, Users,
 } from "lucide-react";
 import * as api from "../../app/api";
 import { useApp } from "../../app/state";
 import { ConfirmButton, EmptyState } from "../../app/ui";
 import { formatDate, plural, timeAgo } from "../../lib/format";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const TABS = [
   { key: "backups", label: "Backups", icon: DatabaseBackup },
@@ -29,13 +25,9 @@ const TABS = [
 type TabKey = (typeof TABS)[number]["key"];
 
 const PHASE_LABEL: Record<string, string> = {
-  idle: "No restore yet",
-  queued: "Queued",
-  snapshot: "Writing rollback snapshot",
-  restoring: "Restoring database",
-  rollback: "Rolling back",
-  done: "Restore complete",
-  failed: "Restore failed",
+  idle: "No restore yet", queued: "Queued", snapshot: "Writing rollback snapshot",
+  restoring: "Restoring database", rollback: "Rolling back",
+  done: "Restore complete", failed: "Restore failed",
 };
 
 const SETTING_LABEL: Record<string, { label: string; hint: string }> = {
@@ -53,7 +45,7 @@ function bytes(size: number): string {
 }
 
 export default function Admin() {
-  const { viewer, refresh, act, notify } = useApp();
+  const { viewer, act, notify } = useApp();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<TabKey>("backups");
   const [status, setStatus] = useState<api.RestoreStatus | null>(null);
@@ -82,19 +74,9 @@ export default function Admin() {
     return ok;
   };
 
-  /* ------------------------------------------------------------ restore poll */
   const active = Boolean(status?.active);
   const tracking = useRef(false);
 
-  /**
-   * Follow a restore until it reaches a terminal phase.
-   *
-   * A loop rather than an interval keyed on `active`: a small database
-   * restores in well under a second, so the job can finish between two polls
-   * and a "watch the transition" effect would never see it. A full reload is
-   * the honest ending — every session was just invalidated, so all client
-   * state is stale by definition.
-   */
   const trackRestore = async () => {
     if (tracking.current) return;
     tracking.current = true;
@@ -105,7 +87,6 @@ export default function Admin() {
         try {
           next = await api.fetchRestoreStatus();
         } catch {
-          // 401: the restore finished and dropped this session too.
           window.location.assign("/");
           return;
         }
@@ -128,8 +109,6 @@ export default function Admin() {
   };
 
   useEffect(() => {
-    // A restore may already be running when the page opens (another tab, or a
-    // reload mid-restore): pick it up from the overview.
     if (status?.active) void trackRestore();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status?.active]);
@@ -146,140 +125,108 @@ export default function Admin() {
   }, [backups]);
 
   if (admin.isPending) {
-    return (
-      <div className="page">
-        <EmptyState title="Loading admin" hint="Reading settings, backups and users from the backend." />
-      </div>
-    );
+    return <EmptyState title="Loading admin" hint="Reading settings, backups and users from the backend." />;
   }
 
   if (admin.error) {
     return (
-      <div className="page">
-        <EmptyState
-          title="Admin unavailable"
-          hint={
-            admin.error instanceof Error
-              ? admin.error.message
-              : "The backend refused this request. Sign in as an admin."
-          }
-          action={
-            <button className="btn btn--sm" onClick={() => void admin.refetch()}>
-              Retry
-            </button>
-          }
-        />
-      </div>
+      <EmptyState
+        title="Admin unavailable"
+        hint={admin.error instanceof Error ? admin.error.message : "The backend refused this request. Sign in as an admin."}
+        action={<Button size="sm" onClick={() => void admin.refetch()}>Retry</Button>}
+      />
     );
   }
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <div className="page-head__title">
-          <h1>
-            Admin <span className="badge badge--admin"><ShieldCheck size={11} /> {viewer?.username}</span>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="flex items-center gap-2 text-lg font-semibold">
+            Admin <Badge variant="secondary" className="gap-1"><ShieldCheck size={11} /> {viewer?.username}</Badge>
           </h1>
-          <p>Backups, restore, runtime settings and accounts — this box, all users.</p>
+          <p className="text-xs text-muted-foreground">Backups, restore, runtime settings and accounts — this box, all users.</p>
         </div>
-        <div className="page-head__actions">
-          <div className="metrics">
-            <span><b>{overview?.backupCount ?? 0}</b> {plural(overview?.backupCount ?? 0, "dump")}</span>
-            <span className="sep" />
-            <span>latest {latest}</span>
-            <span className="sep" />
-            <span>
-              <b>{overview?.userCount ?? 0}</b> {plural(overview?.userCount ?? 0, "user")} ·{" "}
-              <b>{overview?.adminCount ?? 0}</b> {plural(overview?.adminCount ?? 0, "admin")}
-            </span>
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-muted-foreground">
+            <b className="text-foreground">{overview?.backupCount ?? 0}</b> {plural(overview?.backupCount ?? 0, "dump")} · latest {latest} ·{" "}
+            <b className="text-foreground">{overview?.userCount ?? 0}</b> {plural(overview?.userCount ?? 0, "user")} ·{" "}
+            <b className="text-foreground">{overview?.adminCount ?? 0}</b> {plural(overview?.adminCount ?? 0, "admin")}
           </div>
-          <button
-            className="btn btn--sm btn--primary"
-            disabled={busy === "backup"}
-            onClick={() => void run("backup", () => api.adminRunBackup(), "Backup written")}
-          >
-            {busy === "backup" ? <Loader2 size={13} className="spin" /> : <HardDriveDownload size={13} />}
+          <Button size="sm" disabled={busy === "backup"} onClick={() => void run("backup", () => api.adminRunBackup(), "Backup written")}>
+            {busy === "backup" ? <Loader2 size={13} className="animate-spin" /> : <HardDriveDownload size={13} />}
             Back up now
-          </button>
+          </Button>
         </div>
       </div>
 
       {(active || status?.phase === "failed" || status?.phase === "done") && (
-        <div className="restore-banner" data-tone={status?.phase === "failed" ? "error" : active ? "busy" : "ok"}>
-          <div className="restore-banner__head">
-            {active ? <Loader2 size={14} className="spin" /> : status?.phase === "failed" ? <AlertTriangle size={14} /> : <ShieldCheck size={14} />}
+        <div
+          className={cn(
+            "space-y-2 rounded-xl border p-3",
+            status?.phase === "failed" ? "border-destructive/50 bg-destructive/10" : active ? "border-sky-500/40 bg-sky-500/10" : "border-emerald-500/40 bg-emerald-500/10",
+          )}
+        >
+          <div className="flex items-center gap-2 text-sm">
+            {active ? <Loader2 size={14} className="animate-spin" /> : status?.phase === "failed" ? <AlertTriangle size={14} /> : <ShieldCheck size={14} />}
             <strong>{PHASE_LABEL[status?.phase ?? "idle"] ?? status?.phase}</strong>
-            {status?.file && <code>{status.file}</code>}
+            {status?.file && <code className="text-xs">{status.file}</code>}
             <span className="grow" />
-            {status?.message && <span className="faint">{status.message}</span>}
+            {status?.message && <span className="text-xs text-muted-foreground">{status.message}</span>}
           </div>
-          {active && <div className="restore-banner__bar" />}
-          {status?.error && <p className="restore-banner__error">{status.error}</p>}
+          {active && (
+            <div className="h-1 overflow-hidden rounded-full bg-muted">
+              <div className="h-full w-1/3 animate-pulse rounded-full bg-sky-500" />
+            </div>
+          )}
+          {status?.error && <p className="text-xs text-destructive">{status.error}</p>}
         </div>
       )}
 
-      <div className="filterbar" style={{ marginBottom: 12 }}>
+      <div className="flex flex-wrap gap-1.5">
         {TABS.map((item) => {
           const Icon = item.icon;
           return (
             <button
               key={item.key}
-              className="chipbtn"
-              data-active={tab === item.key}
               onClick={() => setTab(item.key)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors cursor-pointer",
+                tab === item.key ? "bg-primary text-primary-foreground border-transparent" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
             >
               <Icon size={12} /> {item.label}
-              {item.key === "backups" && <span className="count">{backups.length}</span>}
-              {item.key === "users" && <span className="count">{users.length}</span>}
+              {item.key === "backups" && <span className="opacity-60">{backups.length}</span>}
+              {item.key === "users" && <span className="opacity-60">{users.length}</span>}
             </button>
           );
         })}
       </div>
 
       {tab === "backups" && (
-        <div className="table">
-          <div className="table__head table__head--backups">
-            <span>Dump</span>
-            <span>Size</span>
-            <span>Created</span>
-            <span style={{ textAlign: "right" }}>Actions</span>
+        <div className="overflow-hidden rounded-xl border">
+          <div className="grid grid-cols-[1fr_80px_180px_140px] gap-2 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
+            <span>Dump</span><span>Size</span><span>Created</span><span className="text-right">Actions</span>
           </div>
           {backups.length === 0 && (
             <EmptyState
               title="No backups yet"
               hint="The scheduler writes one every few hours; you can also take one now."
-              action={
-                <button className="btn btn--sm btn--primary" onClick={() => void run("backup", () => api.adminRunBackup(), "Backup written")}>
-                  Back up now
-                </button>
-              }
+              action={<Button size="sm" onClick={() => void run("backup", () => api.adminRunBackup(), "Backup written")}>Back up now</Button>}
             />
           )}
           {backups.map((row) => (
-            <div className="backup-row" key={row.file}>
-              <code className="backup-row__file">{row.file}</code>
-              <span>{bytes(row.size)}</span>
-              <span className="faint">{formatDate(row.mtime)} · {timeAgo(row.mtime)}</span>
-              <span className="cell-actions">
-                <a
-                  className="icon-btn"
-                  href={api.backupDownloadUrl(row.file)}
-                  title="Download dump"
-                  aria-label={`Download ${row.file}`}
-                >
-                  <Download size={13} />
-                </a>
-                <button
-                  className="btn btn--sm"
-                  onClick={() => {
-                    setTarget(row.file);
-                    setStaged(null);
-                    setTyped("");
-                    setTab("restore");
-                  }}
-                >
+            <div key={row.file} className="grid grid-cols-[1fr_80px_180px_140px] items-center gap-2 border-b px-3 py-2 text-sm last:border-0">
+              <code className="truncate text-xs">{row.file}</code>
+              <span className="text-xs">{bytes(row.size)}</span>
+              <span className="text-xs text-muted-foreground">{formatDate(row.mtime)} · {timeAgo(row.mtime)}</span>
+              <span className="flex justify-end gap-1">
+                <Button variant="ghost" size="icon" className="h-7 w-7" title="Download dump" aria-label={`Download ${row.file}`} asChild>
+                  <a href={api.backupDownloadUrl(row.file)}><Download size={13} /></a>
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => { setTarget(row.file); setStaged(null); setTyped(""); setTab("restore"); }}>
                   <RotateCcw size={12} /> Restore
-                </button>
+                </Button>
               </span>
             </div>
           ))}
@@ -287,23 +234,25 @@ export default function Admin() {
       )}
 
       {tab === "restore" && (
-        <div className="admin-grid">
-          <section className="panel panel--danger">
-            <div className="panel__head">
-              <h2><AlertTriangle size={14} /> Restore replaces the database</h2>
-              <p>
+        <div className="grid gap-4 xl:grid-cols-2">
+          <Card className="border-destructive/40">
+            <CardHeader className="space-y-1 p-4">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-destructive">
+                <AlertTriangle size={14} /> Restore replaces the database
+              </h2>
+              <p className="text-xs text-muted-foreground">
                 Every account, channel, anime entry and message is replaced by the dump you pick.
                 A rollback snapshot is written first, workers pause for the whole run, and every
                 session is signed out when it finishes — including yours.
               </p>
-            </div>
-
-            <div className="panel__body">
-              <label className="dropzone">
+            </CardHeader>
+            <CardContent className="space-y-4 p-4 pt-0">
+              <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed p-4 text-sm transition-colors hover:bg-accent/40">
                 <input
                   ref={fileInput}
                   type="file"
                   accept=".dump,application/octet-stream"
+                  className="hidden"
                   onChange={async (event) => {
                     const file = event.target.files?.[0];
                     event.target.value = "";
@@ -323,138 +272,115 @@ export default function Admin() {
                     }
                   }}
                 />
-                {busy === "upload" ? <Loader2 size={16} className="spin" /> : <Upload size={16} />}
+                {busy === "upload" ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} className="text-muted-foreground" />}
                 <span>
-                  <strong>Upload a .dump from your computer</strong>
-                  <em>Validated with pg_restore -l before it is accepted; nothing is restored yet.</em>
+                  <strong className="block">Upload a .dump from your computer</strong>
+                  <em className="text-xs not-italic text-muted-foreground">Validated with pg_restore -l before it is accepted; nothing is restored yet.</em>
                 </span>
               </label>
 
-              <div className="field">
-                <span>Or pick a dump already on this box</span>
-                <select
-                  className="select"
-                  value={target ?? ""}
-                  onChange={(event) => {
-                    setTarget(event.target.value || null);
-                    setStaged(null);
-                    setTyped("");
-                  }}
+              <div className="space-y-1.5">
+                <span className="text-xs font-medium">Or pick a dump already on this box</span>
+                <Select
+                  value={target ?? "none"}
+                  onValueChange={(value) => { setTarget(value === "none" ? null : value); setStaged(null); setTyped(""); }}
                 >
-                  <option value="">Choose a backup…</option>
-                  {backups.map((row) => (
-                    <option key={row.file} value={row.file}>
-                      {row.file} · {bytes(row.size)}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger><SelectValue placeholder="Choose a backup…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Choose a backup…</SelectItem>
+                    {backups.map((row) => (
+                      <SelectItem key={row.file} value={row.file}>{row.file} · {bytes(row.size)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
-              <div className="restore-confirm">
+              <div className="space-y-3 rounded-xl border bg-muted/30 p-4">
                 <div>
-                  <strong>{chosen ?? "nothing selected"}</strong>
-                  <p className="faint">
+                  <strong className="text-sm">{chosen ?? "nothing selected"}</strong>
+                  <p className="text-xs text-muted-foreground">
                     Type <b>RESTORE</b> to enable the button. This cannot be undone from the UI —
                     the rollback snapshot is the way back.
                   </p>
                 </div>
-                <input
-                  className="input"
-                  value={typed}
-                  onChange={(event) => setTyped(event.target.value)}
-                  placeholder="RESTORE"
-                  aria-label="Type RESTORE to confirm"
-                  style={{ width: 150 }}
-                />
-                <button
-                  className="btn btn--danger"
-                  disabled={!chosen || typed.trim().toUpperCase() !== "RESTORE" || active || busy === "restore"}
-                  onClick={async () => {
-                    if (!chosen) return;
-                    const started = await run(
-                      "restore",
-                      () => api.adminStartRestore(chosen),
-                      "Restore started — workers paused",
-                    );
-                    if (started) {
-                      setTyped("");
-                      setStatus({
-                        phase: "queued",
-                        active: true,
-                        file: chosen,
-                        startedAt: Date.now() / 1000,
-                        finishedAt: null,
-                        snapshot: null,
-                        error: null,
-                        message: "restore accepted — workers paused",
-                        sessionsDropped: 0,
-                      });
-                      void trackRestore();
-                    }
-                  }}
-                >
-                  {active ? <Loader2 size={13} className="spin" /> : <RotateCcw size={13} />}
-                  Restore database
-                </button>
+                <div className="flex gap-2">
+                  <Input
+                    value={typed}
+                    onChange={(event) => setTyped(event.target.value)}
+                    placeholder="RESTORE"
+                    aria-label="Type RESTORE to confirm"
+                    className="w-36"
+                  />
+                  <Button
+                    variant="destructive"
+                    disabled={!chosen || typed.trim().toUpperCase() !== "RESTORE" || active || busy === "restore"}
+                    onClick={async () => {
+                      if (!chosen) return;
+                      const started = await run("restore", () => api.adminStartRestore(chosen), "Restore started — workers paused");
+                      if (started) {
+                        setTyped("");
+                        setStatus({
+                          phase: "queued", active: true, file: chosen,
+                          startedAt: Date.now() / 1000, finishedAt: null,
+                          snapshot: null, error: null,
+                          message: "restore accepted — workers paused", sessionsDropped: 0,
+                        });
+                        void trackRestore();
+                      }
+                    }}
+                  >
+                    {active ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                    Restore database
+                  </Button>
+                </div>
               </div>
-            </div>
-          </section>
+            </CardContent>
+          </Card>
 
-          <section className="panel">
-            <div className="panel__head">
-              <h2><DatabaseBackup size={14} /> Restore points</h2>
-              <p>Newest first. Retention keeps {overview?.keepLatest ?? 2}; a backup runs every {overview?.frequencyHours ?? 24}h.</p>
-            </div>
-            <div className="panel__body panel__body--list">
-              {backups.length === 0 && <p className="faint">No dumps on disk yet.</p>}
+          <Card>
+            <CardHeader className="space-y-1 p-4">
+              <h2 className="flex items-center gap-2 text-sm font-semibold"><DatabaseBackup size={14} /> Restore points</h2>
+              <p className="text-xs text-muted-foreground">
+                Newest first. Retention keeps {overview?.keepLatest ?? 2}; a backup runs every {overview?.frequencyHours ?? 24}h.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-1 p-4 pt-0">
+              {backups.length === 0 && <p className="text-sm text-muted-foreground">No dumps on disk yet.</p>}
               {backups.map((row) => (
                 <button
                   key={row.file}
-                  className="pick-row"
-                  data-active={target === row.file}
-                  onClick={() => {
-                    setTarget(row.file);
-                    setStaged(null);
-                    setTyped("");
-                  }}
+                  onClick={() => { setTarget(row.file); setStaged(null); setTyped(""); }}
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors cursor-pointer",
+                    target === row.file ? "border-sky-500 bg-sky-500/10" : "hover:bg-accent/50",
+                  )}
                 >
-                  <code>{row.file}</code>
-                  <span>{bytes(row.size)}</span>
-                  <span className="faint">{timeAgo(row.mtime)}</span>
+                  <code className="flex-1 truncate text-xs">{row.file}</code>
+                  <span className="text-xs">{bytes(row.size)}</span>
+                  <span className="text-xs text-muted-foreground">{timeAgo(row.mtime)}</span>
                 </button>
               ))}
-            </div>
-          </section>
+            </CardContent>
+          </Card>
         </div>
       )}
 
       {tab === "settings" && (
-        <div className="table">
-          <div className="table__head table__head--settings">
-            <span>Setting</span>
-            <span>Value</span>
-            <span>Floor</span>
-            <span style={{ textAlign: "right" }}>Save</span>
+        <div className="overflow-hidden rounded-xl border">
+          <div className="grid grid-cols-[1fr_220px_80px_90px] gap-2 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
+            <span>Setting</span><span>Value</span><span>Floor</span><span className="text-right">Save</span>
           </div>
           {settings.map((row) => (
-            <SettingRow
-              key={row.key}
-              row={row}
-              busy={busy === row.key}
-              onSave={(value) => run(row.key, () => api.adminSetSetting(row.key, value), `${row.key} saved`)}
-            />
+            <SettingRow key={row.key} row={row} busy={busy === row.key} onSave={(value) => run(row.key, () => api.adminSetSetting(row.key, value), `${row.key} saved`)} />
           ))}
         </div>
       )}
 
       {tab === "users" && (
         <>
-          <div className="table">
-            <div className="table__head table__head--users">
-              <span>User</span>
-              <span>Role</span>
-              <span>Created</span>
-              <span style={{ textAlign: "right" }}>Actions</span>
+          <div className="overflow-hidden rounded-xl border">
+            <div className="grid grid-cols-[1fr_120px_140px_180px] gap-2 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
+              <span>User</span><span>Role</span><span>Created</span><span className="text-right">Actions</span>
             </div>
             {users.map((row) => (
               <UserRow
@@ -464,16 +390,14 @@ export default function Admin() {
                 lastAdmin={row.role === "admin" && (overview?.adminCount ?? 0) <= 1}
                 busy={busy === `user-${row.id}`}
                 onRole={(role) => run(`user-${row.id}`, () => api.adminSetUserRole(row.id, role), `${row.username} is now ${role}`)}
-                onReset={(password) =>
-                  run(`user-${row.id}`, () => api.adminResetPassword(row.id, password), `Password reset for ${row.username} — their sessions were signed out`)
-                }
+                onReset={(password) => run(`user-${row.id}`, () => api.adminResetPassword(row.id, password), `Password reset for ${row.username} — their sessions were signed out`)}
                 onDelete={() => run(`user-${row.id}`, () => api.adminDeleteUser(row.id), `${row.username} deleted`)}
               />
             ))}
           </div>
-          <p className="admin-footnote">
-            Locked out completely? Run <code>docker compose exec backend python -m scripts.admin promote &lt;user&gt;</code>
-            {" "}on the host — that is the only path that does not need an existing admin.
+          <p className="text-xs text-muted-foreground">
+            Locked out completely? Run <code>docker compose exec backend python -m scripts.admin promote &lt;user&gt;</code> on the host —
+            that is the only path that does not need an existing admin.
           </p>
         </>
       )}
@@ -481,55 +405,31 @@ export default function Admin() {
   );
 }
 
-function SettingRow({
-  row,
-  busy,
-  onSave,
-}: {
-  row: api.AdminSetting;
-  busy: boolean;
-  onSave: (value: string) => Promise<boolean>;
-}) {
+function SettingRow({ row, busy, onSave }: { row: api.AdminSetting; busy: boolean; onSave: (value: string) => Promise<boolean> }) {
   const [value, setValue] = useState(row.value);
   useEffect(() => setValue(row.value), [row.value]);
   const meta = SETTING_LABEL[row.key] ?? { label: row.key, hint: "" };
   const dirty = value !== row.value;
   return (
-    <div className="setting-row">
+    <div className="grid grid-cols-[1fr_220px_80px_90px] items-center gap-2 border-b px-3 py-2 last:border-0">
       <div>
-        <strong>{meta.label}</strong>
-        <span className="faint"> · {row.key}</span>
-        {meta.hint && <p className="faint">{meta.hint}</p>}
+        <strong className="text-sm">{meta.label}</strong>
+        <span className="text-xs text-muted-foreground"> · {row.key}</span>
+        {meta.hint && <p className="text-xs text-muted-foreground">{meta.hint}</p>}
       </div>
-      <input
-        className="input"
-        value={value}
-        inputMode={row.kind === "int" ? "numeric" : undefined}
-        onChange={(event) => setValue(event.target.value)}
-        aria-label={meta.label}
-      />
-      <span className="faint">{row.floor ? `min ${row.floor}` : "—"}</span>
-      <span className="cell-actions">
-        <button
-          className="btn btn--sm"
-          disabled={!dirty || busy}
-          onClick={() => void onSave(value)}
-        >
-          {busy ? <Loader2 size={12} className="spin" /> : null} Save
-        </button>
+      <Input value={value} inputMode={row.kind === "int" ? "numeric" : undefined} onChange={(event) => setValue(event.target.value)} aria-label={meta.label} className="h-8" />
+      <span className="text-xs text-muted-foreground">{row.floor ? `min ${row.floor}` : "—"}</span>
+      <span className="flex justify-end">
+        <Button size="sm" variant="secondary" disabled={!dirty || busy} onClick={() => void onSave(value)}>
+          {busy ? <Loader2 size={12} className="animate-spin" /> : null} Save
+        </Button>
       </span>
     </div>
   );
 }
 
 function UserRow({
-  row,
-  self,
-  lastAdmin,
-  busy,
-  onRole,
-  onReset,
-  onDelete,
+  row, self, lastAdmin, busy, onRole, onReset, onDelete,
 }: {
   row: api.AdminUser;
   self: boolean;
@@ -542,28 +442,26 @@ function UserRow({
   const [resetting, setResetting] = useState(false);
   const [password, setPassword] = useState("");
   return (
-    <div className="user-row">
-      <span className="user-row__name">
+    <div className="grid grid-cols-[1fr_120px_140px_180px] items-center gap-2 border-b px-3 py-2 last:border-0">
+      <span className="flex items-center gap-2 text-sm font-medium">
         {row.username}
-        {self && <span className="badge">you</span>}
+        {self && <Badge variant="secondary" className="text-[10px]">you</Badge>}
       </span>
-      <select
-        className="select"
-        value={row.role}
-        aria-label={`Role for ${row.username}`}
-        disabled={busy || lastAdmin}
-        onChange={(event) => void onRole(event.target.value)}
-      >
-        <option value="admin">admin</option>
-        <option value="user">user</option>
-      </select>
-      <span className="faint">{formatDate(row.createdAt)}</span>
-      <span className="cell-actions">
+      <Select value={row.role} disabled={busy || lastAdmin} onValueChange={(value) => void onRole(value)}>
+        <SelectTrigger className="h-8" aria-label={`Role for ${row.username}`}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="admin">admin</SelectItem>
+          <SelectItem value="user">user</SelectItem>
+        </SelectContent>
+      </Select>
+      <span className="text-xs text-muted-foreground">{formatDate(row.createdAt)}</span>
+      <span className="flex items-center justify-end gap-1">
         {resetting ? (
           <>
-            <input
-              className="input"
-              style={{ width: 150 }}
+            <Input
+              className="h-8 w-36"
               value={password}
               autoFocus
               placeholder="new password"
@@ -572,41 +470,29 @@ function UserRow({
                 if (event.key === "Escape") setResetting(false);
                 if (event.key === "Enter" && password.length >= 6) {
                   void onReset(password).then((ok) => {
-                    if (ok) {
-                      setResetting(false);
-                      setPassword("");
-                    }
+                    if (ok) { setResetting(false); setPassword(""); }
                   });
                 }
               }}
             />
-            <button
-              className="btn btn--sm"
-              disabled={password.length < 6 || busy}
+            <Button
+              size="sm" variant="secondary" disabled={password.length < 6 || busy}
               onClick={() =>
                 void onReset(password).then((ok) => {
-                  if (ok) {
-                    setResetting(false);
-                    setPassword("");
-                  }
+                  if (ok) { setResetting(false); setPassword(""); }
                 })
               }
             >
               <KeyRound size={12} /> Set
-            </button>
+            </Button>
           </>
         ) : (
-          <button
-            className="icon-btn"
-            title={`Reset password for ${row.username}`}
-            aria-label={`Reset password for ${row.username}`}
-            onClick={() => setResetting(true)}
-          >
+          <Button variant="ghost" size="icon" className="h-8 w-8" title={`Reset password for ${row.username}`} aria-label={`Reset password for ${row.username}`} onClick={() => setResetting(true)}>
             <KeyRound size={13} />
-          </button>
+          </Button>
         )}
         {!self && (
-          <ConfirmButton label={`Delete ${row.username}`} onConfirm={() => void onDelete()}>
+          <ConfirmButton label={`Delete ${row.username}`} className="h-8 w-8" onConfirm={() => void onDelete()}>
             <Trash2 size={13} />
           </ConfirmButton>
         )}

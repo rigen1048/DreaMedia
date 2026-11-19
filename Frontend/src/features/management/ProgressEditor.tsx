@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import * as api from "../../app/api";
 import { useApp } from "../../app/state";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 /**
  * Direct season/episode editor. The "+1" cursor and the season bump only move
@@ -46,35 +48,36 @@ export function ProgressEditor({
   };
 
   return (
-    <div className={compact ? "progress-edit progress-edit--compact" : "progress-edit"}>
-      <span className="progress-edit__label">{compact ? "S/E" : "Set progress"}</span>
-      <input
-        className="ep-input"
+    <div className="flex items-center gap-1.5">
+      <span className="text-xs text-muted-foreground">{compact ? "S/E" : "Set progress"}</span>
+      <Input
         type="number"
         min={1}
         value={draftSeason}
         aria-label="Season"
         onChange={(event) => setDraftSeason(Number(event.target.value))}
         onKeyDown={(event) => event.key === "Enter" && void save()}
+        className="h-8 w-16 px-2 text-center"
       />
-      <span className="faint">/</span>
-      <input
-        className="ep-input"
+      <span className="text-muted-foreground">/</span>
+      <Input
         type="number"
         min={0}
         value={draftEpisode}
         aria-label="Episode"
         onChange={(event) => setDraftEpisode(Number(event.target.value))}
         onKeyDown={(event) => event.key === "Enter" && void save()}
+        className="h-8 w-16 px-2 text-center"
       />
-      <button
-        className="btn btn--sm"
+      <Button
+        size="sm"
+        variant="secondary"
         disabled={busy || !dirty}
         onClick={() => void save()}
         title="Move the cursor here — backwards is allowed on purpose"
       >
         {busy ? "Saving…" : "Update"}
-      </button>
+      </Button>
     </div>
   );
 }

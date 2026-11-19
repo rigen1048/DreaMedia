@@ -7,6 +7,11 @@ import AnimeTab from "./AnimeTab";
 import Categories from "./Categories";
 import Channels from "./Channels";
 import { AddAnimeDialog, AddSourceDialog } from "./Dialogs";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const TABS = [
   { key: "channels", label: "Channels", icon: Tv },
@@ -46,113 +51,88 @@ export default function Management() {
   };
 
   const muted =
-    workspace.ytChannels.filter((channel) => !channel.notifyEnabled && channel.label !== "blocked")
-      .length +
-    workspace.aniEntries.filter((entry) => !entry.notifyEnabled && entry.label !== "blocked")
-      .length;
+    workspace.ytChannels.filter((channel) => !channel.notifyEnabled && channel.label !== "blocked").length +
+    workspace.aniEntries.filter((entry) => !entry.notifyEnabled && entry.label !== "blocked").length;
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <div className="page-head__title">
-          <h1>Management</h1>
-          <p>Sources, categories and anime metadata — one GraphQL schema, one source of truth.</p>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-semibold">Management</h1>
+          <p className="text-xs text-muted-foreground">Sources, categories and anime metadata — one GraphQL schema, one source of truth.</p>
         </div>
-        <div className="page-head__actions">
-          <div className="metrics">
-            <span>
-              <b>{workspace.ytChannels.length}</b> sources
-            </span>
-            <span className="sep" />
-            <span>
-              <b>{workspace.ytDomains.length + workspace.aniDomains.length}</b> categories
-            </span>
-            <span className="sep" />
-            <span>
-              <b>{workspace.aniEntries.length}</b> anime
-            </span>
-            <span className="sep" />
-            <span>
-              <b>{muted}</b> muted
-            </span>
-          </div>
+        <div className="text-xs text-muted-foreground">
+          <b className="text-foreground">{workspace.ytChannels.length}</b> sources ·{" "}
+          <b className="text-foreground">{workspace.ytDomains.length + workspace.aniDomains.length}</b> categories ·{" "}
+          <b className="text-foreground">{workspace.aniEntries.length}</b> anime ·{" "}
+          <b className="text-foreground">{muted}</b> muted
         </div>
       </div>
 
-      <div className="mgmt-bar">
-        <div className="segmented">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex rounded-lg bg-muted p-1">
           {TABS.map((item) => (
-            <button key={item.key} data-active={tab === item.key} onClick={() => setTab(item.key)}>
+            <button
+              key={item.key}
+              onClick={() => setTab(item.key)}
+              className={cn(
+                "rounded-md px-3 py-1 text-sm font-medium transition-colors cursor-pointer",
+                tab === item.key ? "bg-background shadow" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
               {item.label}
             </button>
           ))}
         </div>
 
-        <div className="search">
-          <Search size={13} />
-          <input
-            className="input"
+        <div className="relative">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder={tab === "anime" ? "Search anime" : "Search sources and categories"}
             aria-label="Search management"
+            className="h-8 w-56 pl-7"
           />
         </div>
 
         {tab === "channels" && (
-          <select
-            className="select"
-            style={{ height: 30, width: 130 }}
-            value={scope}
-            aria-label="Filter channels"
-            onChange={(event) => setScope(event.target.value as typeof scope)}
-          >
-            <option value="all">All sources</option>
-            <option value="muted">Muted only</option>
-            <option value="inactive">Paused only</option>
-          </select>
+          <Select value={scope} onValueChange={(value) => setScope(value as typeof scope)}>
+            <SelectTrigger className="h-8 w-36" aria-label="Filter channels">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All sources</SelectItem>
+              <SelectItem value="muted">Muted only</SelectItem>
+              <SelectItem value="inactive">Paused only</SelectItem>
+            </SelectContent>
+          </Select>
         )}
 
         <span className="grow" />
 
         {tab === "channels" && (
           <>
-            <button
-              className="btn btn--sm"
-              onClick={() => void fetchNow()}
-              disabled={fetching}
-              title="Check every active source right now instead of waiting for the next poll"
-            >
-              <RefreshCw
-                size={13}
-                style={fetching ? { animation: "spin 1s linear infinite" } : undefined}
-              />
+            <Button variant="secondary" size="sm" onClick={() => void fetchNow()} disabled={fetching}
+              title="Check every active source right now instead of waiting for the next poll">
+              <RefreshCw size={13} className={fetching ? "animate-spin" : undefined} />
               {fetching ? "Fetching…" : "Fetch now"}
-            </button>
-            <button className="btn btn--sm btn--primary" onClick={() => setDialog("source")}>
+            </Button>
+            <Button size="sm" onClick={() => setDialog("source")}>
               <Plus size={13} /> Add source
-            </button>
+            </Button>
           </>
         )}
         {tab === "anime" && (
-          <button className="btn btn--sm btn--primary" onClick={() => setDialog("anime")}>
+          <Button size="sm" onClick={() => setDialog("anime")}>
             <Plus size={13} /> Track anime
-          </button>
+          </Button>
         )}
       </div>
 
-      {tab === "channels" && (
-        <Channels search={search} filter={scope} onAdd={() => setDialog("source")} />
-      )}
+      {tab === "channels" && <Channels search={search} filter={scope} onAdd={() => setDialog("source")} />}
       {tab === "categories" && <Categories />}
-      {tab === "anime" && (
-        <AnimeTab
-          search={search}
-          list={animeList}
-          onList={setAnimeList}
-          onAdd={() => setDialog("anime")}
-        />
-      )}
+      {tab === "anime" && <AnimeTab search={search} list={animeList} onList={setAnimeList} onAdd={() => setDialog("anime")} />}
       {tab === "blocked" && <Blocked />}
 
       {dialog === "source" && <AddSourceDialog onClose={() => setDialog(null)} />}
@@ -169,116 +149,69 @@ function Blocked() {
   const anime = workspace.aniEntries.filter((entry) => entry.label === "blocked");
 
   return (
-    <div style={{ display: "grid", gap: 18 }}>
-      <section>
-        <div className="section-head">
-          <h2>Blocked sources</h2>
-          <span>Blocked sources never notify and stay out of the feed filters.</span>
+    <div className="grid gap-6">
+      <section className="space-y-2">
+        <div>
+          <h2 className="text-sm font-semibold">Blocked sources</h2>
+          <p className="text-xs text-muted-foreground">Blocked sources never notify and stay out of the feed filters.</p>
         </div>
-        <div className="table">
-          {channels.length === 0 ? (
-            <EmptyState
-              title="No blocked sources"
-              hint="Use a channel's label selector to block it."
-            />
-          ) : (
-            channels.map((channel) => (
-              <div
-                className="ch-row"
-                key={channel.id}
-                style={{ gridTemplateColumns: "1fr 140px 100px" }}
-              >
-                <div className="src">
-                  {channel.logo ? (
-                    <img
-                      className="src__logo"
-                      src={channel.logo}
-                      alt=""
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <span className="src__logo src__logo--fallback">
-                      {(channel.name ?? "?").slice(0, 2).toUpperCase()}
-                    </span>
-                  )}
-                  <div>
-                    <div className="src__name">{channel.name}</div>
-                    <div className="src__url">
-                      {channel.domain} / {channel.subdomain}
-                    </div>
-                  </div>
+        {channels.length === 0 ? (
+          <EmptyState title="No blocked sources" hint="Use a channel's label selector to block it." />
+        ) : (
+          <div className="space-y-1.5">
+            {channels.map((channel) => (
+              <div key={channel.id} className="flex items-center gap-3 rounded-xl border bg-card p-3">
+                {channel.logo ? (
+                  <img className="h-9 w-9 rounded-full object-cover" src={channel.logo} alt="" referrerPolicy="no-referrer" />
+                ) : (
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary text-xs font-bold">
+                    {(channel.name ?? "?").slice(0, 2).toUpperCase()}
+                  </span>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{channel.name}</div>
+                  <div className="text-xs text-muted-foreground">{channel.domain} / {channel.subdomain}</div>
                 </div>
-                <span className="chip chip--danger">
-                  <Ban size={9} /> blocked
-                </span>
-                <button
-                  className="btn btn--sm"
-                  onClick={() =>
-                    void act(() => api.ytSetLabel(channel.id, "none"), "Channel unblocked")
-                  }
-                >
+                <Badge variant="destructive" className="gap-1"><Ban size={9} /> blocked</Badge>
+                <Button size="sm" variant="secondary" onClick={() => void act(() => api.ytSetLabel(channel.id, "none"), "Channel unblocked")}>
                   <Undo2 size={12} /> Unblock
-                </button>
+                </Button>
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </section>
 
-      <section>
-        <div className="section-head">
-          <h2>Blocked anime</h2>
-          <span>Release and change notifications are suppressed.</span>
+      <section className="space-y-2">
+        <div>
+          <h2 className="text-sm font-semibold">Blocked anime</h2>
+          <p className="text-xs text-muted-foreground">Release and change notifications are suppressed.</p>
         </div>
-        <div className="table">
-          {anime.length === 0 ? (
-            <EmptyState title="No blocked anime" hint="Set an anime entry's state to Blocked." />
-          ) : (
-            anime.map((entry) => (
-              <div
-                className="ch-row"
-                key={entry.id}
-                style={{ gridTemplateColumns: "1fr 140px 100px" }}
-              >
-                <div className="src">
-                  {entry.cover ? (
-                    <img
-                      className="src__logo"
-                      src={entry.cover}
-                      alt=""
-                      referrerPolicy="no-referrer"
-                      style={{ borderRadius: 6 }}
-                    />
-                  ) : (
-                    <span className="src__logo src__logo--fallback">
-                      {(entry.title ?? "?").slice(0, 1)}
-                    </span>
-                  )}
-                  <div>
-                    <div className="src__name">{entry.title}</div>
-                    <div className="src__url">
-                      {entry.domain} / {entry.subdomain}
-                    </div>
-                  </div>
+        {anime.length === 0 ? (
+          <EmptyState title="No blocked anime" hint="Set an anime entry's state to Blocked." />
+        ) : (
+          <div className="space-y-1.5">
+            {anime.map((entry) => (
+              <div key={entry.id} className="flex items-center gap-3 rounded-xl border bg-card p-3">
+                {entry.cover ? (
+                  <img className="h-11 w-9 rounded-md object-cover" src={entry.cover} alt="" referrerPolicy="no-referrer" />
+                ) : (
+                  <span className="flex h-11 w-9 items-center justify-center rounded-md bg-secondary text-xs font-bold">
+                    {(entry.title ?? "?").slice(0, 1)}
+                  </span>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{entry.title}</div>
+                  <div className="text-xs text-muted-foreground">{entry.domain} / {entry.subdomain}</div>
                 </div>
-                <span className="chip chip--danger">
-                  <Ban size={9} /> blocked
-                </span>
-                <button
-                  className="btn btn--sm"
-                  onClick={() =>
-                    void act(
-                      () => api.aniUpdateEntry(entry.id, { label: "none" }),
-                      "Anime unblocked",
-                    )
-                  }
-                >
+                <Badge variant="destructive" className="gap-1"><Ban size={9} /> blocked</Badge>
+                <Button size="sm" variant="secondary" onClick={() => void act(() => api.aniUpdateEntry(entry.id, { label: "none" }), "Anime unblocked")}>
                   <Undo2 size={12} /> Unblock
-                </button>
+                </Button>
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

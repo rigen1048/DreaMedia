@@ -7,6 +7,15 @@ import { advanceMessage, timeAgo, formatDate } from "../../lib/format";
 import type { PlaylistCard } from "../../lib/types";
 import { PlaylistDrawer } from "./PlaylistDrawer";
 import { ProgressEditor } from "../management/ProgressEditor";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+
+const LIST_FILTERS: Array<[string, string]> = [
+  ["all", "All"], ["watching", "Watching"], ["up_to_date", "UpToDate"],
+  ["next_sequel", "Next sequel"], ["new_anime", "New anime"], ["watchlist", "Watchlist"],
+];
 
 export default function Todo() {
   const workspace = useWorkspace();
@@ -18,9 +27,6 @@ export default function Todo() {
   const createPlaylist = async () => {
     const next = name.trim();
     if (!next) {
-      // This button used to be disabled while the field was empty: it looked
-      // exactly like an enabled one and silently swallowed the click. Ask for
-      // the name instead, and put the caret where it is needed.
       nameRef.current?.focus();
       notify("Give the playlist a name first", "error");
       return;
@@ -30,13 +36,9 @@ export default function Todo() {
       setName("");
       await refresh();
       notify("Playlist created", "ok");
-      // Open it straight away — the next step is always pasting links.
       setOpenCard(cardId);
     } catch (error) {
-      notify(
-        error instanceof Error ? error.message : "The backend rejected this change.",
-        "error",
-      );
+      notify(error instanceof Error ? error.message : "The backend rejected this change.", "error");
     }
   };
 
@@ -48,13 +50,7 @@ export default function Todo() {
         .filter((entry) => entry.label === "none" && entry.active)
         .filter((entry) => listFilter === "all" || entry.list === listFilter)
         .sort((a, b) => {
-          const rank: Record<string, number> = {
-            watching: 0,
-            up_to_date: 1,
-            next_sequel: 2,
-            new_anime: 3,
-            watchlist: 4,
-          };
+          const rank: Record<string, number> = { watching: 0, up_to_date: 1, next_sequel: 2, new_anime: 3, watchlist: 4 };
           const byList = (rank[a.list] ?? 9) - (rank[b.list] ?? 9);
           if (byList !== 0) return byList;
           const next = (a.nextAiringAt ?? Number.MAX_SAFE_INTEGER) - (b.nextAiringAt ?? Number.MAX_SAFE_INTEGER);
@@ -77,62 +73,43 @@ export default function Todo() {
   }, [workspace.aniEntries]);
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <div className="page-head__title">
-          <h1>Todo</h1>
-          <p>Playlists are standalone; the anime queue follows your management cursors.</p>
+    <div className="space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-semibold">Todo</h1>
+          <p className="text-xs text-muted-foreground">Playlists are standalone; the anime queue follows your management cursors.</p>
         </div>
-        <div className="page-head__actions">
-          <div className="metrics">
-            <span>
-              <b>{workspace.ytCards.length}</b> playlists
-            </span>
-            <span className="sep" />
-            <span>
-              <b>{counts.all}</b> anime cards
-            </span>
-          </div>
+        <div className="text-xs text-muted-foreground">
+          <b className="text-foreground">{workspace.ytCards.length}</b> playlists ·{" "}
+          <b className="text-foreground">{counts.all}</b> anime cards
         </div>
       </div>
 
-      <section className="todo-section">
-        <div className="section-head">
-          <h2>Playlists</h2>
-          <span>Built from video links only — never from notification data.</span>
-          <span className="grow" />
-          <div style={{ display: "flex", gap: 6 }}>
-            <input
+      {/* Playlists */}
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-sm font-semibold">Playlists</h2>
+          <span className="text-xs text-muted-foreground">Built from video links only — never from notification data.</span>
+          <div className="ml-auto flex gap-2">
+            <Input
               ref={nameRef}
-              className="input"
-              style={{ width: 190, height: 30, fontSize: 12 }}
+              className="h-8 w-48"
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="New playlist name"
               aria-label="New playlist name"
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void createPlaylist();
-              }}
+              onKeyDown={(event) => { if (event.key === "Enter") void createPlaylist(); }}
             />
-            <button
-              className="btn btn--sm"
-              title="Create a playlist, then paste video links"
-              onClick={() => void createPlaylist()}
-            >
+            <Button size="sm" title="Create a playlist, then paste video links" onClick={() => void createPlaylist()}>
               <Plus size={13} /> Playlist
-            </button>
+            </Button>
           </div>
         </div>
 
         {workspace.ytCards.length === 0 ? (
-          <div className="table">
-            <EmptyState
-              title="No playlists yet"
-              hint="Create a playlist, then paste YouTube links — the backend resolves titles and thumbnails."
-            />
-          </div>
+          <EmptyState title="No playlists yet" hint="Create a playlist, then paste YouTube links — the backend resolves titles and thumbnails." />
         ) : (
-          <div className="playlist-grid">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {workspace.ytCards.map((card) => (
               <PlaylistTile key={card.id} card={card} onOpen={() => setOpenCard(card.id)} />
             ))}
@@ -140,46 +117,35 @@ export default function Todo() {
         )}
       </section>
 
-      {openCard !== null && (
-        <PlaylistDrawer cardId={openCard} onClose={() => setOpenCard(null)} />
-      )}
+      {openCard !== null && <PlaylistDrawer cardId={openCard} onClose={() => setOpenCard(null)} />}
 
-      <section className="todo-section">
-        <div className="section-head">
-          <h2>Anime</h2>
-          <span>Every tracked entry — cursors update Management and notifications.</span>
+      {/* Anime queue */}
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold">Anime</h2>
+          <span className="text-xs text-muted-foreground">Every tracked entry — cursors update Management and notifications.</span>
         </div>
 
-        <div className="filterbar" style={{ marginBottom: 10 }}>
-          {[
-            ["all", "All"],
-            ["watching", "Watching"],
-            ["up_to_date", "UpToDate"],
-            ["next_sequel", "Next sequel"],
-            ["new_anime", "New anime"],
-            ["watchlist", "Watchlist"],
-          ].map(([value, label]) => (
+        <div className="flex flex-wrap gap-1.5">
+          {LIST_FILTERS.map(([value, label]) => (
             <button
               key={value}
-              className="chipbtn"
-              data-active={listFilter === value}
               onClick={() => setListFilter(value)}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
+                listFilter === value ? "bg-primary text-primary-foreground border-transparent" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
             >
               {label}
-              <span className="count">{counts[value] ?? 0}</span>
+              <span className="opacity-60">{counts[value] ?? 0}</span>
             </button>
           ))}
         </div>
 
         {queue.length === 0 ? (
-          <div className="table">
-            <EmptyState
-              title="No anime cards here"
-              hint="Track anime from Management, then it appears here."
-            />
-          </div>
+          <EmptyState title="No anime cards here" hint="Track anime from Management, then it appears here." />
         ) : (
-          <div className="queue-grid">
+          <div className="grid gap-3 lg:grid-cols-2">
             {queue.map((entry) => (
               <QueueCard key={entry.id} entryId={entry.id} />
             ))}
@@ -196,45 +162,37 @@ function PlaylistTile({ card, onOpen }: { card: PlaylistCard; onOpen: () => void
 
   return (
     <button
-      className="playlist-tile"
       onClick={onOpen}
       aria-label={`Open playlist ${card.name ?? "untitled"}`}
+      className="group flex flex-col gap-2 rounded-xl border bg-card p-3 text-left transition-colors hover:bg-accent/50 cursor-pointer"
     >
-      <span className="playlist-tile__head">
-        <ListVideo size={13} style={{ color: "var(--accent)" }} />
-        <span className="playlist-tile__name">{card.name ?? "Untitled"}</span>
-        <span className="count">{card.done}/{card.total}</span>
-      </span>
+      <div className="flex items-center gap-2">
+        <ListVideo size={13} className="text-sky-500" />
+        <span className="truncate text-sm font-medium">{card.name ?? "Untitled"}</span>
+        <span className="ml-auto text-xs text-muted-foreground">{card.done}/{card.total}</span>
+      </div>
 
-      <span className="playlist-tile__peek">
+      <div className="flex gap-1.5">
         {preview.map((item) =>
           item.thumbnail ? (
-            <img
-              key={item.id}
-              src={item.thumbnail}
-              alt=""
-              loading="lazy"
-              referrerPolicy="no-referrer"
-            />
+            <img key={item.id} src={item.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" className="aspect-video w-20 rounded object-cover" />
           ) : (
-            <span key={item.id} className="playlist-tile__thumb-fallback" />
+            <span key={item.id} className="aspect-video w-20 rounded bg-muted" />
           ),
         )}
-        {preview.length === 0 && (
-          <span className="playlist-tile__empty">No videos yet — open to add</span>
-        )}
+        {preview.length === 0 && <span className="text-xs text-muted-foreground">No videos yet — open to add</span>}
         {card.items.length > 3 && (
-          <span className="playlist-tile__more">+{card.items.length - 3}</span>
+          <span className="flex w-10 items-center justify-center rounded bg-muted text-xs text-muted-foreground">+{card.items.length - 3}</span>
         )}
-      </span>
+      </div>
 
-      <span className="playlist-tile__foot">
-        <span className="progress">
-          <span style={{ width: `${percent}%` }} />
-        </span>
-        <span className="faint">{percent}%</span>
-        <ChevronRight size={13} className="playlist-tile__chevron" />
-      </span>
+      <div className="flex items-center gap-2">
+        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+          <div className="h-full rounded-full bg-sky-500 transition-all" style={{ width: `${percent}%` }} />
+        </div>
+        <span className="text-xs text-muted-foreground">{percent}%</span>
+        <ChevronRight size={13} className="text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+      </div>
     </button>
   );
 }
@@ -269,12 +227,9 @@ function QueueCard({ entryId }: { entryId: number }) {
       ? Math.min(100, Math.round((episode / entry.episodeCount) * 100))
       : 0;
   const label =
-    entry.list === "watching"
-      ? "watching"
-      : entry.list === "next_sequel"
-        ? "next sequel"
-        : entry.list === "new_anime"
-          ? "new anime"
+    entry.list === "watching" ? "watching"
+      : entry.list === "next_sequel" ? "next sequel"
+        : entry.list === "new_anime" ? "new anime"
           : (entry.watchState ?? "watchlist");
 
   const advance = async () => {
@@ -289,99 +244,54 @@ function QueueCard({ entryId }: { entryId: number }) {
 
   return (
     <article
-      className="queue-card"
       ref={ref as never}
-      style={
-        highlight
-          ? { borderColor: "var(--ani)", boxShadow: "0 0 0 2px var(--ani-soft)" }
-          : undefined
-      }
+      className={cn(
+        "flex gap-3 rounded-xl border bg-card p-3",
+        highlight && "border-violet-500 shadow-[0_0_0_2px] shadow-violet-500/30",
+      )}
     >
-      <Thumb className="queue-cover" src={entry.cover} alt={entry.title ?? "Anime"} />
+      <Thumb className="aspect-[3/4] w-20 object-cover rounded-lg" src={entry.cover} alt={entry.title ?? "Anime"} />
 
-      <div className="queue-body">
-        <div className="queue-title">{entry.title}</div>
-        <div className="queue-meta">
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="truncate text-sm font-semibold">{entry.title}</div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
           <span>{entry.animeType ?? "TV"}</span>
-          <span>
-            {entry.totalSeasons || entry.seasons.length || 1} season
-            {(entry.totalSeasons || 1) > 1 ? "s" : ""}
-          </span>
+          <span>{entry.totalSeasons || entry.seasons.length || 1} season{(entry.totalSeasons || 1) > 1 ? "s" : ""}</span>
           <span>{entry.episodeCount} eps</span>
           <span>{entry.releaseDate ? formatDate(entry.releaseDate) : "date TBA"}</span>
-          <span className="chip chip--muted" style={{ fontSize: 9, padding: "0 5px" }}>
-            {label}
-          </span>
+          <Badge variant="secondary" className="text-[10px]">{label}</Badge>
         </div>
-        <div className="queue-meta">
-          <span>
-            S<b>{season}</b> · E<b>{episode}</b>
-            {seasonEps ? ` / ${seasonEps}` : ""}
-          </span>
-          <span>
-            {entry.airedCount}/{entry.episodeCount} aired
-          </span>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span>S<b className="text-foreground">{season}</b> · E<b className="text-foreground">{episode}</b>{seasonEps ? ` / ${seasonEps}` : ""}</span>
+          <span>{entry.airedCount}/{entry.episodeCount} aired</span>
           {entry.nextAiringAt ? (
-            <span>
-              ep {entry.nextAiringEp} {timeAgo(entry.nextAiringAt)}
-            </span>
+            <span>ep {entry.nextAiringEp} {timeAgo(entry.nextAiringAt)}</span>
           ) : (
-            <span>
-              {entry.airingTime ??
-                (entry.episodeCount && entry.airedCount >= entry.episodeCount ? "aired" : "no schedule")}
-            </span>
+            <span>{entry.airingTime ?? (entry.episodeCount && entry.airedCount >= entry.episodeCount ? "aired" : "no schedule")}</span>
           )}
           {nextSeason && (nextSeason.releaseDate || nextSeason.startDate) && (
-            <span title="Next season">
-              S{nextSeason.seasonNo} · {formatDate(nextSeason.releaseDate ?? nextSeason.startDate)}
-            </span>
+            <span title="Next season">S{nextSeason.seasonNo} · {formatDate(nextSeason.releaseDate ?? nextSeason.startDate)}</span>
           )}
         </div>
 
-        <div className="progress progress--ani" style={{ margin: "3px 0 3px" }}>
-          <span style={{ width: `${percent}%` }} />
+        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+          <div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${percent}%` }} />
         </div>
 
-        <div className="queue-actions">
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
           {entry.list === "watching" || entry.list === "next_sequel" ? (
             <>
-              <button
-                className="btn btn--sm btn--primary"
-                onClick={() =>
-                  void act(
-                    () => api.aniSetCursor(entry.id, season, episode + 1, 0),
-                    `Watched S${season} E${episode + 1}`,
-                  )
-                }
-              >
+              <Button size="sm" onClick={() => void act(() => api.aniSetCursor(entry.id, season, episode + 1, 0), `Watched S${season} E${episode + 1}`)}>
                 +1 episode
-              </button>
-              <button
-                className="btn btn--sm"
-                onClick={() => void advance()}
-              >
-                Next season
-              </button>
-              <button
-                className="btn btn--sm btn--ghost"
-                onClick={() => void act(() => api.aniFinish(entry.id), "Completed")}
-              >
-                Finish
-              </button>
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => void advance()}>Next season</Button>
+              <Button size="sm" variant="ghost" onClick={() => void act(() => api.aniFinish(entry.id), "Completed")}>Finish</Button>
               <ProgressEditor entryId={entry.id} season={season} episode={episode} compact />
             </>
           ) : (
-            <button
-              className="btn btn--sm btn--primary"
-              onClick={() =>
-                void act(
-                  () => api.aniUpdateEntry(entry.id, { listKind: "watching" }),
-                  "Moved to watching",
-                )
-              }
-            >
+            <Button size="sm" onClick={() => void act(() => api.aniUpdateEntry(entry.id, { listKind: "watching" }), "Moved to watching")}>
               Start watching
-            </button>
+            </Button>
           )}
         </div>
       </div>

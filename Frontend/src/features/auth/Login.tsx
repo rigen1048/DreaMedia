@@ -2,6 +2,17 @@ import { useState, type FormEvent } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { useApp } from "../../app/state";
 import { BackendError } from "../../lib/gql";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+const POINTS = [
+  "Track, WordScan, Random and Playlist notifications, scoped by domain and subdomain.",
+  "Anime release and change alerts with season, episode and airing-time context.",
+  "Manual playlists from any video link, plus a real watch queue.",
+];
 
 export default function Login() {
   const { login, signup } = useApp();
@@ -30,124 +41,112 @@ export default function Login() {
   };
 
   return (
-    <div className="auth">
-      <section className="auth__brand">
-        <div className="auth__logo">
-          <span className="mark">d/</span>
-          drea<span style={{ color: "var(--faint)" }}>/</span>media
+    <div className="grid min-h-screen lg:grid-cols-2">
+      {/* Brand side */}
+      <section className="hidden flex-col justify-between border-r bg-card p-10 lg:flex">
+        <div className="text-xl font-bold">
+          drea<span className="text-muted-foreground">/</span>media
         </div>
-
-        <div className="auth__headline">
-          <h1>
+        <div className="max-w-md space-y-6">
+          <h1 className="text-4xl font-bold leading-tight">
             Everything you follow.
             <br />
-            <em>Nothing you don&apos;t.</em>
+            <em className="text-muted-foreground">Nothing you don&apos;t.</em>
           </h1>
-          <p>
-            A single workspace for YouTube sources and anime releases — with notification control
-            down to the channel, and a bell that only carries messages from the backend.
+          <p className="text-sm text-muted-foreground">
+            A single workspace for YouTube sources and anime releases — with notification
+            control down to the channel, and a bell that only carries messages from the backend.
           </p>
-          <div className="auth__points">
-            <div className="auth__point">
-              <Check size={13} />
-              <span>
-                Track, WordScan, Random and Playlist notifications, scoped by domain and subdomain.
-              </span>
-            </div>
-            <div className="auth__point">
-              <Check size={13} />
-              <span>
-                Anime release and change alerts with season, episode and airing-time context.
-              </span>
-            </div>
-            <div className="auth__point">
-              <Check size={13} />
-              <span>Manual playlists from any video link, plus a real watch queue.</span>
-            </div>
+          <div className="space-y-3">
+            {POINTS.map((point) => (
+              <div key={point} className="flex items-start gap-2 text-sm">
+                <Check size={14} className="mt-0.5 shrink-0 text-emerald-500" />
+                <span>{point}</span>
+              </div>
+            ))}
           </div>
         </div>
-
-        <div className="auth__meta">
+        <div className="flex gap-4 text-xs text-muted-foreground">
           <span>Postgres · encrypted at rest</span>
           <span>GraphQL API</span>
           <span>Self-hosted</span>
         </div>
       </section>
 
-      <section className="auth__form">
-        <form className="auth-card" onSubmit={submit}>
-          <div>
-            <h2>{mode === "login" ? "Welcome back" : "Create your workspace"}</h2>
-            <p style={{ marginTop: 6, color: "var(--faint)", fontSize: 12.5 }}>
+      {/* Form side */}
+      <section className="flex items-center justify-center p-6">
+        <Card className="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle>{mode === "login" ? "Welcome back" : "Create your workspace"}</CardTitle>
+            <p className="text-sm text-muted-foreground">
               {mode === "login"
                 ? "Your session unlocks the encrypted vault."
                 : "The first account becomes the admin."}
             </p>
-          </div>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={submit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+                {(["login", "signup"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => {
+                      setMode(m);
+                      setError("");
+                    }}
+                    className={cn(
+                      "rounded-md px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer",
+                      mode === m ? "bg-background shadow" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {m === "login" ? "Sign in" : "Sign up"}
+                  </button>
+                ))}
+              </div>
 
-          <div className="auth-tabs" role="tablist">
-            <button
-              type="button"
-              data-active={mode === "login"}
-              onClick={() => {
-                setMode("login");
-                setError("");
-              }}
-            >
-              Sign in
-            </button>
-            <button
-              type="button"
-              data-active={mode === "signup"}
-              onClick={() => {
-                setMode("signup");
-                setError("");
-              }}
-            >
-              Sign up
-            </button>
-          </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="username">Username</Label>
+                <Input
+                  id="username"
+                  autoComplete="username"
+                  autoFocus
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  placeholder="your-handle"
+                />
+              </div>
 
-          <label className="field">
-            <span>Username</span>
-            <input
-              className="input"
-              autoComplete="username"
-              autoFocus
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              placeholder="your-handle"
-            />
-          </label>
+              <div className="space-y-1.5">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="••••••••"
+                />
+              </div>
 
-          <label className="field">
-            <span>Password</span>
-            <input
-              className="input"
-              type="password"
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="••••••••"
-            />
-          </label>
+              {error && (
+                <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  {error}
+                </div>
+              )}
 
-          {error && <div className="form-error">{error}</div>}
+              <Button className="w-full" disabled={busy}>
+                {busy ? <Loader2 size={14} className="animate-spin" /> : null}
+                {mode === "login" ? "Sign in" : "Create workspace"}
+              </Button>
 
-          <button
-            className="btn btn--primary"
-            style={{ height: 38, justifyContent: "center" }}
-            disabled={busy}
-          >
-            {busy ? <Loader2 size={14} className="spin" /> : null}
-            {mode === "login" ? "Sign in" : "Create workspace"}
-          </button>
-
-          <p className="auth-hint">
-            Sessions are in-memory and keys derive from your password at login — nothing readable is
-            stored on the server.
-          </p>
-        </form>
+              <p className="text-xs text-muted-foreground">
+                Sessions are in-memory and keys derive from your password at login — nothing
+                readable is stored on the server.
+              </p>
+            </form>
+          </CardContent>
+        </Card>
       </section>
     </div>
   );

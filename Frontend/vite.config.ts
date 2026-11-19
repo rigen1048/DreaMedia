@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, loadEnv, type ProxyOptions } from "vite";
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -13,34 +14,8 @@ const apiPrefixes = [
   "/graphql",
   "/health",
 ] as const;
-const previewHostSuffixes = [
-  "manuspre.computer",
-  "manus.computer",
-  "manus-asia.computer",
-  "manusvm.computer",
-  "manuscomputer.ai",
-] as const;
-
-function isPublicPreview(host: string): boolean {
-  return previewHostSuffixes.some((suffix) => host.toLowerCase().endsWith(suffix));
-}
-
 function createBackendProxy(target: string): ProxyOptions {
-  return {
-    target,
-    changeOrigin: true,
-    configure(proxy) {
-      proxy.on("proxyRes", (response, request) => {
-        const host = request.headers.host ?? "";
-        const cookies = response.headers["set-cookie"];
-        if (!isPublicPreview(host) || !cookies) return;
-
-        response.headers["set-cookie"] = cookies.map(
-          (cookie) => `${cookie.replace(/;\s*SameSite=[^;]+/i, "")}; SameSite=None; Secure`,
-        );
-      });
-    },
-  };
+  return { target, changeOrigin: true };
 }
 
 export default defineConfig(({ mode }) => {
@@ -52,7 +27,7 @@ export default defineConfig(({ mode }) => {
     process.env.DREAMEDIA_BRIDGE_TARGET ?? env.DREAMEDIA_BRIDGE_TARGET ?? "http://127.0.0.1:3100";
 
   return {
-    plugins: [react()],
+    plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
         "@": path.resolve(projectRoot, "src"),
@@ -66,15 +41,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       host: true,
-      allowedHosts: [
-        ".manuspre.computer",
-        ".manus.computer",
-        ".manus-asia.computer",
-        ".manuscomputer.ai",
-        ".manusvm.computer",
-        "localhost",
-        "127.0.0.1",
-      ],
+      allowedHosts: ["localhost", "127.0.0.1"],
       proxy: {
         ...Object.fromEntries(apiPrefixes.map((prefix) => [prefix, proxy])),
         "/bridge": {

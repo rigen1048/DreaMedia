@@ -4,6 +4,8 @@ import { useApp } from "../../app/state";
 import { listMessages, markMessagesSeen, openMessageStream } from "../../lib/bridge";
 import { timeAgo } from "../../lib/format";
 import type { BellMessage } from "../../lib/types";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 /**
  * The bell only ever shows backend-originated messages delivered through the
@@ -100,79 +102,86 @@ export default function Bell() {
   };
 
   return (
-    <div className="bell-wrap" ref={panel}>
+    <div className="relative" ref={panel}>
       <button
-        className="bell"
         aria-label={`Backend messages${unread.length ? `, ${unread.length} unread` : ""}`}
         aria-expanded={open}
         onClick={() => {
           setOpen((value) => !value);
           void pull();
         }}
+        className="relative flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
       >
         <BellIcon size={17} strokeWidth={1.9} />
         {unread.length > 0 && (
-          <span className="bell__count">{unread.length > 9 ? "9+" : unread.length}</span>
+          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-white">
+            {unread.length > 9 ? "9+" : unread.length}
+          </span>
         )}
       </button>
 
       {open && (
-        <div className="bell-panel" role="dialog" aria-label="Backend messages">
-          <div className="bell-panel__head">
-            <strong>Backend messages</strong>
-            <span>{unread.length} new</span>
+        <div
+          role="dialog"
+          aria-label="Backend messages"
+          className="absolute right-0 top-11 z-50 flex w-96 flex-col overflow-hidden rounded-xl border bg-card shadow-xl"
+        >
+          <div className="flex items-center gap-2 border-b px-4 py-2.5">
+            <strong className="text-sm">Backend messages</strong>
+            <span className="text-xs text-muted-foreground">{unread.length} new</span>
             <span className="grow" />
             <button
-              className="link-btn"
+              className="text-xs text-sky-500 hover:underline disabled:opacity-40 cursor-pointer"
               disabled={!unread.length}
               onClick={() => void acknowledgeAll()}
             >
               Mark all read
             </button>
-            <button className="icon-btn" aria-label="Close" onClick={() => setOpen(false)}>
+            <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Close" onClick={() => setOpen(false)}>
               <X size={14} />
-            </button>
+            </Button>
           </div>
 
-          <div className="bell-list" ref={list}>
+          <div ref={list} className="max-h-96 overflow-y-auto">
             {messages.length === 0 && (
-              <div className="empty" style={{ padding: "28px 16px" }}>
-                <Radio size={18} />
-                <div>
-                  <div style={{ color: "var(--dim)" }}>No backend messages yet.</div>
-                  <div style={{ fontSize: 11, marginTop: 3 }}>
-                    {online
-                      ? "The receiver is online and waiting."
-                      : "Notification receiver offline — is the bridge running?"}
-                  </div>
+              <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
+                <Radio size={18} className="text-muted-foreground" />
+                <div className="text-sm">No backend messages yet.</div>
+                <div className="text-xs text-muted-foreground">
+                  {online
+                    ? "The receiver is online and waiting."
+                    : "Notification receiver offline — is the bridge running?"}
                 </div>
               </div>
             )}
             {messages.slice(0, 40).map((message) => (
               <button
                 key={message.id}
-                className="bell-item"
-                data-media={message.media}
                 onClick={() => void acknowledge(message)}
                 title={message.seen ? "Mark unread" : "Mark read"}
+                className={cn(
+                  "flex w-full items-start gap-2.5 border-b px-4 py-2.5 text-left transition-colors hover:bg-accent/50 cursor-pointer",
+                  !message.seen && "bg-accent/30",
+                )}
               >
-                <span className="bell-item__icon">
-                  {message.seen ? <Check size={13} /> : <span className="dot" />}
+                <span className="mt-1 shrink-0 text-muted-foreground">
+                  {message.seen ? <Check size={13} /> : <span className="block h-1.5 w-1.5 rounded-full bg-sky-500" />}
                 </span>
-                <span className="bell-item__body">
-                  <span className="bell-item__title">{message.title || message.kind}</span>
-                  {message.message && <span className="bell-item__msg">{message.message}</span>}
-                  <span className="bell-item__time">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{message.title || message.kind}</span>
+                  {message.message && (
+                    <span className="block truncate text-xs text-muted-foreground">{message.message}</span>
+                  )}
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
                     {timeAgo(message.createdAt)} · {message.media === "yt" ? "YouTube" : "Anime"}
                   </span>
                 </span>
-                {!message.seen && <span className="bell-item__dot" />}
               </button>
             ))}
           </div>
 
-          <div className="bell-panel__foot">
-            <span className={`dot`} style={{ color: online ? "var(--ok)" : "var(--danger)" }} />
+          <div className="flex items-center gap-1.5 border-t px-4 py-2 text-xs text-muted-foreground">
+            <span className={cn("h-1.5 w-1.5 rounded-full", online ? "bg-emerald-500" : "bg-destructive")} />
             {online ? "REST receiver online" : "Receiver offline"}
             <span className="grow" />
             <span>backend push · /bridge</span>
