@@ -1,36 +1,14 @@
-import { useState, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { useState } from "react";
 import * as api from "../../app/api";
 import { useApp, useWorkspace } from "../../app/state";
-
-export function Dialog({
-  title,
-  hint,
-  onClose,
-  children,
-}: {
-  title: string;
-  hint?: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div className="overlay" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
-      <div className="modal" onClick={(event) => event.stopPropagation()}>
-        <div className="modal__head">
-          <div>
-            <h3>{title}</h3>
-            {hint && <p>{hint}</p>}
-          </div>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
-            <X size={15} />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 
 export function AddSourceDialog({ onClose }: { onClose: () => void }) {
   const { act } = useApp();
@@ -51,13 +29,7 @@ export function AddSourceDialog({ onClose }: { onClose: () => void }) {
         api.subscribeYoutube({
           kind,
           link: link.trim(),
-          words:
-            kind === "wordscan"
-              ? words
-                  .split(",")
-                  .map((word) => word.trim())
-                  .filter(Boolean)
-              : undefined,
+          words: kind === "wordscan" ? words.split(",").map((word) => word.trim()).filter(Boolean) : undefined,
           rank: kind === "random" ? rank : undefined,
           domain: domain.trim() || undefined,
           subdomain: subdomain.trim() || undefined,
@@ -69,122 +41,92 @@ export function AddSourceDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Dialog
-      title="Add YouTube source"
-      hint="Channel, playlist or video link. The backend resolves the channel id and keeps polling it."
-      onClose={onClose}
-    >
-      <div className="modal__body">
-        <label className="field">
-          <span>Link</span>
-          <input
-            className="input"
-            autoFocus
-            value={link}
-            onChange={(event) => setLink(event.target.value)}
-            placeholder="https://www.youtube.com/@channel or a playlist/video URL"
-            onKeyDown={(event) => event.key === "Enter" && void submit()}
-          />
-        </label>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add YouTube source</DialogTitle>
+          <DialogDescription>Channel, playlist or video link. The backend resolves the channel id and keeps polling it.</DialogDescription>
+        </DialogHeader>
 
-        <div className="modal__row">
-          <label className="field">
-            <span>Notification type</span>
-            <select
-              className="select"
-              value={kind}
-              onChange={(event) => setKind(event.target.value)}
-            >
-              <option value="tracking">Track — every upload</option>
-              <option value="wordscan">WordScan — only matching titles</option>
-              <option value="random">Random — occasional picks</option>
-              <option value="playlist">Playlist — new playlist items</option>
-            </select>
-          </label>
-          {kind === "random" && (
-            <label className="field">
-              <span>Frequency</span>
-              <select
-                className="select"
-                value={rank}
-                onChange={(event) => setRank(event.target.value)}
-              >
-                <option value="day">Daily</option>
-                <option value="tri_day">Every 3 days</option>
-                <option value="week">Weekly</option>
-                <option value="bi_week">Every 2 weeks</option>
-                <option value="month">Monthly</option>
-              </select>
-            </label>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Link</Label>
+            <Input
+              autoFocus
+              value={link}
+              onChange={(event) => setLink(event.target.value)}
+              placeholder="https://www.youtube.com/@channel or a playlist/video URL"
+              onKeyDown={(event) => event.key === "Enter" && void submit()}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Notification type</Label>
+              <Select value={kind} onValueChange={setKind}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="tracking">Track — every upload</SelectItem>
+                  <SelectItem value="wordscan">WordScan — only matching titles</SelectItem>
+                  <SelectItem value="random">Random — occasional picks</SelectItem>
+                  <SelectItem value="playlist">Playlist — new playlist items</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {kind === "random" && (
+              <div className="space-y-1.5">
+                <Label>Frequency</Label>
+                <Select value={rank} onValueChange={setRank}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="day">Daily</SelectItem>
+                    <SelectItem value="tri_day">Every 3 days</SelectItem>
+                    <SelectItem value="week">Weekly</SelectItem>
+                    <SelectItem value="bi_week">Every 2 weeks</SelectItem>
+                    <SelectItem value="month">Monthly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+
+          {kind === "wordscan" && (
+            <div className="space-y-1.5">
+              <Label>Words to match (comma separated)</Label>
+              <Input value={words} onChange={(event) => setWords(event.target.value)} placeholder="trailer, live, devlog" />
+            </div>
           )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Domain (optional)</Label>
+              <Input list="yt-domains" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="Technology" />
+              <datalist id="yt-domains">
+                {workspace.ytDomains.map((item) => (
+                  <option key={item.id} value={item.name} />
+                ))}
+              </datalist>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Subdomain (optional)</Label>
+              <Input list="yt-subs" value={subdomain} onChange={(event) => setSubdomain(event.target.value)} placeholder="AI" />
+              <datalist id="yt-subs">
+                {[...new Set(workspace.ytDomains.flatMap((item) => item.subdomains.map((sub) => sub.name)))].map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+            </div>
+          </div>
         </div>
 
-        {kind === "wordscan" && (
-          <label className="field">
-            <span>Words to match (comma separated)</span>
-            <input
-              className="input"
-              value={words}
-              onChange={(event) => setWords(event.target.value)}
-              placeholder="trailer, live, devlog"
-            />
-          </label>
-        )}
-
-        <div className="modal__row">
-          <label className="field">
-            <span>Domain (optional)</span>
-            <input
-              className="input"
-              list="yt-domains"
-              value={domain}
-              onChange={(event) => setDomain(event.target.value)}
-              placeholder="Technology"
-            />
-            <datalist id="yt-domains">
-              {workspace.ytDomains.map((item) => (
-                <option key={item.id} value={item.name} />
-              ))}
-            </datalist>
-          </label>
-          <label className="field">
-            <span>Subdomain (optional)</span>
-            <input
-              className="input"
-              list="yt-subs"
-              value={subdomain}
-              onChange={(event) => setSubdomain(event.target.value)}
-              placeholder="AI"
-            />
-            <datalist id="yt-subs">
-              {[
-                ...new Set(
-                  workspace.ytDomains.flatMap((item) => item.subdomains.map((sub) => sub.name)),
-                ),
-              ].map((name) => (
-                <option key={name} value={name} />
-              ))}
-            </datalist>
-          </label>
-        </div>
-      </div>
-
-      <div className="modal__foot">
-        <span className="faint" style={{ fontSize: 11 }}>
-          Missing categories are created automatically.
-        </span>
-        <span className="grow" />
-        <button className="btn btn--ghost" onClick={onClose}>
-          Cancel
-        </button>
-        <button
-          className="btn btn--primary"
-          disabled={!link.trim() || busy}
-          onClick={() => void submit()}
-        >
-          {busy ? "Resolving…" : "Add source"}
-        </button>
-      </div>
+        <DialogFooter className="items-center">
+          <span className="mr-auto text-xs text-muted-foreground">Missing categories are created automatically.</span>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button disabled={!link.trim() || busy} onClick={() => void submit()}>
+            {busy ? "Resolving…" : "Add source"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
     </Dialog>
   );
 }
@@ -207,20 +149,10 @@ export function AddAnimeDialog({ onClose }: { onClose: () => void }) {
     if (!title.trim() || busy) return;
     setBusy(true);
     try {
-      const created = await api.aniTrack(
-        title.trim(),
-        list,
-        domain.trim() || undefined,
-        subdomain.trim() || undefined,
-      );
+      const created = await api.aniTrack(title.trim(), list, domain.trim() || undefined, subdomain.trim() || undefined);
       let message = "Anime tracked — seasons and episode counts resolved";
       if (list === "watching") {
-        await api.aniSetCursor(
-          created.aniTrack,
-          Math.max(1, watchTillSeason),
-          Math.max(0, watchTillEpisode),
-          Math.max(0, watchTillTime),
-        );
+        await api.aniSetCursor(created.aniTrack, Math.max(1, watchTillSeason), Math.max(0, watchTillEpisode), Math.max(0, watchTillTime));
         message = `Watching — till S${Math.max(1, watchTillSeason)} E${Math.max(0, watchTillEpisode)}`;
       } else if (list === "up_to_date") {
         message = "UpToDate — release notifications enabled";
@@ -246,133 +178,108 @@ export function AddAnimeDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Dialog
-      title="Track anime"
-      hint="Metadata (type, seasons, episodes, release) comes from AniList via the backend."
-      onClose={onClose}
-    >
-      <div className="modal__body">
-        <label className="field">
-          <span>Title</span>
-          <input
-            className="input"
-            autoFocus
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="e.g. Frieren: Beyond Journey's End"
-            onKeyDown={(event) => event.key === "Enter" && void submit()}
-          />
-        </label>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Track anime</DialogTitle>
+          <DialogDescription>Metadata (type, seasons, episodes, release) comes from AniList via the backend.</DialogDescription>
+        </DialogHeader>
 
-        <div className="field">
-          <span>Track as</span>
-          <div className="filterbar">
-            {[
-              ["watching", "Watching"],
-              ["up_to_date", "UpToDate"],
-              ["watchlist", "Watchlist"],
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                className="chipbtn"
-                data-active={list === value}
-                onClick={() => setList(value as typeof list)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {list === "watching" && (
-          <div className="modal__row">
-            <label className="field">
-              <span>Watch till · Season</span>
-              <input
-                className="input"
-                type="number"
-                min={1}
-                value={watchTillSeason}
-                onChange={(event) => setWatchTillSeason(Number(event.target.value))}
-              />
-            </label>
-            <label className="field">
-              <span>Episode</span>
-              <input
-                className="input"
-                type="number"
-                min={0}
-                value={watchTillEpisode}
-                onChange={(event) => setWatchTillEpisode(Number(event.target.value))}
-              />
-            </label>
-            <label className="field">
-              <span>Time (seconds)</span>
-              <input className="input" type="number" min={0} value={watchTillTime} onChange={(event) => setWatchTillTime(Number(event.target.value))} />
-            </label>
-          </div>
-        )}
-
-        {list === "watchlist" && (
-          <div className="modal__row">
-            <label className="field">
-              <span>Watchlist status</span>
-              <select className="select" value={watchlistState} onChange={(event) => setWatchlistState(event.target.value as typeof watchlistState)}>
-                <option value="not_yet">Not yet</option>
-                <option value="confirmed">Confirmed</option>
-                <option value="completed">Completed</option>
-                <option value="blocked">Blocked</option>
-              </select>
-            </label>
-            {watchlistState === "completed" && <label className="field"><span>Completed through season (optional)</span><input className="input" type="number" min={1} value={completedSeason} onChange={(event) => setCompletedSeason(Number(event.target.value))} /></label>}
-          </div>
-        )}
-
-
-        <div className="modal__row">
-          <label className="field">
-            <span>Domain (optional)</span>
-            <input
-              className="input"
-              list="ani-domains"
-              value={domain}
-              onChange={(event) => setDomain(event.target.value)}
-              placeholder="Seasonal"
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Title</Label>
+            <Input
+              autoFocus
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="e.g. Frieren: Beyond Journey's End"
+              onKeyDown={(event) => event.key === "Enter" && void submit()}
             />
-            <datalist id="ani-domains">
-              {workspace.aniDomains.map((item) => (
-                <option key={item.id} value={item.name} />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Track as</Label>
+            <div className="flex gap-1.5">
+              {([["watching", "Watching"], ["up_to_date", "UpToDate"], ["watchlist", "Watchlist"]] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => setList(value)}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-medium transition-colors cursor-pointer",
+                    list === value ? "bg-primary text-primary-foreground border-transparent" : "text-muted-foreground hover:bg-accent",
+                  )}
+                >
+                  {label}
+                </button>
               ))}
-            </datalist>
-          </label>
-          <label className="field">
-            <span>Subdomain (optional)</span>
-            <input
-              className="input"
-              value={subdomain}
-              onChange={(event) => setSubdomain(event.target.value)}
-              placeholder="Winter 2026"
-            />
-          </label>
-        </div>
-      </div>
+            </div>
+          </div>
 
-      <div className="modal__foot">
-        <span className="faint" style={{ fontSize: 11 }}>
-          Needs outbound access to AniList.
-        </span>
-        <span className="grow" />
-        <button className="btn btn--ghost" onClick={onClose}>
-          Cancel
-        </button>
-        <button
-          className="btn btn--primary"
-          disabled={!title.trim() || busy}
-          onClick={() => void submit()}
-        >
-          {busy ? "Resolving…" : "Track"}
-        </button>
-      </div>
+          {list === "watching" && (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label>Watch till · Season</Label>
+                <Input type="number" min={1} value={watchTillSeason} onChange={(event) => setWatchTillSeason(Number(event.target.value))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Episode</Label>
+                <Input type="number" min={0} value={watchTillEpisode} onChange={(event) => setWatchTillEpisode(Number(event.target.value))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Time (seconds)</Label>
+                <Input type="number" min={0} value={watchTillTime} onChange={(event) => setWatchTillTime(Number(event.target.value))} />
+              </div>
+            </div>
+          )}
+
+          {list === "watchlist" && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Watchlist status</Label>
+                <Select value={watchlistState} onValueChange={(value) => setWatchlistState(value as typeof watchlistState)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="not_yet">Not yet</SelectItem>
+                    <SelectItem value="confirmed">Confirmed</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="blocked">Blocked</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {watchlistState === "completed" && (
+                <div className="space-y-1.5">
+                  <Label>Completed through season (optional)</Label>
+                  <Input type="number" min={1} value={completedSeason} onChange={(event) => setCompletedSeason(Number(event.target.value))} />
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Domain (optional)</Label>
+              <Input list="ani-domains" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="Seasonal" />
+              <datalist id="ani-domains">
+                {workspace.aniDomains.map((item) => (
+                  <option key={item.id} value={item.name} />
+                ))}
+              </datalist>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Subdomain (optional)</Label>
+              <Input value={subdomain} onChange={(event) => setSubdomain(event.target.value)} placeholder="Winter 2026" />
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter className="items-center">
+          <span className="mr-auto text-xs text-muted-foreground">Needs outbound access to AniList.</span>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button disabled={!title.trim() || busy} onClick={() => void submit()}>
+            {busy ? "Resolving…" : "Track"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
     </Dialog>
   );
 }

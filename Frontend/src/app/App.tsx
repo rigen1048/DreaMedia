@@ -6,6 +6,7 @@ import Admin from "../features/admin/Admin";
 import Login from "../features/auth/Login";
 import { AppProvider, useApp } from "./state";
 import Shell from "./Shell";
+import { Button } from "@/components/ui/button";
 
 function AdminGate() {
   const { viewer } = useApp();
@@ -21,10 +22,10 @@ function Gate() {
 
   if (loading) {
     return (
-      <div className="auth-splash">
-        <div>
-          <div className="mark">d/</div>
-          <div style={{ color: "var(--dim)", fontSize: 12 }}>Connecting to the backend…</div>
+      <div className="flex h-screen items-center justify-center">
+        <div className="text-center">
+          <div className="text-2xl font-bold">d<span className="text-muted-foreground">/</span></div>
+          <div className="mt-2 text-xs text-muted-foreground">Connecting to the backend…</div>
         </div>
       </div>
     );
@@ -32,14 +33,12 @@ function Gate() {
 
   if (authError) {
     return (
-      <div className="auth-splash">
-        <div style={{ maxWidth: 380, display: "grid", gap: 10, justifyItems: "center" }}>
-          <div className="mark">d/</div>
-          <h2 style={{ fontSize: 18 }}>Backend unavailable</h2>
-          <p style={{ color: "var(--faint)", fontSize: 12.5 }}>{authError}</p>
-          <button className="btn" onClick={() => void refresh()}>
-            Retry connection
-          </button>
+      <div className="flex h-screen items-center justify-center">
+        <div className="grid max-w-sm justify-items-center gap-3 text-center">
+          <div className="text-2xl font-bold">d<span className="text-muted-foreground">/</span></div>
+          <h2 className="text-lg font-semibold">Backend unavailable</h2>
+          <p className="text-sm text-muted-foreground">{authError}</p>
+          <Button onClick={() => void refresh()}>Retry connection</Button>
         </div>
       </div>
     );

@@ -2,24 +2,21 @@ import { useState } from "react";
 import { BellOff, BellRing, Pencil, Plus, Trash2, X } from "lucide-react";
 import * as api from "../../app/api";
 import { useApp, useWorkspace } from "../../app/state";
-import { ConfirmButton, MiniSwitch } from "../../app/ui";
+import { ConfirmButton } from "../../app/ui";
+import { Switch } from "@/components/ui/switch";
 import type { Domain } from "../../lib/types";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 type Kind = "yt" | "ani";
 
 export default function Categories() {
   return (
-    <div style={{ display: "grid", gap: 22 }}>
-      <CategorySection
-        kind="yt"
-        title="YouTube categories"
-        hint="Domains group channels; subdomains attach to channels."
-      />
-      <CategorySection
-        kind="ani"
-        title="Anime categories"
-        hint="Used by Management and the notification filter rail."
-      />
+    <div className="grid gap-8">
+      <CategorySection kind="yt" title="YouTube categories" hint="Domains group channels; subdomains attach to channels." />
+      <CategorySection kind="ani" title="Anime categories" hint="Used by Management and the notification filter rail." />
     </div>
   );
 }
@@ -34,42 +31,39 @@ function CategorySection({ kind, title, hint }: { kind: Kind; title: string; hin
     kind === "yt" ? api.ytCreateDomain(newDomain.trim()) : api.aniCreateDomain(newDomain.trim());
 
   return (
-    <section>
-      <div className="section-head">
-        <h2>{title}</h2>
-        <span>{hint}</span>
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-sm font-semibold">{title}</h2>
+        <span className="text-xs text-muted-foreground">{hint}</span>
         <span className="grow" />
-        <div style={{ display: "flex", gap: 6 }}>
-          <input
-            className="input"
-            style={{ width: 180, height: 30, fontSize: 12 }}
-            value={newDomain}
-            onChange={(event) => setNewDomain(event.target.value)}
-            placeholder="New domain"
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && newDomain.trim()) {
-                void act(createDomain, "Domain created").then(() => setNewDomain(""));
-              }
-            }}
-          />
-          <button
-            className="btn btn--sm"
-            disabled={!newDomain.trim()}
-            onClick={() => void act(createDomain, "Domain created").then(() => setNewDomain(""))}
-          >
-            <Plus size={13} /> Domain
-          </button>
-        </div>
+        <Input
+          className="h-8 w-44"
+          value={newDomain}
+          onChange={(event) => setNewDomain(event.target.value)}
+          placeholder="New domain"
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && newDomain.trim()) {
+              void act(createDomain, "Domain created").then(() => setNewDomain(""));
+            }
+          }}
+        />
+        <Button
+          size="sm"
+          disabled={!newDomain.trim()}
+          onClick={() => void act(createDomain, "Domain created").then(() => setNewDomain(""))}
+        >
+          <Plus size={13} /> Domain
+        </Button>
       </div>
 
-      <div className="domain-grid">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {domains.map((domain) => (
           <DomainCard key={domain.id} kind={kind} domain={domain} />
         ))}
         {domains.length === 0 && (
-          <div className="panel" style={{ padding: 18, color: "var(--faint)", fontSize: 12 }}>
+          <Card className="p-5 text-sm text-muted-foreground">
             No categories yet. Create one above, then attach channels or anime to it.
-          </div>
+          </Card>
         )}
       </div>
     </section>
@@ -78,113 +72,81 @@ function CategorySection({ kind, title, hint }: { kind: Kind; title: string; hin
 
 function DomainCard({ kind, domain }: { kind: Kind; domain: Domain }) {
   const { act } = useApp();
-  const [editing, setEditing] = useState<null | {
-    id: number;
-    type: "domain" | "sub";
-    value: string;
-  }>(null);
+  const [editing, setEditing] = useState<null | { id: number; type: "domain" | "sub"; value: string }>(null);
   const [newSub, setNewSub] = useState("");
 
   const rename = (id: number, type: "domain" | "sub", name: string) => {
-    if (type === "domain") {
-      return kind === "yt" ? api.ytRenameDomain(id, name) : api.aniRenameDomain(id, name);
-    }
+    if (type === "domain") return kind === "yt" ? api.ytRenameDomain(id, name) : api.aniRenameDomain(id, name);
     return kind === "yt" ? api.ytRenameSubdomain(id, name) : api.aniRenameSubdomain(id, name);
   };
 
   const setNotify = (id: number, type: "domain" | "sub", notify: boolean) => {
-    if (type === "domain") {
-      return kind === "yt" ? api.ytSetDomainNotify(id, notify) : api.aniSetDomainNotify(id, notify);
-    }
-    return kind === "yt"
-      ? api.ytSetSubdomainNotify(id, notify)
-      : api.aniSetSubdomainNotify(id, notify);
+    if (type === "domain") return kind === "yt" ? api.ytSetDomainNotify(id, notify) : api.aniSetDomainNotify(id, notify);
+    return kind === "yt" ? api.ytSetSubdomainNotify(id, notify) : api.aniSetSubdomainNotify(id, notify);
   };
 
   const remove = (id: number, type: "domain" | "sub") => {
-    if (type === "domain") {
-      return kind === "yt" ? api.ytDeleteDomain(id) : api.aniDeleteDomain(id);
-    }
+    if (type === "domain") return kind === "yt" ? api.ytDeleteDomain(id) : api.aniDeleteDomain(id);
     return kind === "yt" ? api.ytDeleteSubdomain(id) : api.aniDeleteSubdomain(id);
   };
 
   const addSub = () =>
-    kind === "yt"
-      ? api.ytCreateSubdomain(domain.id, newSub.trim())
-      : api.aniCreateSubdomain(domain.id, newSub.trim());
+    kind === "yt" ? api.ytCreateSubdomain(domain.id, newSub.trim()) : api.aniCreateSubdomain(domain.id, newSub.trim());
 
-  const beginEdit = (id: number, type: "domain" | "sub", value: string) =>
-    setEditing({ id, type, value });
+  const beginEdit = (id: number, type: "domain" | "sub", value: string) => setEditing({ id, type, value });
 
   const submitEdit = () => {
     if (!editing || !editing.value.trim()) return;
-    void act(() => rename(editing.id, editing.type, editing.value.trim()), "Renamed").then(() =>
-      setEditing(null),
-    );
+    void act(() => rename(editing.id, editing.type, editing.value.trim()), "Renamed").then(() => setEditing(null));
   };
 
   return (
-    <div className="domain-card">
-      <div className="domain-card__head">
-        <span
-          className="domain-card__name"
-          style={{ color: domain.notify ? "var(--text)" : "var(--faint)" }}
-          title={domain.notify ? "Notifications on" : "Notifications muted"}
-        >
-          {editing?.type === "domain" && editing.id === domain.id ? (
-            <input
-              className="input"
-              style={{ height: 26, fontSize: 12, width: 160 }}
-              autoFocus
-              value={editing.value}
-              onChange={(event) => setEditing({ ...editing, value: event.target.value })}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") submitEdit();
-                if (event.key === "Escape") setEditing(null);
-              }}
-              onBlur={submitEdit}
-            />
-          ) : (
-            domain.name
-          )}
-        </span>
-        <span className="domain-card__count">{domain.channelCount ?? 0}</span>
+    <Card>
+      <CardHeader className="flex flex-row items-center gap-2 space-y-0 p-3">
+        {editing?.type === "domain" && editing.id === domain.id ? (
+          <Input
+            className="h-7 w-40"
+            autoFocus
+            value={editing.value}
+            onChange={(event) => setEditing({ ...editing, value: event.target.value })}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") submitEdit();
+              if (event.key === "Escape") setEditing(null);
+            }}
+            onBlur={submitEdit}
+          />
+        ) : (
+          <span
+            className={cn("truncate text-sm font-semibold", !domain.notify && "text-muted-foreground")}
+            title={domain.notify ? "Notifications on" : "Notifications muted"}
+          >
+            {domain.name}
+          </span>
+        )}
+        <span className="text-xs text-muted-foreground">{domain.channelCount ?? 0}</span>
         <span className="grow" />
-        <button
-          className="icon-btn"
+        <Button
+          variant="ghost" size="icon" className="h-7 w-7"
           title={domain.notify ? "Mute entire domain" : "Unmute domain"}
           aria-label={domain.notify ? "Mute entire domain" : "Unmute domain"}
           onClick={() => void act(() => setNotify(domain.id, "domain", !domain.notify))}
         >
-          {domain.notify ? (
-            <BellRing size={13} />
-          ) : (
-            <BellOff size={13} style={{ color: "var(--faint)" }} />
-          )}
-        </button>
-        <button
-          className="icon-btn"
-          aria-label="Rename domain"
-          title="Rename domain"
-          onClick={() => beginEdit(domain.id, "domain", domain.name)}
-        >
+          {domain.notify ? <BellRing size={13} /> : <BellOff size={13} className="text-muted-foreground" />}
+        </Button>
+        <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Rename domain" title="Rename domain" onClick={() => beginEdit(domain.id, "domain", domain.name)}>
           <Pencil size={12} />
-        </button>
-        <ConfirmButton
-          label={`Delete ${domain.name}`}
-          onConfirm={() => void act(() => remove(domain.id, "domain"), "Domain deleted")}
-        >
+        </Button>
+        <ConfirmButton label={`Delete ${domain.name}`} className="h-7 w-7" onConfirm={() => void act(() => remove(domain.id, "domain"), "Domain deleted")}>
           <Trash2 size={12} />
         </ConfirmButton>
-      </div>
+      </CardHeader>
 
-      <div className="domain-card__body">
+      <CardContent className="space-y-1 p-3 pt-0">
         {domain.subdomains.map((sub) => (
-          <div className="sub-row" key={sub.id}>
+          <div key={sub.id} className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-accent/40">
             {editing?.type === "sub" && editing.id === sub.id ? (
-              <input
-                className="input"
-                style={{ height: 24, fontSize: 11.5, width: 150 }}
+              <Input
+                className="h-6 w-36 text-xs"
                 autoFocus
                 value={editing.value}
                 onChange={(event) => setEditing({ ...editing, value: event.target.value })}
@@ -195,36 +157,27 @@ function DomainCard({ kind, domain }: { kind: Kind; domain: Domain }) {
                 onBlur={submitEdit}
               />
             ) : (
-              <span style={{ color: sub.notify ? "var(--dim)" : "var(--faint)" }}>{sub.name}</span>
+              <span className={cn("text-sm", !sub.notify && "text-muted-foreground")}>{sub.name}</span>
             )}
-            <span className="count">{sub.channelCount}</span>
+            <span className="text-xs text-muted-foreground">{sub.channelCount}</span>
             <span className="grow" />
-            <MiniSwitch
+            <Switch
               checked={sub.notify}
-              label={`Notify for ${sub.name}`}
-              onChange={(next) => void act(() => setNotify(sub.id, "sub", next))}
+              aria-label={`Notify for ${sub.name}`}
+              onCheckedChange={(next) => void act(() => setNotify(sub.id, "sub", next))}
             />
-            <button
-              className="icon-btn"
-              style={{ width: 24, height: 24 }}
-              aria-label="Rename subdomain"
-              onClick={() => beginEdit(sub.id, "sub", sub.name)}
-            >
+            <Button variant="ghost" size="icon" className="h-6 w-6" aria-label="Rename subdomain" onClick={() => beginEdit(sub.id, "sub", sub.name)}>
               <Pencil size={11} />
-            </button>
-            <ConfirmButton
-              label={`Delete ${sub.name}`}
-              className="icon-btn icon-btn--danger"
-              onConfirm={() => void act(() => remove(sub.id, "sub"), "Subdomain deleted")}
-            >
+            </Button>
+            <ConfirmButton label={`Delete ${sub.name}`} className="h-6 w-6" onConfirm={() => void act(() => remove(sub.id, "sub"), "Subdomain deleted")}>
               <X size={11} />
             </ConfirmButton>
           </div>
         ))}
 
-        <div className="sub-add">
-          <input
-            className="input"
+        <div className="flex gap-1.5 pt-1.5">
+          <Input
+            className="h-7 text-xs"
             value={newSub}
             onChange={(event) => setNewSub(event.target.value)}
             placeholder="New subdomain"
@@ -234,15 +187,11 @@ function DomainCard({ kind, domain }: { kind: Kind; domain: Domain }) {
               }
             }}
           />
-          <button
-            className="btn btn--sm"
-            disabled={!newSub.trim()}
-            onClick={() => void act(addSub, "Subdomain added").then(() => setNewSub(""))}
-          >
+          <Button size="sm" variant="secondary" className="h-7" disabled={!newSub.trim()} onClick={() => void act(addSub, "Subdomain added").then(() => setNewSub(""))}>
             <Plus size={12} />
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

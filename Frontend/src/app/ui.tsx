@@ -1,76 +1,9 @@
-import { Check, Inbox, X } from "lucide-react";
+import { Inbox, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
-export function Switch({
-  checked,
-  onChange,
-  label,
-  disabled,
-}: {
-  checked: boolean;
-  onChange: (next: boolean) => void;
-  label: string;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      title={label}
-      className="switch"
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-    />
-  );
-}
-
-export function MiniSwitch({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean;
-  onChange: (next: boolean) => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      title={label}
-      className="mini-switch"
-      onClick={() => onChange(!checked)}
-    />
-  );
-}
-
-export function CheckBox({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean;
-  onChange: (next: boolean) => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={checked}
-      aria-label={label}
-      className="check"
-      data-checked={checked}
-      onClick={() => onChange(!checked)}
-    >
-      <Check size={11} strokeWidth={3} />
-    </button>
-  );
-}
+export { Switch } from "@/components/ui/switch";
 
 export function EmptyState({
   title,
@@ -84,11 +17,11 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="empty">
-      {icon ?? <Inbox size={20} />}
+    <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed py-16 text-center text-muted-foreground">
+      {icon ?? <Inbox size={22} />}
       <div>
-        <div style={{ color: "var(--dim)", fontSize: 12.5, fontWeight: 600 }}>{title}</div>
-        {hint && <div style={{ marginTop: 3, fontSize: 11.5 }}>{hint}</div>}
+        <div className="text-sm font-semibold text-foreground/80">{title}</div>
+        {hint && <div className="mt-1 text-xs">{hint}</div>}
       </div>
       {action}
     </div>
@@ -107,11 +40,15 @@ export function Thumb({
   fallback?: string;
 }) {
   const [failed, setFailed] = useState(false);
-  const base = className ?? "feed-thumb";
   useEffect(() => setFailed(false), [src]);
+  const base = cn("aspect-video w-40 shrink-0 rounded-lg object-cover bg-muted", className);
   if (!src || failed) {
     return (
-      <div className={`${base} thumb-fallback`} aria-hidden="true" title={alt}>
+      <div
+        className={cn(base, "flex items-center justify-center text-lg font-bold text-muted-foreground")}
+        aria-hidden="true"
+        title={alt}
+      >
         {fallback ?? alt.slice(0, 1).toUpperCase()}
       </div>
     );
@@ -137,25 +74,26 @@ export function Toasts({
 }) {
   if (!toasts.length) return null;
   return (
-    <div className="toasts" role="status" aria-live="polite">
+    <div className="fixed bottom-4 right-4 z-[100] flex w-80 flex-col gap-2" role="status" aria-live="polite">
       {toasts.map((toast) => (
-        <div key={toast.id} className={`toast toast--${toast.tone}`}>
+        <div
+          key={toast.id}
+          className="flex items-start gap-2 rounded-lg border bg-card p-3 text-sm shadow-lg"
+        >
           <span
-            className="dot"
-            style={{
-              marginTop: 5,
-              color:
-                toast.tone === "error"
-                  ? "var(--danger)"
-                  : toast.tone === "ok"
-                    ? "var(--ok)"
-                    : "var(--accent)",
-            }}
+            className={cn(
+              "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
+              toast.tone === "error"
+                ? "bg-destructive"
+                : toast.tone === "ok"
+                  ? "bg-emerald-500"
+                  : "bg-sky-500",
+            )}
           />
-          <span style={{ flex: 1 }}>{toast.message}</span>
-          <button className="icon-btn" aria-label="Dismiss" onClick={() => onDismiss(toast.id)}>
+          <span className="flex-1">{toast.message}</span>
+          <Button variant="ghost" size="icon" className="h-5 w-5" aria-label="Dismiss" onClick={() => onDismiss(toast.id)}>
             <X size={13} />
-          </button>
+          </Button>
         </div>
       ))}
     </div>
@@ -166,7 +104,7 @@ export function ConfirmButton({
   onConfirm,
   children,
   label,
-  className = "icon-btn icon-btn--danger",
+  className,
 }: {
   onConfirm: () => void;
   children: ReactNode;
@@ -180,12 +118,13 @@ export function ConfirmButton({
     return () => window.clearTimeout(timer);
   }, [armed]);
   return (
-    <button
+    <Button
       type="button"
+      variant={armed ? "destructive" : "ghost"}
+      size="icon"
       className={className}
       aria-label={label}
       title={armed ? "Click again to confirm" : label}
-      style={armed ? { color: "var(--danger)", background: "var(--danger-soft)" } : undefined}
       onClick={() => {
         if (armed) {
           setArmed(false);
@@ -196,6 +135,6 @@ export function ConfirmButton({
       }}
     >
       {children}
-    </button>
+    </Button>
   );
 }

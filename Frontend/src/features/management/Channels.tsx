@@ -1,38 +1,27 @@
 import { useMemo, useState } from "react";
-import {
-  Ban,
-  BellOff,
-  BellRing,
-  ChevronDown,
-  ExternalLink,
-  SlidersHorizontal,
-  Trash2,
-} from "lucide-react";
+import { Ban, BellOff, BellRing, ChevronDown, ExternalLink, SlidersHorizontal, Trash2 } from "lucide-react";
 import * as api from "../../app/api";
 import { useApp, useWorkspace } from "../../app/state";
-import { ConfirmButton, EmptyState, Switch } from "../../app/ui";
+import { ConfirmButton, EmptyState } from "../../app/ui";
+import { Switch } from "@/components/ui/switch";
 import type { YtChannel, YtKind } from "../../lib/types";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const TYPE_LABEL: Record<YtKind, string> = {
-  tracking: "Track",
-  wordscan: "WordScan",
-  playlist: "Playlist",
-  random: "Random",
+  tracking: "Track", wordscan: "WordScan", playlist: "Playlist", random: "Random",
 };
 
 const FREQUENCIES = [
-  ["day", "Daily"],
-  ["tri_day", "Every 3 days"],
-  ["week", "Weekly"],
-  ["bi_week", "Every 2 weeks"],
-  ["month", "Monthly"],
+  ["day", "Daily"], ["tri_day", "Every 3 days"], ["week", "Weekly"],
+  ["bi_week", "Every 2 weeks"], ["month", "Monthly"],
 ] as const;
 
-type Props = {
-  search: string;
-  filter: "all" | "muted" | "inactive";
-  onAdd: () => void;
-};
+type Props = { search: string; filter: "all" | "muted" | "inactive"; onAdd: () => void };
 
 export default function Channels({ search, filter, onAdd }: Props) {
   const { act } = useApp();
@@ -50,44 +39,27 @@ export default function Channels({ search, filter, onAdd }: Props) {
       })
       .filter((channel) =>
         query
-          ? `${channel.name} ${channel.url} ${channel.domain} ${channel.subdomain} ${channel.kind}`
-              .toLowerCase()
-              .includes(query)
+          ? `${channel.name} ${channel.url} ${channel.domain} ${channel.subdomain} ${channel.kind}`.toLowerCase().includes(query)
           : true,
       );
   }, [filter, search, workspace.ytChannels]);
 
   if (!workspace.ytChannels.length) {
     return (
-      <div className="table">
-        <EmptyState
-          title="No sources yet"
-          hint="Add a YouTube channel or playlist link — the backend resolves it."
-          action={
-            <button className="btn btn--primary btn--sm" onClick={onAdd}>
-              Add source
-            </button>
-          }
-        />
-      </div>
+      <EmptyState
+        title="No sources yet"
+        hint="Add a YouTube channel or playlist link — the backend resolves it."
+        action={<Button size="sm" onClick={onAdd}>Add source</Button>}
+      />
     );
   }
 
   return (
-    <div className="table">
-      <div className="table__head">
-        <span>Source</span>
-        <span>Type</span>
-        <span>Category</span>
-        <span>Notify</span>
-        <span>Status</span>
-        <span style={{ textAlign: "right" }}>Open</span>
+    <div className="overflow-hidden rounded-xl border">
+      <div className="grid grid-cols-[1fr_130px_150px_70px_110px_50px] gap-2 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground max-lg:hidden">
+        <span>Source</span><span>Type</span><span>Category</span><span>Notify</span><span>Status</span><span className="text-right">Open</span>
       </div>
-
-      {rows.length === 0 && (
-        <EmptyState title="No sources match" hint="Try clearing the search or filter." />
-      )}
-
+      {rows.length === 0 && <EmptyState title="No sources match" hint="Try clearing the search or filter." />}
       {rows.map((channel) => (
         <ChannelRow
           key={channel.id}
@@ -103,11 +75,7 @@ export default function Channels({ search, filter, onAdd }: Props) {
 }
 
 function ChannelRow({
-  channel,
-  open,
-  onToggle,
-  act,
-  workspace,
+  channel, open, onToggle, act, workspace,
 }: {
   channel: YtChannel;
   open: boolean;
@@ -119,306 +87,217 @@ function ChannelRow({
   const [rank, setRank] = useState(channel.rank ?? "week");
 
   const muted = !channel.notifyEnabled;
-  const status =
-    channel.label === "blocked" ? "Blocked" : channel.active === false ? "Paused" : "Live";
+  const status = channel.label === "blocked" ? "Blocked" : channel.active === false ? "Paused" : "Live";
+
+  const typeSelect = (kind: YtKind) =>
+    act(() =>
+      api.ytSetMode(channel.id, kind, kind === "wordscan" ? channel.words : undefined, kind === "random" ? rank : undefined),
+    );
 
   return (
     <>
-      <div className="ch-row" data-open={open}>
-        <div className="src">
+      <div className={cn(
+        "grid grid-cols-[1fr_130px_150px_70px_110px_50px] items-center gap-2 border-b px-3 py-2.5 max-lg:grid-cols-[1fr_50px]",
+        open && "bg-accent/40",
+      )}>
+        <div className="flex min-w-0 items-center gap-2.5">
           {channel.logo ? (
-            <img
-              className="src__logo"
-              src={channel.logo}
-              alt=""
-              loading="lazy"
-              referrerPolicy="no-referrer"
-            />
+            <img className="h-8 w-8 shrink-0 rounded-full object-cover" src={channel.logo} alt="" loading="lazy" referrerPolicy="no-referrer" />
           ) : (
-            <span className="src__logo src__logo--fallback">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-bold">
               {(channel.name ?? "?").slice(0, 2).toUpperCase()}
             </span>
           )}
-          <div style={{ minWidth: 0 }}>
-            <div className="src__name">{channel.name ?? "Unknown channel"}</div>
-            <div className="src__url">{channel.rssId ?? channel.url}</div>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">{channel.name ?? "Unknown channel"}</div>
+            <div className="truncate text-xs text-muted-foreground">{channel.rssId ?? channel.url}</div>
           </div>
         </div>
 
-        <div className="cell-type">
-          <select
-            className="select"
-            aria-label={`Notification type for ${channel.name}`}
-            value={channel.kind ?? "tracking"}
-            onChange={(event) => {
-              const kind = event.target.value as YtKind;
-              void act(() =>
-                api.ytSetMode(
-                  channel.id,
-                  kind,
-                  kind === "wordscan" ? channel.words : undefined,
-                  kind === "random" ? rank : undefined,
-                ),
-              );
-            }}
-            style={{ height: 28, fontSize: 11.5 }}
-          >
-            {(Object.keys(TYPE_LABEL) as YtKind[]).map((kind) => (
-              <option
-                key={kind}
-                value={kind}
-                disabled={kind === "playlist" && channel.kind !== "playlist"}
-              >
-                {TYPE_LABEL[kind]}
-              </option>
-            ))}
-          </select>
+        <div className="max-lg:hidden">
+          <Select value={channel.kind ?? "tracking"} onValueChange={(value) => void typeSelect(value as YtKind)}>
+            <SelectTrigger className="h-8" aria-label={`Notification type for ${channel.name}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(TYPE_LABEL) as YtKind[]).map((kind) => (
+                <SelectItem key={kind} value={kind} disabled={kind === "playlist" && channel.kind !== "playlist"}>
+                  {TYPE_LABEL[kind]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        <div className="cell-cat">
+        <div className="truncate text-xs max-lg:hidden">
           <b>{channel.domain}</b>
-          <i>/</i>
+          <i className="not-italic opacity-50"> / </i>
           {channel.subdomain}
         </div>
 
-        <div>
-                <Switch
+        <div className="max-lg:hidden">
+          <Switch
             checked={channel.notify}
-            label={`Notify for ${channel.name}`}
-            onChange={(next) => void act(() => api.ytSetNotify(channel.id, next))}
+            aria-label={`Notify for ${channel.name}`}
+            onCheckedChange={(next) => void act(() => api.ytSetNotify(channel.id, next))}
           />
         </div>
 
-        <div className="cell-state">
-          <span
-            className={`chip ${status === "Live" ? (muted ? "chip--warn" : "chip--ok") : status === "Paused" ? "chip--muted" : "chip--danger"}`}
-          >
-            {muted && status === "Live" ? (
-              <>
-                <BellOff size={9} /> muted
-              </>
-            ) : (
-              status
-            )}
-          </span>
+        <div className="max-lg:hidden">
+          {muted && status === "Live" ? (
+            <Badge variant="outline" className="gap-1 text-[10px]"><BellOff size={9} /> muted</Badge>
+          ) : (
+            <Badge
+              variant={status === "Live" ? "secondary" : status === "Paused" ? "outline" : "destructive"}
+              className="text-[10px]"
+            >
+              {status}
+            </Badge>
+          )}
         </div>
 
-        <div className="cell-actions">
-          <button
-            className="icon-btn"
-            aria-label={open ? "Close editor" : "Edit source"}
-            title="Edit"
-            onClick={onToggle}
-          >
+        <div className="flex justify-end">
+          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={open ? "Close editor" : "Edit source"} title="Edit" onClick={onToggle}>
             <SlidersHorizontal size={14} />
-          </button>
+          </Button>
         </div>
       </div>
 
       {open && (
-        <div className="row-editor">
-          <div className="row-editor__grid">
-            <label className="field">
-              <span>Notification type</span>
-              <select
-                className="select"
-                value={channel.kind ?? "tracking"}
-                onChange={(event) => {
-                  const kind = event.target.value as YtKind;
-                  void act(
-                    () =>
-                      api.ytSetMode(
-                        channel.id,
-                        kind,
-                        kind === "wordscan" ? channel.words : undefined,
-                        kind === "random" ? rank : undefined,
-                      ),
-                    `Type set to ${TYPE_LABEL[kind]}`,
-                  );
-                }}
-              >
-                {(Object.keys(TYPE_LABEL) as YtKind[]).map((kind) => (
-                  <option
-                    key={kind}
-                    value={kind}
-                    disabled={kind === "playlist" && channel.kind !== "playlist"}
-                  >
-                    {TYPE_LABEL[kind]}
-                  </option>
-                ))}
-              </select>
-            </label>
+        <div className="border-b bg-muted/30 px-4 py-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label>Notification type</Label>
+              <Select value={channel.kind ?? "tracking"} onValueChange={(value) => void typeSelect(value as YtKind)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(TYPE_LABEL) as YtKind[]).map((kind) => (
+                    <SelectItem key={kind} value={kind} disabled={kind === "playlist" && channel.kind !== "playlist"}>
+                      {TYPE_LABEL[kind]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
             {channel.kind === "wordscan" && (
-              <label className="field">
-                <span>WordScan terms</span>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <input
-                    className="input"
-                    value={words}
-                    onChange={(event) => setWords(event.target.value)}
-                    placeholder="comma, separated"
-                  />
-                  <button
-                    className="btn btn--sm"
+              <div className="space-y-1.5">
+                <Label>WordScan terms</Label>
+                <div className="flex gap-2">
+                  <Input value={words} onChange={(event) => setWords(event.target.value)} placeholder="comma, separated" />
+                  <Button
+                    size="sm"
                     onClick={() =>
                       void act(
-                        () =>
-                          api.ytSetMode(
-                            channel.id,
-                            "wordscan",
-                            words
-                              .split(",")
-                              .map((word) => word.trim())
-                              .filter(Boolean),
-                          ),
+                        () => api.ytSetMode(channel.id, "wordscan", words.split(",").map((word) => word.trim()).filter(Boolean)),
                         "WordScan terms saved",
                       )
                     }
                   >
                     Apply
-                  </button>
+                  </Button>
                 </div>
-              </label>
+              </div>
             )}
 
             {channel.kind === "random" && (
-              <label className="field">
-                <span>Frequency</span>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <select
-                    className="select"
-                    value={rank}
-                    onChange={(event) => setRank(event.target.value)}
-                  >
-                    {FREQUENCIES.map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    className="btn btn--sm"
-                    onClick={() =>
-                      void act(
-                        () => api.ytSetMode(channel.id, "random", undefined, rank),
-                        "Frequency saved",
-                      )
-                    }
-                  >
+              <div className="space-y-1.5">
+                <Label>Frequency</Label>
+                <div className="flex gap-2">
+                  <Select value={rank} onValueChange={setRank}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {FREQUENCIES.map(([value, label]) => (
+                        <SelectItem key={value} value={value}>{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" onClick={() => void act(() => api.ytSetMode(channel.id, "random", undefined, rank), "Frequency saved")}>
                     Apply
-                  </button>
+                  </Button>
                 </div>
-              </label>
+              </div>
             )}
 
-            <label className="field">
-              <span>Attach to domain</span>
-              <select
-                className="select"
-                value={channel.subdomainId ?? ""}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  void act(
-                    () => api.ytAssignChannel(channel.id, value ? Number(value) : null),
-                    "Category attached",
-                  );
-                }}
-              >
-                <option value="">Uncategorized</option>
-                {workspace.ytDomains.map((domain) => (
-                  <optgroup key={domain.id} label={domain.name}>
-                    {domain.subdomains.map((subdomain) => (
-                      <option key={subdomain.id} value={subdomain.id}>
-                        {domain.name} / {subdomain.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-            </label>
-
-            <label className="field">
-              <span>Label</span>
-              <select
-                className="select"
-                value={channel.label}
-                onChange={(event) =>
-                  void act(() =>
-                    api.ytSetLabel(
-                      channel.id,
-                      event.target.value,
-                      channel.labelReason ?? undefined,
-                    ),
-                  )
+            <div className="space-y-1.5">
+              <Label>Attach to domain</Label>
+              <Select
+                value={channel.subdomainId ? String(channel.subdomainId) : "none"}
+                onValueChange={(value) =>
+                  void act(() => api.ytAssignChannel(channel.id, value === "none" ? null : Number(value)), "Category attached")
                 }
               >
-                <option value="none">None</option>
-                <option value="reserved">Reserved (paused)</option>
-                <option value="blocked">Blocked</option>
-              </select>
-            </label>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Uncategorized</SelectItem>
+                  {workspace.ytDomains.flatMap((domain) =>
+                    domain.subdomains.map((subdomain) => (
+                      <SelectItem key={subdomain.id} value={String(subdomain.id)}>
+                        {domain.name} / {subdomain.name}
+                      </SelectItem>
+                    )),
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
 
-            <div className="field">
-              <span>Channel state</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, height: 34 }}>
+            <div className="space-y-1.5">
+              <Label>Label</Label>
+              <Select
+                value={channel.label}
+                onValueChange={(value) => void act(() => api.ytSetLabel(channel.id, value, channel.labelReason ?? undefined))}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="reserved">Reserved (paused)</SelectItem>
+                  <SelectItem value="blocked">Blocked</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Channel state</Label>
+              <div className="flex h-9 items-center gap-2">
                 <Switch
                   checked={channel.active !== false}
-                  label="Channel active"
-                  onChange={(next) => void act(() => api.ytSetActive(channel.id, next))}
+                  aria-label="Channel active"
+                  onCheckedChange={(next) => void act(() => api.ytSetActive(channel.id, next))}
                 />
-                <span style={{ fontSize: 11.5, color: "var(--faint)" }}>
-                  {channel.active === false ? "Paused" : "Receiving"}
-                </span>
+                <span className="text-xs text-muted-foreground">{channel.active === false ? "Paused" : "Receiving"}</span>
               </div>
             </div>
           </div>
 
-          <div className="row-editor__foot">
-            <span className="chip chip--muted">
-              <span className="dot" /> effective{" "}
-              {channel.notifyEnabled ? (
-                <BellRing size={9} style={{ color: "var(--ok)" }} />
-              ) : (
-                <BellOff size={9} />
-              )}
-              {channel.notifyEnabled ? "on" : "off"}
+          <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-3">
+            <Badge variant="outline" className="gap-1 text-[10px]">
+              {channel.notifyEnabled ? <BellRing size={9} className="text-emerald-500" /> : <BellOff size={9} />}
+              effective {channel.notifyEnabled ? "on" : "off"}
+            </Badge>
+            <span className="text-xs text-muted-foreground">
+              {channel.notifyEnabled ? "Delivered through the backend message lane." : "Any parent scope or this channel is muted."}
             </span>
-            <span className="faint" style={{ fontSize: 11 }}>
-              {channel.notifyEnabled
-                ? "Delivered through the backend message lane."
-                : "Any parent scope or this channel is muted."}
-            </span>
-            <span className="spacer" />
+            <span className="grow" />
             {channel.url && (
-              <a
-                className="btn btn--sm btn--ghost"
-                href={channel.url}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <ExternalLink size={12} /> Open
-              </a>
+              <Button variant="ghost" size="sm" asChild>
+                <a href={channel.url} target="_blank" rel="noreferrer"><ExternalLink size={12} /> Open</a>
+              </Button>
             )}
             {channel.label !== "blocked" && (
-              <button
-                className="btn btn--sm btn--danger"
-                onClick={() =>
-                  void act(
-                    () => api.ytSetLabel(channel.id, "blocked", "Blocked from management"),
-                    "Source blocked",
-                  )
-                }
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => void act(() => api.ytSetLabel(channel.id, "blocked", "Blocked from management"), "Source blocked")}
               >
                 <Ban size={12} /> Block
-              </button>
+              </Button>
             )}
             <ConfirmButton
               label={`Delete ${channel.name}`}
-              className="btn btn--sm btn--danger"
+              className="h-8 w-8"
               onConfirm={() => void act(() => api.ytDeleteChannel(channel.id), "Source deleted")}
             >
-              <Trash2 size={12} /> Delete
+              <Trash2 size={12} />
             </ConfirmButton>
           </div>
         </div>
