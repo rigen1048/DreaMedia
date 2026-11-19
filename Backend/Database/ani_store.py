@@ -62,6 +62,14 @@ class AniStore:
                     anime_type, subdomain_id,
                 )
                 await self._upsert_seasons(con, key, entry_id, payload)
+                if list_kind == "up_to_date":
+                    # "Watched everything released" (cleanup #1 example):
+                    # every season with aired content starts watched.
+                    await con.execute(
+                        "UPDATE ani_seasons SET watched = TRUE "
+                        "WHERE entry_id = $1 AND episodes_aired > 0",
+                        entry_id,
+                    )
         return Success(entry_id)
 
     async def _upsert_seasons(self, con, key: bytes, entry_id: int, payload: FetchPayload) -> None:
@@ -94,6 +102,34 @@ class AniStore:
                 "INSERT INTO ani_schedule (entry_id, season_no, next_check_ts) "
                 "VALUES ($1, $2, NULL) ON CONFLICT DO NOTHING",
                 entry_id, season_no,
+            )
+            # Global catalog cache (cleanup #1): public AniList facts, one row
+            # per anilist_id, shared by all users — per-user snapshots stay in
+            # ani_seasons so change detection remains per-user.
+            await con.execute(
+                """
+                INSERT INTO ani_metadata
+                    (anilist_id, season_no, title, format, episodes_total,
+                     episodes_aired, status, start_date, release_date,
+                     next_airing_at, next_airing_ep, updated_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now())
+                ON CONFLICT (anilist_id) DO UPDATE SET
+                    season_no = EXCLUDED.season_no, title = EXCLUDED.title,
+                    format = EXCLUDED.format,
+                    episodes_total = EXCLUDED.episodes_total,
+                    episodes_aired = EXCLUDED.episodes_aired,
+                    status = EXCLUDED.status, start_date = EXCLUDED.start_date,
+                    release_date = EXCLUDED.release_date,
+                    next_airing_at = EXCLUDED.next_airing_at,
+                    next_airing_ep = EXCLUDED.next_airing_ep,
+                    updated_at = now()
+                """,
+                int(video["id"]), season_no, video.get("title"),
+                video.get("format"), video.get("episodes"), _aired(video),
+                video.get("status"), video.get("published") or None,
+                None,  # release_date: set by pipeline release events
+                (video.get("next_airing") or {}).get("airingAt"),
+                (video.get("next_airing") or {}).get("episode"),
             )
 
     async def refresh_seasons(self, user_id: int, entry_id: int, payload: FetchPayload) -> None:
@@ -994,6 +1030,106 @@ class AniStore:
                     entry_id, user_id,
                 )
             )
+
+    # ---------------- Halfway-watch todo (cleanup #2) ----------------
+    async def todo_add(
+        self,
+        user_id: int,
+        *,
+        season_no: int,
+        episode: int,
+        position_seconds: int = 0,
+        entry_id: Optional[int] = None,
+        title: Optional[str] = None,
+    ) -> Result[int, str]:
+        """"AoT S3 E5 at 7:27" — manual halfway-watch bookmark."""
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        if entry_id is None and not title:
+            return Failure("title required for untracked entries")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            if entry_id is not None:
+                owner = await con.fetchval(
+                    "SELECT user_id FROM ani_entries WHERE id = $1", entry_id
+                )
+                if owner != user_id:
+                    return Failure("entry not found")
+            todo_id = await con.fetchval(
+                "INSERT INTO ani_todo (user_id, entry_id, title_enc, season_no, "
+                "episode, position_seconds) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
+                user_id, entry_id, encrypt(key, title) if title else None,
+                season_no, episode, position_seconds,
+            )
+        return Success(todo_id)
+
+    async def todo_list(self, user_id: int) -> List[Dict[str, Any]]:
+        key = await vault.get(user_id)
+        if key is None:
+            return []
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            rows = await con.fetch(
+                "SELECT t.id, t.entry_id, t.title_enc, e.title_enc AS entry_title_enc, "
+                "t.season_no, t.episode, t.position_seconds, t.done, t.created_at "
+                "FROM ani_todo t LEFT JOIN ani_entries e ON e.id = t.entry_id "
+                "WHERE t.user_id = $1 ORDER BY t.done, t.created_at DESC",
+                user_id,
+            )
+        return [
+            {
+                "id": r["id"], "entry_id": r["entry_id"],
+                "title": decrypt(key, r["entry_title_enc"] or r["title_enc"]),
+                "season_no": r["season_no"], "episode": r["episode"],
+                "position_seconds": r["position_seconds"], "done": r["done"],
+                "created_at": int(r["created_at"].timestamp()),
+            }
+            for r in rows
+        ]
+
+    async def todo_update(
+        self, user_id: int, todo_id: int, *, done: Optional[bool] = None,
+        episode: Optional[int] = None, position_seconds: Optional[int] = None,
+    ) -> Result[str, str]:
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            owner = await con.fetchval("SELECT user_id FROM ani_todo WHERE id = $1", todo_id)
+            if owner != user_id:
+                return Failure("todo not found")
+            await con.execute(
+                "UPDATE ani_todo SET done = COALESCE($2, done), "
+                "episode = COALESCE($3, episode), "
+                "position_seconds = COALESCE($4, position_seconds) WHERE id = $1",
+                todo_id, done, episode, position_seconds,
+            )
+        return Success("ok")
+
+    async def todo_delete(self, user_id: int, todo_id: int) -> Result[str, str]:
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "DELETE FROM ani_todo WHERE id = $1 AND user_id = $2", todo_id, user_id
+            )
+        return Success("ok") if result.endswith("1") else Failure("todo not found")
+
+    # ---------------- Blocked domain/subdomain (cleanup #4) ----------------
+    async def set_blocked_category(
+        self, user_id: int, entry_id: int,
+        domain: Optional[str], subdomain: Optional[str],
+    ) -> Result[str, str]:
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "UPDATE ani_entries SET blocked_domain_enc = $3, blocked_subdomain_enc = $4 "
+                "WHERE id = $1 AND user_id = $2",
+                entry_id, user_id, encrypt(key, domain), encrypt(key, subdomain),
+            )
+        return Success("ok") if result.endswith("1") else Failure("entry not found")
+
 
 def _aired(video: Dict[str, Any]) -> int:
     from Orchestrator.Ani.Filter.states import episodes_aired
