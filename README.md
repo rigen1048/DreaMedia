@@ -134,7 +134,9 @@ release, `S`/`E`, progress, airing countdown) plus list buckets, watchlist
 certainty, notify switches and per-season state (with each season's date), and
 a blocked/cleanup lane.
 
-Tracking an anime has two clear entry modes: **Watching** and **Watchlist**.
+Tracking an anime has three clear entry modes: **Watching**, **UpToDate**, and
+**Watchlist**. UpToDate tracks a show from its current AniList state and turns
+on release notifications automatically.
 Watching records a **Watch till** cursor (season, episode and time in seconds).
 Watchlist entries use one of **Not yet**, **Confirmed**, **Completed** (with an
 optional completed-through season), or **Blocked**. The backend still decides
@@ -230,12 +232,12 @@ show the page.
 ## Checks
 
 ```bash
-# 49 browser checks against the running stack (real UI, real GraphQL),
+# 50 browser checks against the running stack (real UI, real GraphQL),
 # including a real backup → upload → destructive restore round-trip
 python3 qa/e2e.py
 python3 qa/shots.py        # regenerate the screenshots in docs/screenshots
 
-# 75 backend tests: units, API/GraphQL integration, black-box scenarios, admin
+# 76 backend tests: units, API/GraphQL integration, black-box scenarios, admin
 cd Backend && DREAMEDIA_PG_PASSWORD=... .venv/bin/python -m pytest -q
 cd ../Frontend && npm run check && npm run build
 ```

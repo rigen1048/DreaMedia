@@ -302,10 +302,16 @@ async def main() -> None:
         await page.get_by_role("button", name="Track anime").click()
         await page.wait_for_timeout(500)
         ok(
-            "track dialog offers only Watching or Watchlist",
+            "track dialog offers Watching, UpToDate, or Watchlist",
             await page.locator(".modal .chipbtn", has_text="Watching").count() == 1
+            and await page.locator(".modal .chipbtn", has_text="UpToDate").count() == 1
             and await page.locator(".modal .chipbtn", has_text="Watchlist").count() == 1
-            and await page.locator(".modal .chipbtn").count() == 2,
+            and await page.locator(".modal .chipbtn").count() == 3,
+        )
+        await page.get_by_role("button", name="UpToDate", exact=True).click()
+        ok(
+            "up to date has no manual cursor fields",
+            await page.locator(".modal input[type=number]").count() == 0,
         )
         await page.get_by_role("button", name="Watchlist", exact=True).click()
         ok(

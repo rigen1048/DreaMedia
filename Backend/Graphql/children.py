@@ -681,7 +681,7 @@ class AniMutation:
         subdomain_id = None
         if domain and subdomain:
             subdomain_id = await _ani.ensure_category(user_id, domain, subdomain)
-        return int(
+        entry_id = int(
             _unwrap(
                 await _ani.add_entry(
                     user_id, int(first["id"]), title, first.get("thumbnail"), payload,
@@ -690,6 +690,9 @@ class AniMutation:
                 )
             )
         )
+        if list_kind == "up_to_date":
+            _unwrap(await _ani.update_entry(user_id, entry_id, notify_release=True))
+        return entry_id
 
     @strawberry.field
     async def ani_update_entry(

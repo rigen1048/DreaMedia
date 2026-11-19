@@ -193,7 +193,7 @@ export function AddAnimeDialog({ onClose }: { onClose: () => void }) {
   const { notify, refresh } = useApp();
   const workspace = useWorkspace();
   const [title, setTitle] = useState("");
-  const [list, setList] = useState<"watching" | "watchlist">("watching");
+  const [list, setList] = useState<"watching" | "up_to_date" | "watchlist">("watching");
   const [domain, setDomain] = useState("");
   const [subdomain, setSubdomain] = useState("");
   const [watchlistState, setWatchlistState] = useState<"not_yet" | "confirmed" | "completed" | "blocked">("not_yet");
@@ -222,6 +222,8 @@ export function AddAnimeDialog({ onClose }: { onClose: () => void }) {
           Math.max(0, watchTillTime),
         );
         message = `Watching — till S${Math.max(1, watchTillSeason)} E${Math.max(0, watchTillEpisode)}`;
+      } else if (list === "up_to_date") {
+        message = "UpToDate — release notifications enabled";
       } else if (watchlistState === "completed") {
         await api.aniUpdateEntry(created.aniTrack, { label: "completed" });
         await api.aniSetProgress(created.aniTrack, Math.max(1, completedSeason), 0);
@@ -267,6 +269,7 @@ export function AddAnimeDialog({ onClose }: { onClose: () => void }) {
           <div className="filterbar">
             {[
               ["watching", "Watching"],
+              ["up_to_date", "UpToDate"],
               ["watchlist", "Watchlist"],
             ].map(([value, label]) => (
               <button

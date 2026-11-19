@@ -346,8 +346,12 @@ def anilist_mock(state: dict):
     return mock
 
 
-async def track_anime(client: AsyncClient) -> int:
-    data = await gql(client, 'mutation{ aniTrack(title:"Scenario Anime") }')
+async def track_anime(client: AsyncClient, list_kind: str = "watching") -> int:
+    data = await gql(
+        client,
+        'mutation($list:String!){ aniTrack(title:"Scenario Anime", listKind:$list) }',
+        {"list": list_kind},
+    )
     return data["aniTrack"]
 
 
@@ -435,3 +439,17 @@ async def test_episode_count_increase_means_already_released(api):
     assert '"episode": 3' in released[0]["payload"].replace(" ", " "), released[0]["payload"]
     assert released[0]["bucket"] == "today"
     assert released[0]["label"] == "Episode released"
+
+
+# --------------------------------------------------------------------------
+# ANI-4  UpToDate tracking is persisted and enables release notifications
+# --------------------------------------------------------------------------
+async def test_up_to_date_tracking_enables_release_notifications(api):
+    state = {"media": media(published=iso(0), episode=3, airing_at=int(time.time()) + 3 * 86400)}
+    with anilist_mock(state):
+        entry_id = await track_anime(api, "up_to_date")
+
+    data = await gql(api, "{ aniEntries(includeBlocked:true) { id list notifyRelease } }")
+    entry = next(item for item in data["aniEntries"] if item["id"] == entry_id)
+    assert entry["list"] == "up_to_date"
+    assert entry["notifyRelease"] is True

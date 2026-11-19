@@ -9,6 +9,7 @@ import { ProgressEditor } from "./ProgressEditor";
 
 const LISTS: { value: AniList; label: string }[] = [
   { value: "watching", label: "Watching" },
+  { value: "up_to_date", label: "UpToDate" },
   { value: "next_sequel", label: "Next sequel" },
   { value: "new_anime", label: "New anime" },
   { value: "watchlist", label: "Watchlist" },
@@ -17,6 +18,7 @@ const LISTS: { value: AniList; label: string }[] = [
 const FILTERS = [
   { value: "all", label: "All" },
   { value: "watching", label: "Watching" },
+  { value: "up_to_date", label: "UpToDate" },
   { value: "next_sequel", label: "Next sequel" },
   { value: "new_anime", label: "New anime" },
   { value: "watchlist", label: "Watchlist" },

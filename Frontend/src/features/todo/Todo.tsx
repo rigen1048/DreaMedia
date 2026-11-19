@@ -50,9 +50,10 @@ export default function Todo() {
         .sort((a, b) => {
           const rank: Record<string, number> = {
             watching: 0,
-            next_sequel: 1,
-            new_anime: 2,
-            watchlist: 3,
+            up_to_date: 1,
+            next_sequel: 2,
+            new_anime: 3,
+            watchlist: 4,
           };
           const byList = (rank[a.list] ?? 9) - (rank[b.list] ?? 9);
           if (byList !== 0) return byList;
@@ -68,6 +69,7 @@ export default function Todo() {
     return {
       all: all.length,
       watching: all.filter((entry) => entry.list === "watching").length,
+      up_to_date: all.filter((entry) => entry.list === "up_to_date").length,
       next_sequel: all.filter((entry) => entry.list === "next_sequel").length,
       new_anime: all.filter((entry) => entry.list === "new_anime").length,
       watchlist: all.filter((entry) => entry.list === "watchlist").length,
@@ -152,6 +154,7 @@ export default function Todo() {
           {[
             ["all", "All"],
             ["watching", "Watching"],
+            ["up_to_date", "UpToDate"],
             ["next_sequel", "Next sequel"],
             ["new_anime", "New anime"],
             ["watchlist", "Watchlist"],
