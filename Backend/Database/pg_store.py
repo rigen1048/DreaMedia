@@ -437,6 +437,7 @@ class PgStore:
                 LEFT JOIN yt_subdomains s ON s.id = c.subdomain_id
                 LEFT JOIN yt_domains d ON d.id = s.domain_id
                 WHERE c.user_id = $1 AND c.label != 'blocked'   -- D22
+                  AND v.trashed_at IS NULL                      -- D57 trashbin
                 ORDER BY v.published_at DESC NULLS LAST
                 LIMIT $2
                 """,
@@ -763,6 +764,79 @@ class PgStore:
                 WHERE c.id = v.channel_id AND c.user_id = $1 AND v.id = ANY($2)
                 """,
                 user_id, video_ids, seen,
+            )
+        return int(result.split()[-1])
+
+    # ---------------- Trashbin (D57) ----------------
+    async def trash_videos(self, user_id: int, video_ids: List[int]) -> int:
+        """Opening a notification trashes it (seen + 24h purge window)."""
+        if not video_ids:
+            return 0
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                """
+                UPDATE yt_videos v SET seen = TRUE, trashed_at = now()
+                FROM yt_channels c
+                WHERE c.id = v.channel_id AND c.user_id = $1 AND v.id = ANY($2)
+                """,
+                user_id, video_ids,
+            )
+        return int(result.split()[-1])
+
+    async def restore_videos(self, user_id: int, video_ids: List[int]) -> int:
+        if not video_ids:
+            return 0
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                """
+                UPDATE yt_videos v SET trashed_at = NULL
+                FROM yt_channels c
+                WHERE c.id = v.channel_id AND c.user_id = $1 AND v.id = ANY($2)
+                """,
+                user_id, video_ids,
+            )
+        return int(result.split()[-1])
+
+    async def trash_feed(self, user_id: int, limit: int = 200) -> List[Dict[str, Any]]:
+        """The trashbin view — same shape as feed(), trashed rows only."""
+        key = await vault.get(user_id)
+        if key is None:
+            return []
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            rows = await con.fetch(
+                """
+                SELECT v.id, v.channel_id, v.title_enc, v.url_enc, v.thumbnail_enc,
+                       v.published_at, v.seen, v.trashed_at,
+                       c.name_enc AS channel_enc
+                FROM yt_videos v
+                JOIN yt_channels c ON c.id = v.channel_id
+                WHERE c.user_id = $1 AND v.trashed_at IS NOT NULL
+                ORDER BY v.trashed_at DESC
+                LIMIT $2
+                """,
+                user_id, limit,
+            )
+        return [
+            {
+                "id": r["id"], "channel_id": r["channel_id"],
+                "title": decrypt(key, r["title_enc"]), "url": decrypt(key, r["url_enc"]),
+                "thumbnail": decrypt(key, r["thumbnail_enc"]),
+                "published_at": r["published_at"], "seen": r["seen"],
+                "trashed_at": int(r["trashed_at"].timestamp()),
+                "channel": decrypt(key, r["channel_enc"]),
+            }
+            for r in rows
+        ]
+
+    async def purge_trash(self, older_than_seconds: int = 86400) -> int:
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            result = await con.execute(
+                "DELETE FROM yt_videos WHERE trashed_at < now() - make_interval(secs => $1)",
+                older_than_seconds,
             )
         return int(result.split()[-1])
 

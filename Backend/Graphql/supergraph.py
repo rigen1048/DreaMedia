@@ -16,6 +16,7 @@ from strawberry.types import Info
 
 from Auth import auth
 from Database.pg_store import PgStore
+from Graphql.account import AccountMutation, AccountQuery
 from Graphql.admin import AdminMutation, AdminQuery
 from Graphql.children import AniMutation, AniQuery, BackendMessage, Viewer, YtMutation, YtQuery
 
@@ -128,12 +129,12 @@ class AuthMutation:
 
 
 @strawberry.type
-class Query(YtQuery, AniQuery, AuthQuery, AdminQuery):
+class Query(YtQuery, AniQuery, AuthQuery, AdminQuery, AccountQuery):
     pass
 
 
 @strawberry.type
-class Mutation(YtMutation, AniMutation, AuthMutation, AdminMutation):
+class Mutation(YtMutation, AniMutation, AuthMutation, AdminMutation, AccountMutation):
     pass
 
 

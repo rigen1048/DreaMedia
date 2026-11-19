@@ -170,3 +170,25 @@ export type BellMessage = {
   payload?: Record<string, unknown>;
   seen: boolean;
 };
+
+export type YtTrashItem = {
+  id: number;
+  title: string | null;
+  url: string | null;
+  thumbnail: string | null;
+  channel: string | null;
+  publishedAt: number | null;
+  trashedAt: number;
+};
+
+export type AniTrashItem = {
+  id: number;
+  entryId: number;
+  seasonNo: number | null;
+  kind: string;
+  title: string | null;
+  cover: string | null;
+  payload: string;
+  createdAt: string;
+  trashedAt: number;
+};

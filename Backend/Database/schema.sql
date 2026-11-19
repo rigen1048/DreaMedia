@@ -298,6 +298,15 @@ END $$;
 
 ALTER TABLE yt_randomsubs ADD COLUMN IF NOT EXISTS claimed_at BIGINT;
 
+-- D55: per-user extension token (hash only; the raw token is shown once).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS ext_token_hash BYTEA;
+
+-- D57 trashbin: opening a notification trashes it; purge after 24h.
+ALTER TABLE yt_videos  ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ;
+ALTER TABLE ani_events ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_yt_videos_trash ON yt_videos(trashed_at) WHERE trashed_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_ani_events_trash ON ani_events(trashed_at) WHERE trashed_at IS NOT NULL;
+
 -- Cleanup #4: blocked/reserved channels + entries carry their OWN
 -- domain/subdomain (separate from feed categories) + the text reason.
 ALTER TABLE yt_channels  ADD COLUMN IF NOT EXISTS blocked_domain_enc BYTEA;

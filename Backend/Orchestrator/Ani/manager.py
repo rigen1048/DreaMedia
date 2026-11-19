@@ -24,6 +24,9 @@ async def run_once(store: AniStore) -> int:
     if restore_in_progress():
         log.warning("restore in progress — ani manager idling this pass")
         return 0
+    purged = await store.purge_trash()  # D57: 24h trashbin window
+    if purged:
+        log.info("trashbin: purged %s ani event(s)", purged)
     due = await store.claim_due()
     if not due:
         return 0
