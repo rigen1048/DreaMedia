@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS ani_entries (
     cover_enc     BYTEA,
     label         TEXT NOT NULL DEFAULT 'none' CHECK (label IN ('none', 'completed', 'blocked')),
     label_reason_enc BYTEA,
-    list          TEXT NOT NULL DEFAULT 'watching' CHECK (list IN ('watchlist', 'confirmed', 'watching')),
+    list          TEXT NOT NULL DEFAULT 'watching' CHECK (list IN ('watchlist', 'confirmed', 'watching', 'up_to_date')),
     notify_release BOOLEAN NOT NULL DEFAULT FALSE,  -- D20
     active        BOOLEAN NOT NULL DEFAULT TRUE,    -- "watched S1, loved it, not continuing"
     -- D44 linear cursor (fragmented watching unsupported by design):
@@ -250,14 +250,14 @@ ALTER TABLE ani_entries ADD COLUMN IF NOT EXISTS airing_time TEXT;
 -- Watchlist split: watchlist rows carry confirmed | maybe.
 ALTER TABLE ani_entries ADD COLUMN IF NOT EXISTS watch_state TEXT;
 
--- List buckets: watching | next_sequel | new_anime | watchlist.
+-- List buckets: watching | up_to_date | next_sequel | new_anime | watchlist.
 DO $$
 BEGIN
     ALTER TABLE ani_entries DROP CONSTRAINT IF EXISTS ani_entries_list_check;
     ALTER TABLE ani_entries DROP CONSTRAINT IF EXISTS ani_entries_watch_state_check;
     ALTER TABLE ani_entries
         ADD CONSTRAINT ani_entries_list_check
-        CHECK (list IN ('watching', 'next_sequel', 'new_anime', 'watchlist', 'confirmed', 'maybe'));
+        CHECK (list IN ('watching', 'up_to_date', 'next_sequel', 'new_anime', 'watchlist', 'confirmed', 'maybe'));
     ALTER TABLE ani_entries
         ADD CONSTRAINT ani_entries_watch_state_check
         CHECK (watch_state IS NULL OR watch_state IN ('confirmed', 'maybe'));

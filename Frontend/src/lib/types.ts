@@ -90,7 +90,7 @@ export type AniSeason = {
   nextAiringEp: number | null;
 };
 
-export type AniList = "watching" | "next_sequel" | "new_anime" | "watchlist";
+export type AniList = "watching" | "up_to_date" | "next_sequel" | "new_anime" | "watchlist";
 export type WatchState = "confirmed" | "maybe" | null;
 
 export type AniEntry = {
