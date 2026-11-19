@@ -62,6 +62,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="DreaMedia", version="0.1.0", lifespan=lifespan)
 
+# Extension CORS (D55): the extension's background worker fetches from
+# chrome-extension:// / moz-extension:// origins. Token-authed, /ext-only is
+# not expressible in one CORSMiddleware, so the origin regex is the guard.
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^(chrome-extension|moz-extension|safari-web-extension)://.*$",
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-DreaMedia-Token"],
+    allow_credentials=False,
+    max_age=600,
+)
+
 
 @app.middleware("http")
 async def _session_cookie(request, call_next):
