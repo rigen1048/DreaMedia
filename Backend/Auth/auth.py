@@ -29,8 +29,9 @@ _hasher = PasswordHasher()  # argon2id, OWASP defaults
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_-]{3,32}$")
 MIN_PASSWORD_LEN = 6
 
-_sessions: dict[str, tuple[int, float]] = {}  # token -> (user_id, expires_at)
-_sessions_lock = asyncio.Lock()
+# Phase 1 (multi-worker): sessions live in Postgres (sessions table), not
+# process memory — any worker authenticates any request, and a backend
+# restart no longer logs everyone out. The vault stays in-memory (D9).
 
 
 def _validate(username: str, password: str) -> str | None:
@@ -42,35 +43,49 @@ def _validate(username: str, password: str) -> str | None:
 
 
 async def _issue_session(user_id: int) -> str:
+    from Database.db import get_pool
+
     token = secrets.token_urlsafe(32)
-    async with _sessions_lock:
-        _sessions[token] = (user_id, time.time() + SESSION_TTL_SECONDS)
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        await con.execute(
+            "INSERT INTO sessions (token, user_id, expires_at) "
+            "VALUES ($1, $2, now() + make_interval(secs => $3))",
+            token, user_id, SESSION_TTL_SECONDS,
+        )
     return token
 
 
 async def resolve_session(token: str) -> int | None:
-    """Token → user_id with sliding TTL, or None."""
-    async with _sessions_lock:
-        entry = _sessions.get(token)
-        if not entry:
-            return None
-        user_id, expires = entry
-        if time.time() > expires:
-            del _sessions[token]
-            return None
-        _sessions[token] = (user_id, time.time() + SESSION_TTL_SECONDS)
+    """Token → user_id with sliding TTL (DB-backed, worker-agnostic)."""
+    from Database.db import get_pool
+
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        user_id = await con.fetchval(
+            "UPDATE sessions SET expires_at = now() + make_interval(secs => $2) "
+            "WHERE token = $1 AND expires_at > now() RETURNING user_id",
+            token, SESSION_TTL_SECONDS,
+        )
+        if user_id is None:
+            await con.execute("DELETE FROM sessions WHERE token = $1", token)
     return user_id
 
 
 async def logout(token: str) -> None:
-    async with _sessions_lock:
-        entry = _sessions.pop(token, None)
-    if entry:
-        # If the user has no other live session, lock their vault key.
-        async with _sessions_lock:
-            still_in = any(uid == entry[0] for uid, _ in _sessions.values())
-        if not still_in:
-            await vault.drop(entry[0])
+    from Database.db import get_pool
+
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        user_id = await con.fetchval(
+            "DELETE FROM sessions WHERE token = $1 RETURNING user_id", token
+        )
+        if user_id is not None:
+            still_in = await con.fetchval(
+                "SELECT 1 FROM sessions WHERE user_id = $1 LIMIT 1", user_id
+            )
+            if not still_in:
+                await vault.drop(user_id)
 
 
 async def drop_all_sessions() -> int:
@@ -80,24 +95,28 @@ async def drop_all_sessions() -> int:
     different world, so cookies issued against the old one must not survive.
     The admin who ran the restore is logged out too — deliberately.
     """
-    async with _sessions_lock:
-        count = len(_sessions)
-        user_ids = {uid for uid, _ in _sessions.values()}
-        _sessions.clear()
-    for user_id in user_ids:
-        await vault.drop(user_id)
-    return count
+    from Database.db import get_pool
+
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        rows = await con.fetch("DELETE FROM sessions RETURNING user_id")
+    for row in {r["user_id"] for r in rows}:
+        await vault.drop(row)
+    return len(rows)
 
 
 async def drop_user_sessions(user_id: int) -> int:
     """Invalidate one user's sessions (role change, password reset, delete)."""
-    async with _sessions_lock:
-        tokens = [t for t, (uid, _) in _sessions.items() if uid == user_id]
-        for token in tokens:
-            _sessions.pop(token, None)
-    if tokens:
+    from Database.db import get_pool
+
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        rows = await con.fetch(
+            "DELETE FROM sessions WHERE user_id = $1 RETURNING token", user_id
+        )
+    if rows:
         await vault.drop(user_id)
-    return len(tokens)
+    return len(rows)
 
 
 def hash_password(password: str) -> str:

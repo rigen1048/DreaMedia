@@ -298,6 +298,17 @@ END $$;
 
 ALTER TABLE yt_randomsubs ADD COLUMN IF NOT EXISTS claimed_at BIGINT;
 
+-- Phase 1 (multi-worker): sessions live in the DB, not process memory.
+-- Any worker can authenticate any request; a backend restart no longer
+-- logs everyone out. (The vault stays in-memory by design — D9.)
+CREATE TABLE IF NOT EXISTS sessions (
+    token       TEXT PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at  TIMESTAMPTZ NOT NULL DEFAULT now() + INTERVAL '30 days'
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
 -- D55: per-user extension token (hash only; the raw token is shown once).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS ext_token_hash BYTEA;
 

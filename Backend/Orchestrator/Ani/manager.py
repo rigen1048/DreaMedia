@@ -12,6 +12,7 @@ import time
 from returns.result import Failure
 
 from Admin.restore import restore_in_progress
+from Database.leader import is_leader
 
 from Admin import settings
 from Config.Hardcoded.limits import MANAGER_IDLE_SLEEP_SECONDS, WORKING_STALE_SECONDS
@@ -21,6 +22,8 @@ from Utility.logs import log
 
 
 async def run_once(store: AniStore) -> int:
+    if not await is_leader():
+        return 0  # Phase 1.3: another process runs the managers
     if restore_in_progress():
         log.warning("restore in progress — ani manager idling this pass")
         return 0

@@ -18,6 +18,7 @@ _DEFAULTS = {
     "backup_keep_latest": ("BACKUP_KEEP_LATEST", "5"),
     "backup_frequency_hours": ("BACKUP_FREQUENCY_HOURS", "24"),
     "stale_claim_seconds": ("STALE_CLAIM_SECONDS", "3600"),
+    "restore_active": (None, "0"),  # Phase 1.2: the restore gate, DB-backed
 }
 
 # key -> (type, floor) — floors are the untouchable part of D2.
@@ -39,7 +40,7 @@ async def seed_defaults() -> None:
             await con.execute(
                 "INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING",
                 key,
-                os.environ.get(env_var, fallback),
+                (os.environ.get(env_var) if env_var else None) or fallback,
             )
 
 
