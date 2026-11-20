@@ -8,7 +8,7 @@ from Auth import auth
 from Database import db
 from Database.ani_store import AniStore
 from Database.pg_store import PgStore, PgSubscription
-from Extension import live
+from Extension import anchor, live
 from Extension.store import ExtDomainStore
 from Orchestrator.Ani.Fetch.ani_track import ani_fetch
 from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
@@ -297,6 +297,131 @@ async def test_live_sessions_merge_and_crash_sweep():
     assert await _cursor() == (1, 7, 120)
 
     await _store.delete_entry(user_id, entry_id)
+
+
+# ---------- extension v2 phase 3: anchor detection ----------
+
+def _entry(entry_id, titles, cursor=(None, None), seasons=()):
+    """titles: plain strings (season unknown) or (title, season_no) tuples."""
+    normed = []
+    for i, t in enumerate(titles):
+        if isinstance(t, tuple):
+            normed.append((anchor._norm(t[0]), t[1]))
+        else:
+            normed.append((anchor._norm(t), None))
+    return {
+        "id": entry_id, "titles": normed,
+        "cursor_season": cursor[0], "cursor_episode": cursor[1],
+        "seasons": sorted(seasons),
+    }
+
+
+def test_anchor_parse_patterns():
+    """Season/episode extraction across the shapes page titles actually use."""
+    p = anchor._parse(anchor._norm("Naruto Shippuden S2 E5"))
+    assert (p["season"], p["episode"]) == (2, 5)
+    assert "naruto" in str(p["title"]) and "s2" not in str(p["title"])
+
+    p = anchor._parse(anchor._norm("Attack on Titan Season 3 Episode 4"))
+    assert (p["season"], p["episode"]) == (3, 4)
+
+    p = anchor._parse(anchor._norm("One Piece Episode 1230"))
+    assert (p["season"], p["episode"]) == (None, 1230)
+
+    p = anchor._parse(anchor._norm("One Piece 1230"))
+    assert (p["season"], p["episode"]) == (None, 1230) and p["title"] == "one piece"
+
+    p = anchor._parse(anchor._norm("Bleach Season 2"))
+    assert (p["season"], p["episode"]) == (2, None)
+
+    p = anchor._parse(anchor._norm("Some random page"))
+    assert (p["season"], p["episode"]) == (None, None)
+
+
+def test_anchor_best_match_and_ambiguity():
+    entries = [
+        _entry(1, ["Naruto"], cursor=(2, 5)),
+        _entry(2, ["One Punch Man"], cursor=(1, 3)),
+    ]
+    # page adds words around the title (score 2 containment)
+    best = anchor._best_match(["Watch Naruto Episode 12 online - SiteName"], entries)
+    assert best is not None and best["entry_id"] == 1 and best["episode"] == 12
+    assert best["cursor_season"] == 2  # fallbacks ride along for the binding
+
+    # nothing tracked -> None, never a guess
+    assert anchor._best_match(["Totally unrelated page title"], entries) is None
+
+    # 'one' must not word-boundary-match 'One Punch Man' on a generic page
+    assert anchor._best_match(["the one thing i love"], entries) is None
+
+    # ambiguity between two entries -> None (never bind wrong)
+    dupes = [_entry(1, ["Naruto"]), _entry(2, ["Naruto"])]
+    assert anchor._best_match(["Naruto Episode 5"], dupes) is None
+
+    # longer season title beats the shorter entry title
+    chain = [_entry(1, ["Naruto", ("Naruto Shippuden", 2)], cursor=(2, 5))]
+    best = anchor._best_match(["Naruto Shippuden ep 40"], chain)
+    assert best is not None and best["entry_id"] == 1 and best["episode"] == 40
+
+    # the matched season title implies the season when the page omits it
+    assert best["season"] == 2
+    # ...but an explicit page season always wins
+    best = anchor._best_match(["Naruto Shippuden S3 E10"], chain)
+    assert best is not None and best["season"] == 3 and best["episode"] == 10
+    # entry title (names S1) leaves season inference to absolute resolution
+    chain2 = [_entry(1, ["Naruto"], seasons=[(1, 220), (2, 500)])]
+    best = anchor._best_match(["Naruto ep 12"], chain2)
+    assert best is not None and best["season"] is None  # resolved later, via chain walk
+
+    # romaji long vowels fold: pages write 'shippuden', AniList 'shippuuden'
+    romaji = [_entry(1, ["Naruto", ("NARUTO: Shippuuden", 2)])]
+    best = anchor._best_match(["Watch Naruto Shippuden Episode 5 online"], romaji)
+    assert best is not None and best["entry_id"] == 1 and best["season"] == 2
+
+
+def test_anchor_absolute_episode_resolution():
+    """'One Piece 1230' style: absolute numbers map into the chain."""
+    best = {"entry_id": 1, "season": None, "episode": 120,
+            "seasons": [(1, 100), (2, 50)], "matched": "x",
+            "cursor_season": None, "cursor_episode": None}
+    anchor._resolve_absolute(best)
+    assert (best["season"], best["episode"]) == (2, 20)
+
+    # unknown totals -> left alone
+    best = {"entry_id": 1, "season": None, "episode": 120,
+            "seasons": [(1, None)], "matched": "x",
+            "cursor_season": None, "cursor_episode": None}
+    anchor._resolve_absolute(best)
+    assert best["season"] is None and best["episode"] == 120
+
+
+async def test_anchor_match_against_db():
+    """Phase 3 end to end: candidates from a fake page resolve to the tracked
+    Naruto entry with the parsed episode; blocked entries never match."""
+    user_id = await _user_id()
+    store, entry_id, _total = await _ani_entry(user_id)
+
+    result = await anchor.anchor_match(
+        user_id, ["Watch Naruto Shippuden Episode 5 online - SiteName"])
+    match = result.unwrap()
+    assert match is not None
+    assert match["entry_id"] == entry_id
+    assert match["episode"] == 5
+    # the matched Shippuden season title implies the chain season (S2)
+    assert match["season"] == 2
+    # cursor fallbacks present for the binding
+    assert "cursor_season" in match and "cursor_episode" in match
+
+    # nothing tracked on the page -> None, not an error
+    result = await anchor.anchor_match(user_id, ["Some cooking tutorial site"])
+    assert result.unwrap() is None
+
+    # blocked entries are excluded from matching
+    assert isinstance(await store.update_entry(user_id, entry_id, label="blocked"), Success)
+    result = await anchor.anchor_match(user_id, ["Naruto Shippuden Episode 5"])
+    assert result.unwrap() is None
+
+    await store.delete_entry(user_id, entry_id)
 
 
 # ---------- category CRUD (P1) ----------

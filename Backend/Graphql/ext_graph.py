@@ -8,11 +8,13 @@ payload, which strawberry drops into context["connection_params"].
 """
 from __future__ import annotations
 
+from typing import List, Optional
+
 import strawberry
 from returns.result import Failure
 from strawberry.types import Info
 
-from Extension import live
+from Extension import anchor, live
 from Extension.tokens import user_for_token
 
 
@@ -53,7 +55,25 @@ class ExtQuery:
 
 
 @strawberry.type
+class AnchorMatch:
+    entry_id: int
+    season: Optional[int]       # parsed from the page; None = not stated there
+    episode: Optional[int]      # parsed (absolute numbers resolved via the chain)
+    cursor_season: Optional[int]    # fallbacks for the binding
+    cursor_episode: Optional[int]
+
+
+@strawberry.type
 class ExtMutation:
+    @strawberry.field
+    async def anchor_match(
+        self, info: Info, candidates: List[str], page_url: str = ""
+    ) -> Optional[AnchorMatch]:
+        """Phase 3: 'what anime is this page?' — null when nothing tracked
+        matches. page_url rides along for phase 5 watch-site learning."""
+        match = _unwrap(await anchor.anchor_match(await _ext_uid(info), candidates, page_url))
+        return AnchorMatch(**match) if match else None
+
     @strawberry.field
     async def live_progress(
         self, info: Info, entry_id: int, season: int, episode: int, position_seconds: int

@@ -21,6 +21,27 @@
     chrome.runtime.sendMessage({ type, ...body }, () => void chrome.runtime.lastError);
   }
 
+  // ---- anchor detection (phase 3): when unbound, ask the backend what
+  // anime this page is; it auto-binds via dreamedia:bind on a match.
+  function pageCandidates() {
+    const list = [document.title];
+    const og = document.querySelector('meta[property="og:title"]');
+    if (og?.content) list.push(og.content);
+    const h1 = document.querySelector("h1");
+    if (h1?.textContent) list.push(h1.textContent.trim());
+    return list.filter(Boolean);
+  }
+
+  let anchorAttempts = 0;
+  function tryAnchor() {
+    if (window.__dreamediaBinding?.entryId || anchorAttempts >= 6) return;
+    anchorAttempts += 1;
+    send("dreamedia:anchor", { candidates: pageCandidates(), url: location.href });
+  }
+  // Titles settle late on some players and change on SPA navigation.
+  setTimeout(tryAnchor, 3000);
+  setInterval(tryAnchor, 10000);
+
   // Receive the popup's binding for this tab.
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === "dreamedia:bind") {

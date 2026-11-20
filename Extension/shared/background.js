@@ -177,6 +177,18 @@ async function ensureWs() {
   ws.onerror = () => ws.close();
 }
 
+async function gqlHttp(query, variables) {
+  const { url, token } = await backend();
+  const resp = await fetch(`${url}/ext/graphql`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-DreaMedia-Token": token },
+    body: JSON.stringify({ query, variables }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data.errors) throw new Error(data.errors?.[0]?.message || `HTTP ${resp.status}`);
+  return data.data;
+}
+
 async function liveGql(query, p) {
   const variables = {
     entryId: p.entry_id, season: p.season, episode: p.episode, positionSeconds: p.position_seconds,
@@ -196,22 +208,37 @@ async function liveGql(query, p) {
       }, 10000);
     });
   }
-  const { url, token } = await backend();
   try {
-    const resp = await fetch(`${url}/ext/graphql`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-DreaMedia-Token": token },
-      body: JSON.stringify({ query, variables }),
-    });
-    return resp.ok;
+    await gqlHttp(query, variables);
+    return true;
   } catch (_e) {
     return false;
   }
 }
 
+const M_ANCHOR = `mutation Anchor($candidates: [String!]!, $pageUrl: String!) {
+  anchorMatch(candidates: $candidates, pageUrl: $pageUrl) {
+    entryId season episode cursorSeason cursorEpisode
+  }
+}`;
+
+async function anchorBind(tabId, candidates, pageUrl) {
+  const data = await gqlHttp(M_ANCHOR, { candidates, pageUrl });
+  const match = data?.anchorMatch;
+  if (!match?.entryId || !tabId) return false;
+  const binding = {
+    entryId: match.entryId,
+    season: match.season || match.cursorSeason || 1,
+    episode: match.episode || match.cursorEpisode || 1,
+  };
+  await (chrome.storage.session || chrome.storage.local).set({ dreamediaBinding: binding });
+  await chrome.tabs.sendMessage(tabId, { type: "dreamedia:bind", binding }).catch(() => {});
+  return true;
+}
+
 // ---- message lane ----
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       switch (msg.type) {
@@ -235,6 +262,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           break;
         case "dreamedia:liveEnd":
           sendResponse({ ok: true, data: await liveGql(M_END, msg.payload) });
+          break;
+        case "dreamedia:anchor":
+          sendResponse({ ok: true, data: await anchorBind(sender.tab?.id, msg.candidates, msg.url) });
           break;
         case "dreamedia:domainStatus": {
           const host = normalizeDomain(msg.url);
