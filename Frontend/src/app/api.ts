@@ -10,6 +10,7 @@ const WORKSPACE_QUERY = `
     }
     ytChannels(includeBlocked: true) {
       id name url logo label labelReason rssId kind active rank words
+      withholdThreshold
       domain subdomain domainId subdomainId notify notifyEnabled
     }
     ytDomains {
@@ -81,12 +82,18 @@ export const subscribeYoutube = (input: {
     input,
   );
 
-export const ytSetMode = (channelId: number, kind: string, words?: string[], rank?: string) =>
+export const ytSetMode = (
+  channelId: number,
+  kind: string,
+  words?: string[],
+  rank?: string,
+  withhold?: number | null,
+) =>
   gql<{ ytSwitchMode: boolean }>(
-    `mutation SetMode($id: Int!, $kind: String!, $words: [String!], $rank: String) {
-      ytSwitchMode(channelId: $id, kind: $kind, words: $words, rank: $rank)
+    `mutation SetMode($id: Int!, $kind: String!, $words: [String!], $rank: String, $withhold: Int) {
+      ytSwitchMode(channelId: $id, kind: $kind, words: $words, rank: $rank, withhold: $withhold)
     }`,
-    { id: channelId, kind, words, rank },
+    { id: channelId, kind, words, rank, withhold: withhold ?? null },
   );
 
 export const ytSetNotify = (channelId: number, notify: boolean) =>

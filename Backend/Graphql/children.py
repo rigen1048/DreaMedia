@@ -129,6 +129,7 @@ class YtChannel:
     kind: Optional[str]
     active: Optional[bool]
     rank: Optional[str]
+    withhold_threshold: Optional[int]
     words: List[str]
     domain: str
     subdomain: str
@@ -386,8 +387,9 @@ class YtMutation:
     async def yt_switch_mode(
         self, info: Info, channel_id: int, kind: str,
         words: Optional[List[str]] = None, rank: Optional[str] = None,
+        withhold: Optional[int] = None,
     ) -> bool:
-        _unwrap(await _yt.switch_mode(await _uid(info), channel_id, kind, words, rank))
+        _unwrap(await _yt.switch_mode(await _uid(info), channel_id, kind, words, rank, withhold))
         return True
 
     @strawberry.field

@@ -7,7 +7,7 @@ from returns.result import Failure, Success
 from Auth import auth
 from Database import db
 from Database.ani_store import AniStore
-from Database.pg_store import PgStore
+from Database.pg_store import PgStore, PgSubscription
 from Orchestrator.Ani.Fetch.ani_track import ani_fetch
 from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
 
@@ -145,6 +145,60 @@ async def test_switch_mode_random_to_tracking_and_wordscan():
     assert isinstance(result, Success)
     view = [c for c in await store.channels_view(user_id) if c["id"] == cid][0]
     assert view["kind"] == "wordscan" and view["words"] == ["p2"]
+
+    await store.delete_channel(user_id, cid)
+
+
+# ---------- withhold notification type (F1) ----------
+
+async def test_withhold_buffers_then_releases_as_a_batch():
+    """F1: withhold=2 buffers single uploads invisibly; the batch that reaches
+    the threshold releases everything at once."""
+    user_id = await _user_id()
+    store = PgStore()
+    added = await store.add_tracking(user_id, "UCf1chan", "F1 Chan", "https://yt/UCf1chan")
+    cid = added.unwrap()
+
+    result = await store.switch_mode(user_id, cid, "withhold", withhold=2)
+    assert isinstance(result, Success), result
+    view = [c for c in await store.channels_view(user_id) if c["id"] == cid][0]
+    assert view["kind"] == "tracking" and view["withhold_threshold"] == 2
+
+    # Validation: threshold must be >= 1
+    assert isinstance(await store.switch_mode(user_id, cid, "withhold", withhold=0), Failure)
+    assert isinstance(await store.switch_mode(user_id, cid, "withhold"), Failure)
+
+    def _sub() -> "PgSubscription":
+        return PgSubscription(
+            sub_id=cid, user_id=user_id, media="yt", kind="tracking",
+            link="https://yt/UCf1chan", last_seen=None, withhold_threshold=2,
+        )
+
+    async def _chan_feed() -> list:
+        # Other tests in this file share the user — scope to this channel.
+        return [v for v in await store.feed(user_id) if v["channel_id"] == cid]
+
+    payload1 = ({1: {"id": "w1", "title": "First", "url": "https://youtu.be/w1", "thumbnail": "", "published": "2026-01-01"}},)
+    inserted1 = await store.save_videos_detailed(_sub(), payload1)
+    assert inserted1 == [], "single upload must buffer, not emit"
+    assert await _chan_feed() == [], "buffered video must be hidden from the feed"
+
+    payload2 = ({1: {"id": "w2", "title": "Second", "url": "https://youtu.be/w2", "thumbnail": "", "published": "2026-01-02"}},)
+    inserted2 = await store.save_videos_detailed(_sub(), payload2)
+    assert len(inserted2) == 2, "threshold reached — the whole batch releases"
+    assert len(await _chan_feed()) == 2, "released batch is visible in the feed"
+
+    # Threshold resets the buffer: next single upload buffers again.
+    payload3 = ({1: {"id": "w3", "title": "Third", "url": "https://youtu.be/w3", "thumbnail": "", "published": "2026-01-03"}},)
+    inserted3 = await store.save_videos_detailed(_sub(), payload3)
+    assert inserted3 == []
+    assert len(await _chan_feed()) == 2
+
+    # Switching away from withhold clears the threshold.
+    result = await store.switch_mode(user_id, cid, "tracking")
+    assert isinstance(result, Success)
+    view = [c for c in await store.channels_view(user_id) if c["id"] == cid][0]
+    assert view["withhold_threshold"] is None
 
     await store.delete_channel(user_id, cid)
 

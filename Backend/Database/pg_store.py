@@ -37,6 +37,7 @@ class PgSubscription:
     rank: str = "day"
     counter: int = 0
     claim_token: Optional[int] = None   # claimed_at at claim time — release must match
+    withhold_threshold: Optional[int] = None   # F1: buffer N videos, release as one batch
 
 
 class PgStore:
@@ -145,7 +146,8 @@ class PgStore:
                   AND c.label != 'reserved'           -- D22 life-phase switch
                   AND (t.ts IS NULL OR t.ts <= $1)
                 RETURNING t.channel_id, c.user_id, t.rss_id_enc, t.kind,
-                          t.word_enc, t.last_seen_enc, t.ts, t.rank, t.counter, t.claimed_at, t.claimed_at
+                          t.word_enc, t.last_seen_enc, t.ts, t.rank, t.counter, t.claimed_at, t.claimed_at,
+                          t.withhold_threshold
                 """,
                 now,
             )
@@ -260,7 +262,8 @@ class PgStore:
             rows = await con.fetch(
                 """
                 SELECT t.channel_id, c.user_id, t.rss_id_enc, t.kind,
-                       t.word_enc, t.last_seen_enc, t.ts, t.rank, t.counter
+                       t.word_enc, t.last_seen_enc, t.ts, t.rank, t.counter,
+                       t.withhold_threshold
                 FROM yt_tracking t
                 JOIN yt_channels c ON c.id = t.channel_id
                 WHERE t.active AND NOT t.working
@@ -294,6 +297,7 @@ class PgStore:
                     rank=r["rank"],
                     claim_token=r.get("claimed_at"),
                     counter=r["counter"],
+                    withhold_threshold=r.get("withhold_threshold"),
                 )
             )
         return (due, skipped) if return_skipped else due
@@ -333,6 +337,43 @@ class PgStore:
                             "thumbnail": video.get("thumbnail"),
                         }
                     )
+            if inserted and sub.withhold_threshold:
+                # F1 Withhold: buffer this batch. Nothing is emitted (and the feed
+                # hides it) until the buffered count reaches the threshold, then
+                # everything releases as one batch.
+                await con.execute(
+                    "UPDATE yt_videos SET withheld = TRUE WHERE channel_id = $1 "
+                    "AND url_hash = ANY($2)",
+                    sub.sub_id, [index_hash(key, v["url"]) for v in inserted],
+                )
+                buffered = await con.fetchval(
+                    "SELECT count(*) FROM yt_videos WHERE channel_id = $1 AND withheld",
+                    sub.sub_id,
+                )
+                if buffered < sub.withhold_threshold:
+                    log.info(
+                        "withhold: channel %s buffered %s/%s video(s)",
+                        sub.sub_id, buffered, sub.withhold_threshold,
+                    )
+                    return []
+                released = await con.fetch(
+                    "UPDATE yt_videos SET withheld = FALSE WHERE channel_id = $1 AND withheld "
+                    "RETURNING url_enc, title_enc, thumbnail_enc",
+                    sub.sub_id,
+                )
+                log.info(
+                    "withhold: channel %s released %s video(s) at threshold %s",
+                    sub.sub_id, len(released), sub.withhold_threshold,
+                )
+                return [
+                    {
+                        "video_id": None,
+                        "title": decrypt(key, r["title_enc"]) or "Untitled",
+                        "url": decrypt(key, r["url_enc"]) or "",
+                        "thumbnail": decrypt(key, r["thumbnail_enc"]),
+                    }
+                    for r in released
+                ]
         return inserted
 
     async def save_videos(self, sub: PgSubscription, payload: FetchPayload) -> int:
@@ -438,6 +479,7 @@ class PgStore:
                 LEFT JOIN yt_domains d ON d.id = s.domain_id
                 WHERE c.user_id = $1 AND c.label != 'blocked'   -- D22
                   AND v.trashed_at IS NULL                      -- D57 trashbin
+                  AND v.withheld IS NOT TRUE                    -- F1 withhold buffer
                 ORDER BY v.published_at DESC NULLS LAST
                 LIMIT $2
                 """,
@@ -546,6 +588,7 @@ class PgStore:
                        COALESCE(c.notify, TRUE) AND COALESCE(s.notify, TRUE)
                          AND COALESCE(d.notify, TRUE) AND c.label = 'none' AS notify_enabled,
                        t.rss_id_enc, t.kind AS t_kind, t.word_enc, t.rank AS t_rank, t.active AS t_active,
+                       t.withhold_threshold AS t_withhold,
                        p.rank AS p_rank, p.active AS p_active,
                        r.rank AS r_rank, r.active AS r_active
                 FROM yt_channels c
@@ -581,6 +624,7 @@ class PgStore:
                 "kind": kind,
                 "active": active,
                 "rank": rank,
+                "withhold_threshold": r["t_withhold"] if r["t_kind"] else None,
                 "words": words_raw.split(",") if words_raw else [],
                 "domain": decrypt(key, r["d_enc"]) or "uncategorized",
                 "subdomain": decrypt(key, r["s_enc"]) or "uncategorized",
@@ -847,15 +891,24 @@ class PgStore:
         kind: str,
         words: Optional[List[str]] = None,
         rank: Optional[str] = None,
+        withhold: Optional[int] = None,
     ) -> Result[Dict[str, Any], str]:
         """Transactional exclusive mode switch (P1): removes rows from the
         other subscription tables, upserts into the target one. A channel
-        lives in exactly ONE mode (D30 spirit)."""
-        if kind not in ("tracking", "wordscan", "playlist", "random"):
-            return Failure("kind must be tracking|wordscan|playlist|random")
+        lives in exactly ONE mode (D30 spirit).
+
+        kind="withhold" (F1) is tracking + a quantity threshold: videos buffer
+        until N accumulate, then release as one batch."""
+        if kind not in ("tracking", "wordscan", "playlist", "random", "withhold"):
+            return Failure("kind must be tracking|wordscan|playlist|random|withhold")
+        if kind == "withhold" and (withhold is None or withhold < 1):
+            return Failure("withhold threshold must be >= 1")
         key = await vault.get(user_id)
         if key is None:
             return Failure("vault locked (D9)")
+        # Withhold is a tracking row with a threshold; every other kind clears it.
+        actual_kind = "tracking" if kind == "withhold" else kind
+        threshold = withhold if kind == "withhold" else None
         pool = await get_pool()
         async with pool.acquire() as con:
             async with con.transaction():
@@ -865,7 +918,7 @@ class PgStore:
                 )
                 if not owner:
                     return Failure("channel not found")
-                if kind in ("tracking", "wordscan"):
+                if actual_kind in ("tracking", "wordscan"):
                     # P2: resolve the RSS source — prefer the existing tracking
                     # row; fall back to the channel's own URL so a random- or
                     # playlist-mode channel can switch into tracking/wordscan.
@@ -889,15 +942,17 @@ class PgStore:
                     await con.execute("DELETE FROM yt_playlists WHERE channel_id = $1", channel_id)
                     await con.execute("DELETE FROM yt_randomsubs WHERE channel_id = $1", channel_id)
                     await con.execute(
-                        "INSERT INTO yt_tracking (channel_id, rss_id_enc, rss_hash, kind, word_enc) "
-                        "VALUES ($1, $2, $3, $4, $5) "
+                        "INSERT INTO yt_tracking (channel_id, rss_id_enc, rss_hash, kind, word_enc, withhold_threshold) "
+                        "VALUES ($1, $2, $3, $4, $5, $6) "
                         "ON CONFLICT (channel_id) DO UPDATE SET "
                         "rss_id_enc = EXCLUDED.rss_id_enc, rss_hash = EXCLUDED.rss_hash, "
-                        "kind = EXCLUDED.kind, word_enc = EXCLUDED.word_enc",
-                        channel_id, rss_id_enc, rss_hash, kind,
+                        "kind = EXCLUDED.kind, word_enc = EXCLUDED.word_enc, "
+                        "withhold_threshold = EXCLUDED.withhold_threshold",
+                        channel_id, rss_id_enc, rss_hash, actual_kind,
                         encrypt(key, ",".join(words)) if words else None,
+                        threshold,
                     )
-                elif kind == "playlist":
+                elif actual_kind == "playlist":
                     return Failure("switching to playlist requires re-subscribing with the playlist link")
                 else:  # random
                     await con.execute("DELETE FROM yt_tracking WHERE channel_id = $1", channel_id)
