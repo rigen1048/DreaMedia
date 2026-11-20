@@ -686,6 +686,23 @@ class AniQuery:
         return result
 
     @strawberry.field
+    async def ani_watch_link(self, info: Info, event_id: int) -> Optional[str]:
+        """Phase 5: where to watch this event's episode — the user's learned
+        site with an endpoint-pattern rewrite, else the site home. None when
+        no site is recorded (frontend falls back to the todo page)."""
+        from Extension import sites
+
+        user_id = await _uid(info)
+        event = await _ani.get_event(user_id, event_id)
+        if event is None or event["kind"] != "episode_released":
+            return None
+        episode = event["payload"].get("episode")
+        if not isinstance(episode, int) or episode < 1:
+            return None
+        return _unwrap(await sites.resolve_watch_link(
+            user_id, event["entry_id"], event["season_no"] or 1, episode))
+
+    @strawberry.field
     async def ani_entries(
         self, info: Info, include_blocked: bool = False
     ) -> List[AniEntry]:

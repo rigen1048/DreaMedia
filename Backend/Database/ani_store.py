@@ -445,6 +445,28 @@ class AniStore:
                 "WHERE e.active AND NOT s.working AND s.next_check_ts IS NOT NULL"
             )
 
+    async def get_event(self, user_id: int, event_id: int) -> Optional[Dict[str, Any]]:
+        """One user-owned event with its payload decrypted (watch-link
+        resolution; P5). None when locked or not found."""
+        key = await vault.get(user_id)
+        if key is None:
+            return None
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            r = await con.fetchrow(
+                "SELECT e.id, e.entry_id, e.season_no, e.kind, e.payload_enc "
+                "FROM ani_events e JOIN ani_entries a ON a.id = e.entry_id "
+                "WHERE e.id = $1 AND a.user_id = $2",
+                event_id, user_id,
+            )
+        if r is None:
+            return None
+        payload = json.loads(decrypt(key, r["payload_enc"]) or "{}")
+        return {
+            "id": r["id"], "entry_id": r["entry_id"], "season_no": r["season_no"],
+            "kind": r["kind"], "payload": payload,
+        }
+
     # ---------------- feed reads ----------------
     async def events_feed(self, user_id: int, include_seen: bool = False) -> List[Dict[str, Any]]:
         """Anime events + the owning entry's display metadata, so each event

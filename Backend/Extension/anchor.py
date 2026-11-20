@@ -18,6 +18,7 @@ from returns.result import Failure, Result, Success
 from Database import vault
 from Database.crypto import decrypt
 from Database.db import get_pool
+from Extension import sites
 
 # " - ", " | ", " – ", " — ", " · " split page titles into meaningful segments
 # ("One Piece Ep 1230 - Watch on SiteName" -> "One Piece Ep 1230").
@@ -220,4 +221,10 @@ async def anchor_match(
     best.pop("matched", None)
     best.pop("matched_season", None)
     best.pop("seasons", None)
+    # Phase 5: learn the watch site passively from this report (never for
+    # blocked entries — the disclaimer path is not a watch session).
+    if not best["blocked"]:
+        await sites.learn_watch_site(
+            user_id, best["entry_id"], page_url, best["season"], best["episode"]
+        )
     return Success(best)

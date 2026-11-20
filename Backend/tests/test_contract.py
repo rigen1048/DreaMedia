@@ -8,7 +8,7 @@ from Auth import auth
 from Database import db
 from Database.ani_store import AniStore
 from Database.pg_store import PgStore, PgSubscription
-from Extension import anchor, live
+from Extension import anchor, live, sites
 from Extension.store import ExtDomainStore, list_blocked_yt
 from Orchestrator.Ani.Fetch.ani_track import ani_fetch
 from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
@@ -451,6 +451,76 @@ async def test_ext_blocked_list_yt():
 
     await yt.delete_channel(user_id, cid)
     await yt.delete_channel(user_id, cid2)
+
+
+# ---------- extension v2 phase 5: watch sites ----------
+
+def test_watch_site_retarget():
+    """Endpoint-pattern rewriting for the next episode URL."""
+    # same season: episode token swaps
+    assert sites._retarget("https://site.example/watch/naruto-episode-5", 1, 5, 1, 6) == \
+        "https://site.example/watch/naruto-episode-6"
+    # season token: s2e5 -> s3e1
+    assert sites._retarget("https://site.example/naruto-s2e5", 2, 5, 3, 1) == \
+        "https://site.example/naruto-s3e1"
+    # zero-padded season keeps its prefix style
+    assert sites._retarget("https://site.example/anime-s02e05", 2, 5, 3, 1) == \
+        "https://site.example/anime-s03e01"
+    # query param
+    assert sites._retarget("https://site.example/play?id=42&ep=12", 1, 12, 1, 13) == \
+        "https://site.example/play?id=42&ep=13"
+    # no recognizable pattern -> None (caller falls back to the site home)
+    assert sites._retarget("https://site.example/naruto", 1, 5, 1, 6) is None
+    # too many lookalike tokens -> None rather than corrupt
+    assert sites._retarget("https://site.example/5/5/5/naruto-5", 1, 5, 1, 6) is None
+    # digits inside bigger numbers never rewrite (1080 stays put)
+    assert sites._retarget("https://site.example/watch-1080/naruto-5", 1, 5, 1, 6) == \
+        "https://site.example/watch-1080/naruto-6"
+
+
+async def test_watch_sites_learn_and_resolve():
+    """Phase 5: anchor reports teach the site map; the notification click
+    resolves the next episode by pattern, else the site home."""
+    user_id = await _user_id()
+    store, entry_id, _total = await _ani_entry(user_id)
+    pool = await db.get_pool()
+
+    page = "https://animesite.example/watch/naruto-shippuden-episode-5"
+    result = await anchor.anchor_match(user_id, ["Naruto Shippuden Episode 5"], page_url=page)
+    assert result.unwrap() is not None
+
+    async with pool.acquire() as con:
+        row = await con.fetchrow(
+            "SELECT season, episode, use_count FROM ani_watch_sites "
+            "WHERE user_id = $1 AND entry_id = $2", user_id, entry_id)
+    assert row is not None
+    assert (row["season"], row["episode"], row["use_count"]) == (2, 5, 1)
+
+    # the click for episode 6 rewrites the endpoint pattern
+    link = (await sites.resolve_watch_link(user_id, entry_id, 2, 6)).unwrap()
+    assert link == "https://animesite.example/watch/naruto-shippuden-episode-6"
+
+    # an episode far from the stored pattern still resolves (pattern, not +1)
+    link = (await sites.resolve_watch_link(user_id, entry_id, 2, 40)).unwrap()
+    assert link == "https://animesite.example/watch/naruto-shippuden-episode-40"
+
+    # repeat report bumps use_count
+    await anchor.anchor_match(user_id, ["Naruto Shippuden Episode 5"], page_url=page)
+    async with pool.acquire() as con:
+        assert await con.fetchval(
+            "SELECT use_count FROM ani_watch_sites WHERE user_id = $1 AND entry_id = $2",
+            user_id, entry_id) == 2
+
+    # a site with no pattern in the URL falls back to the site home
+    await sites.learn_watch_site(user_id, entry_id, "https://plain.example/naruto", 1, 1)
+    link = (await sites.resolve_watch_link(user_id, entry_id, 1, 2)).unwrap()
+    # most-used row wins; force it by learning plain.example more times
+    await sites.learn_watch_site(user_id, entry_id, "https://plain.example/naruto", 1, 1)
+    await sites.learn_watch_site(user_id, entry_id, "https://plain.example/naruto", 1, 1)
+    link = (await sites.resolve_watch_link(user_id, entry_id, 1, 2)).unwrap()
+    assert link == "https://plain.example"
+
+    await store.delete_entry(user_id, entry_id)
 
 
 # ---------- category CRUD (P1) ----------
