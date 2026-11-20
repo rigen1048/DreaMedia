@@ -138,23 +138,25 @@ async def signup(username: str, password: str) -> Result[dict, str]:
     async with pool.acquire() as con:
         # Bootstrap is serialized by an advisory lock: two concurrent
         # signups must not both see an empty users table and both become
-        # admin (2026 review race). Lock first, then re-check everything.
-        await con.execute("SELECT pg_advisory_xact_lock(735531)")
-        exists = await con.fetchval(
-            "SELECT 1 FROM users WHERE username = $1", username
-        )
-        if exists:
-            return Failure("User already exists")
-        # First registered user becomes admin (D26 needs an admin).
-        user_count = await con.fetchval("SELECT count(*) FROM users")
-        role = "admin" if user_count == 0 else "user"
-        row = await con.fetchrow(
-            "INSERT INTO users (username, argon2_hash, role) VALUES ($1, $2, $3) "
-            "RETURNING id, role",
-            username,
-            _hasher.hash(password),
-            role,
-        )
+        # admin (2026 review race). The xact lock needs an explicit
+        # transaction — autocommit releases it at statement end.
+        async with con.transaction():
+            await con.execute("SELECT pg_advisory_xact_lock(735531)")
+            exists = await con.fetchval(
+                "SELECT 1 FROM users WHERE username = $1", username
+            )
+            if exists:
+                return Failure("User already exists")
+            # First registered user becomes admin (D26 needs an admin).
+            user_count = await con.fetchval("SELECT count(*) FROM users")
+            role = "admin" if user_count == 0 else "user"
+            row = await con.fetchrow(
+                "INSERT INTO users (username, argon2_hash, role) VALUES ($1, $2, $3) "
+                "RETURNING id, role",
+                username,
+                _hasher.hash(password),
+                role,
+            )
     user_id = row["id"]
     await vault.put(user_id, derive_key(password, username))
     token = await _issue_session(user_id)

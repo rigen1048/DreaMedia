@@ -51,14 +51,19 @@ async def set_role(actor_id: int, user_id: int, role: str) -> Result[str, str]:
         return Failure(f"role must be one of {', '.join(ROLES)}")
     pool = await get_pool()
     async with pool.acquire() as con:
-        row = await con.fetchrow("SELECT role FROM users WHERE id = $1", user_id)
-        if row is None:
-            return Failure("user not found")
-        if row["role"] == role:
-            return Success(role)
-        if row["role"] == "admin" and role != "admin" and await _admin_count(con) <= 1:
-            return Failure("the last admin cannot be demoted — promote someone else first")
-        await con.execute("UPDATE users SET role = $2 WHERE id = $1", user_id, role)
+        # P1: the last-admin check must be atomic with the change — two
+        # concurrent demotions could both pass a naive count check. The xact
+        # lock needs an explicit transaction (autocommit frees it instantly).
+        async with con.transaction():
+            await con.execute("SELECT pg_advisory_xact_lock(735533)")
+            row = await con.fetchrow("SELECT role FROM users WHERE id = $1", user_id)
+            if row is None:
+                return Failure("user not found")
+            if row["role"] == role:
+                return Success(role)
+            if row["role"] == "admin" and role != "admin" and await _admin_count(con) <= 1:
+                return Failure("the last admin cannot be demoted — promote someone else first")
+            await con.execute("UPDATE users SET role = $2 WHERE id = $1", user_id, role)
     await auth.drop_user_sessions(user_id)
     return Success(role)
 
@@ -68,12 +73,15 @@ async def delete_user(actor_id: int, user_id: int) -> Result[int, str]:
         return Failure("you cannot delete the account you are signed in with")
     pool = await get_pool()
     async with pool.acquire() as con:
-        row = await con.fetchrow("SELECT role FROM users WHERE id = $1", user_id)
-        if row is None:
-            return Failure("user not found")
-        if row["role"] == "admin" and await _admin_count(con) <= 1:
-            return Failure("the last admin cannot be deleted")
-        await con.execute("DELETE FROM users WHERE id = $1", user_id)
+        # P1: advisory lock so the check and the delete are one atomic step.
+        async with con.transaction():
+            await con.execute("SELECT pg_advisory_xact_lock(735533)")
+            row = await con.fetchrow("SELECT role FROM users WHERE id = $1", user_id)
+            if row is None:
+                return Failure("user not found")
+            if row["role"] == "admin" and await _admin_count(con) <= 1:
+                return Failure("the last admin cannot be deleted")
+            await con.execute("DELETE FROM users WHERE id = $1", user_id)
     await auth.drop_user_sessions(user_id)
     return Success(user_id)
 
