@@ -173,6 +173,19 @@ export default function Notifications() {
       return;
     }
     void act(() => api.aniTrashEvents([row.event.id]));
+    // Phase 5: a released episode opens the user's learned watch site
+    // (endpoint-pattern rewrite, else site home); anything else opens the
+    // todo page as before.
+    if (row.event.kind === "episode_released") {
+      void api.aniWatchLink(row.event.id).then(({ aniWatchLink }) => {
+        if (aniWatchLink) {
+          window.open(aniWatchLink, "_blank", "noopener");
+        } else {
+          navigate(`/todo?entry=${row.event.entryId}`);
+        }
+      });
+      return;
+    }
     navigate(`/todo?entry=${row.event.entryId}`);
   };
 

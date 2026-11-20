@@ -362,6 +362,24 @@ CREATE TABLE IF NOT EXISTS ext_domains (
     UNIQUE (user_id, domain_hash, media)
 );
 
+-- Extension v2 phase 5: which site the user watches which anime on.
+-- Learned passively from anchor reports; notification clicks resolve the
+-- next episode URL by pattern-matching the stored page URL, falling back
+-- to the site home (fresh releases surface there), then AniList.
+CREATE TABLE IF NOT EXISTS ani_watch_sites (
+    id            SERIAL PRIMARY KEY,
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    entry_id      INTEGER NOT NULL REFERENCES ani_entries(id) ON DELETE CASCADE,
+    domain_enc    BYTEA NOT NULL,
+    domain_hash   BYTEA NOT NULL,
+    url_enc       BYTEA NOT NULL,           -- last page URL watched there
+    season        INTEGER,                  -- what that URL was playing
+    episode       INTEGER,
+    use_count     INTEGER NOT NULL DEFAULT 1,
+    last_used_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, entry_id, domain_hash)
+);
+
 -- Extension v2 phase 2: live watch sessions over the websocket lane.
 -- One row per active watch; upserted every few seconds while playing,
 -- merged into the real cursor (set_progress, the backward-allowed path)

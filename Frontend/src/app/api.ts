@@ -622,6 +622,12 @@ export const extRemoveDomain = (domainId: number) =>
 export const exportData = () =>
   gql<{ exportData: string }>(`query ExportData { exportData }`);
 
+export const aniWatchLink = (eventId: number) =>
+  gql<{ aniWatchLink: string | null }>(
+    `query AniWatchLink($id: Int!) { aniWatchLink(eventId: $id) }`,
+    { id: eventId },
+  );
+
 export const importData = (payload: string) =>
   gql<{ importData: { channels: number; cards: number; anime: number; skipped: number } }>(
     `mutation ImportData($payload: String!) {
