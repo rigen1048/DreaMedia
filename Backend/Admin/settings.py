@@ -18,7 +18,7 @@ _DEFAULTS = {
     "backup_keep_latest": ("BACKUP_KEEP_LATEST", "5"),
     "backup_frequency_hours": ("BACKUP_FREQUENCY_HOURS", "24"),
     "stale_claim_seconds": ("STALE_CLAIM_SECONDS", "3600"),
-    "restore_active": (None, "0"),  # Phase 1.2: the restore gate, DB-backed
+    "restore_active": (None, "0"),  # restore gate (DB row + local fast-path)
 }
 
 # key -> (type, floor) — floors are the untouchable part of D2.
