@@ -23,6 +23,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 BACKEND = ROOT / "Backend"
 FRONTEND = ROOT / "Frontend"
+EXTENSION = ROOT / "Extension"
+SHARED = EXTENSION / "shared"
 STATE = ROOT / ".last-pgpass-sha"
 BACKEND_LOG = ROOT / ".backend.log"
 
@@ -106,6 +108,25 @@ def lan_ip() -> str:
         return "127.0.0.1"
 
 
+def build_extensions() -> None:
+    """Build the browser extension for both Chrome (mv3) and Firefox (mv2).
+
+    `shared/` is the single source of truth; this copies it over both variants
+    so `python3 setup.py` produces a loadable mv2 and mv3 extension (the
+    variant-specific manifest.json already lives in each variant dir).
+    """
+    if not SHARED.is_dir():
+        print("✗ Extension shared/ missing — skipping extension build")
+        return
+    for variant in ("mv2", "mv3"):
+        target = EXTENSION / variant
+        target.mkdir(parents=True, exist_ok=True)
+        for src in sorted(SHARED.iterdir()):
+            if src.is_file():
+                shutil.copy2(src, target / src.name)
+        print(f"→ extension built: {variant}/ ({len(list(target.iterdir()))} files)")
+
+
 def db_running(env) -> bool:
     result = subprocess.run(
         ["docker", "compose", "exec", "-T", "db", "pg_isready", "-U", "dreamedia"],
@@ -174,6 +195,7 @@ def main() -> None:
     args = parser.parse_args()
 
     env = load_env()
+    build_extensions()
     access = env.get("ACCESS", "computer").lower()
     if access not in ("wifi", "computer"):
         sys.exit("✗ ACCESS must be 'wifi' or 'computer' (see .env.example)")
