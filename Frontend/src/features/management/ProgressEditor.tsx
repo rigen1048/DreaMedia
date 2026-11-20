@@ -52,7 +52,9 @@ export function ProgressEditor({
     const nextSeconds = Math.max(0, Math.round(draftSeconds ?? 0));
     setBusy(true);
     try {
-      await api.aniSetCursor(entryId, nextSeason, nextEpisode, nextSeconds);
+      // aniSetProgress, not aniSetCursor: the editor is the backward-allowed
+      // correction path (D44's set_cursor is forward-only).
+      await api.aniSetProgress(entryId, nextSeason, nextEpisode, nextSeconds);
       await refresh();
       notify(
         `Progress set to S${nextSeason} E${nextEpisode}${
@@ -73,7 +75,7 @@ export function ProgressEditor({
       <Input
         type="number"
         min={1}
-        value={draftSeason}
+        value={draftSeason ?? ""}
         aria-label="Season"
         onChange={(event) => {
           const v = event.target.value;

@@ -117,12 +117,13 @@ function AnimeCard({ entry, expanded, onToggle }: { entry: AniEntry; expanded: b
 
   const blockLabel = entry.label === "none" ? "active" : entry.label;
 
-  // P13: show the position the user actually reached instead of the stale
-  // cursor defaulting to S1 · E0 when the entry is up to date.
+  // P13: show the cursor when set; only derive from seasons (first unwatched,
+  // else last) when there is no cursor — up-to-date entries never set one,
+  // which is what used to display a stale S1 · E0.
   const seasons = entry.seasons ?? [];
   const inProgress = seasons.find((s) => !s.watched) ?? seasons.at(-1) ?? null;
-  const dispSeason = inProgress?.seasonNo ?? entry.cursorSeason ?? 1;
-  const dispEpisode = inProgress?.episodesAired ?? entry.cursorEpisode ?? 0;
+  const dispSeason = entry.cursorSeason ?? inProgress?.seasonNo ?? 1;
+  const dispEpisode = entry.cursorEpisode ?? inProgress?.episodesAired ?? 0;
 
   return (
     <>
