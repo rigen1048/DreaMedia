@@ -239,7 +239,9 @@ async def start_restore(filename: str) -> Result[str, str]:
         return Failure("pg_restore not found")
 
     _restore_active = True
-    asyncio.ensure_future(_persist_gate(True))
+    # AWAITED: the DB gate must be 1 before the job is exposed — fire-and-
+    # forget let another worker/middleware read the stale 0 (P0 race).
+    await _persist_gate(True)
     _set(
         phase="queued", file=filename, startedAt=time.time(), finishedAt=None,
         snapshot=None, error=None, sessionsDropped=0,
@@ -271,7 +273,7 @@ async def _restore(filename: str, gate_already_closed: bool = False) -> Result[s
 
     if not gate_already_closed:
         _restore_active = True
-        asyncio.ensure_future(_persist_gate(True))
+        await _persist_gate(True)
         _set(
             phase="queued", file=filename, startedAt=time.time(), finishedAt=None,
             snapshot=None, error=None, sessionsDropped=0, message=None,
@@ -342,3 +344,4 @@ async def _restore(filename: str, gate_already_closed: bool = False) -> Result[s
         return Failure(str(exc))
     finally:
         _restore_active = False
+        await _persist_gate(False)
