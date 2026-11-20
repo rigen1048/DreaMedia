@@ -129,6 +129,8 @@ def _best_match(
                             "matched_season": season_no,
                             "cursor_season": entry["cursor_season"],
                             "cursor_episode": entry["cursor_episode"],
+                            "blocked": entry.get("blocked", False),
+                            "reason": entry.get("reason"),
                             "seasons": entry["seasons"],
                         }
                         best_score = score
@@ -173,8 +175,8 @@ async def anchor_match(
     pool = await get_pool()
     async with pool.acquire() as con:
         rows = await con.fetch(
-            "SELECT id, title_enc, cursor_season, cursor_episode "
-            "FROM ani_entries WHERE user_id = $1 AND label != 'blocked'",
+            "SELECT id, title_enc, cursor_season, cursor_episode, label, label_reason_enc "
+            "FROM ani_entries WHERE user_id = $1",
             user_id,
         )
         season_rows = await con.fetch(
@@ -194,6 +196,8 @@ async def anchor_match(
             "titles": [t for t in [(_norm(decrypt(key, r["title_enc"]) or ""), None)] if t[0]],
             "cursor_season": r["cursor_season"],
             "cursor_episode": r["cursor_episode"],
+            "blocked": r["label"] == "blocked",
+            "reason": decrypt(key, r["label_reason_enc"]) if r["label_reason_enc"] else None,
             "seasons": [],
         }
         entries.append(entry)

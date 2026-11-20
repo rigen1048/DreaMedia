@@ -42,11 +42,13 @@
   setTimeout(tryAnchor, 3000);
   setInterval(tryAnchor, 10000);
 
-  // Receive the popup's binding for this tab.
+  // Receive the popup's binding / the backend's block verdict for this tab.
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === "dreamedia:bind") {
       window.__dreamediaBinding = msg.binding;
       console.debug("[DreaMedia] bound to entry", msg.binding);
+    } else if (msg.type === "dreamedia:blocked") {
+      window.DreaMediaCore.showBlocked(msg.title || "This anime is on your blocked list.", msg.reason);
     }
   });
   // Restore a binding for this tab (survives reloads within the session).
