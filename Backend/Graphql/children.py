@@ -563,6 +563,7 @@ class AniEvent:
 class AniSeason:
     season_no: int
     title: Optional[str]
+    poster: Optional[str]
     status: Optional[str]
     episodes_total: Optional[int]
     episodes_aired: Optional[int]
