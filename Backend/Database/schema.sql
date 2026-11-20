@@ -362,6 +362,21 @@ CREATE TABLE IF NOT EXISTS ext_domains (
     UNIQUE (user_id, domain_hash, media)
 );
 
+-- Extension v2 phase 2: live watch sessions over the websocket lane.
+-- One row per active watch; upserted every few seconds while playing,
+-- merged into the real cursor (set_progress, the backward-allowed path)
+-- and deleted on pause/ended. On power loss the row survives and the
+-- boot sweep merges it — DreaMedia always knows the last position.
+CREATE TABLE IF NOT EXISTS ext_live_sessions (
+    user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    entry_id         INTEGER NOT NULL REFERENCES ani_entries(id) ON DELETE CASCADE,
+    season           INTEGER NOT NULL,
+    episode          INTEGER NOT NULL,
+    position_seconds INTEGER NOT NULL DEFAULT 0,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, entry_id)
+);
+
 -- Drift repair (found during review, 2026-11-20): databases created before
 -- the FK constraints existed never got them — CREATE TABLE IF NOT EXISTS is
 -- a no-op for existing tables, so inline REFERENCES clauses were skipped.
