@@ -14,7 +14,7 @@ import strawberry
 from returns.result import Failure
 from strawberry.types import Info
 
-from Extension import anchor, live
+from Extension import anchor, live, store
 from Extension.tokens import user_for_token
 
 
@@ -53,6 +53,13 @@ class ExtQuery:
         await _ext_uid(info)
         return True
 
+    @strawberry.field
+    async def blocked_list(self, info: Info) -> List[BlockedChannel]:
+        """Phase 4: blocked YouTube channels for the extension's local
+        disclaimer cache. Refresh needs the vault (names/urls are
+        ciphertext); the extension keeps its last copy when locked."""
+        return [BlockedChannel(**r) for r in _unwrap(await store.list_blocked_yt(await _ext_uid(info)))]
+
 
 @strawberry.type
 class AnchorMatch:
@@ -61,6 +68,15 @@ class AnchorMatch:
     episode: Optional[int]      # parsed (absolute numbers resolved via the chain)
     cursor_season: Optional[int]    # fallbacks for the binding
     cursor_episode: Optional[int]
+    blocked: bool               # phase 4: matched a blocked entry -> disclaimer
+    reason: Optional[str]       # the user's block reason, if they wrote one
+
+
+@strawberry.type
+class BlockedChannel:
+    name: str
+    url: str
+    reason: Optional[str]
 
 
 @strawberry.type

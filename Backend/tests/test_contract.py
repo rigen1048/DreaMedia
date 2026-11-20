@@ -9,7 +9,7 @@ from Database import db
 from Database.ani_store import AniStore
 from Database.pg_store import PgStore, PgSubscription
 from Extension import anchor, live
-from Extension.store import ExtDomainStore
+from Extension.store import ExtDomainStore, list_blocked_yt
 from Orchestrator.Ani.Fetch.ani_track import ani_fetch
 from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
 
@@ -416,12 +416,41 @@ async def test_anchor_match_against_db():
     result = await anchor.anchor_match(user_id, ["Some cooking tutorial site"])
     assert result.unwrap() is None
 
-    # blocked entries are excluded from matching
-    assert isinstance(await store.update_entry(user_id, entry_id, label="blocked"), Success)
+    # phase 4: blocked entries still match — flagged, with the reason, so
+    # the extension shows the disclaimer instead of binding
+    assert isinstance(
+        await store.update_entry(user_id, entry_id, label="blocked", label_reason="bad pacing"),
+        Success,
+    )
     result = await anchor.anchor_match(user_id, ["Naruto Shippuden Episode 5"])
-    assert result.unwrap() is None
+    match = result.unwrap()
+    assert match is not None and match["blocked"] is True
+    assert match["reason"] == "bad pacing"
 
     await store.delete_entry(user_id, entry_id)
+
+
+async def test_ext_blocked_list_yt():
+    """Phase 4: the extension's local disclaimer cache gets blocked channels
+    only, decrypted server-side."""
+    user_id = await _user_id()
+    yt = PgStore()
+    added = await yt.add_tracking(user_id, "UCblocked", "Blocked Chan", "https://www.youtube.com/@blocked")
+    cid = added.unwrap()
+    added2 = await yt.add_tracking(user_id, "UCfine", "Fine Chan", "https://www.youtube.com/@fine")
+    cid2 = added2.unwrap()
+
+    assert isinstance(
+        await yt.set_label(user_id, cid, "blocked", "fake stunts"), Success)
+
+    result = await list_blocked_yt(user_id)
+    blocked = result.unwrap()
+    assert len(blocked) == 1
+    assert blocked[0]["name"] == "Blocked Chan"
+    assert blocked[0]["url"] == "https://www.youtube.com/@blocked"
+
+    await yt.delete_channel(user_id, cid)
+    await yt.delete_channel(user_id, cid2)
 
 
 # ---------- category CRUD (P1) ----------

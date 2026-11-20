@@ -93,3 +93,28 @@ class ExtDomainStore:
         if not result.endswith("1"):
             return Failure("domain not found")
         return Success(True)
+
+
+async def list_blocked_yt(user_id: int) -> Result[List[Dict[str, Any]], str]:
+    """Blocked YouTube channels for the extension's local disclaimer cache
+    (phase 4): url + name, decrypted server-side over the token lane.
+    Anime blocking rides anchorMatch instead (per-page candidates already
+    flow there for binding)."""
+    key = await vault.get(user_id)
+    if key is None:
+        return Failure("vault locked (D9)")
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        rows = await con.fetch(
+            "SELECT name_enc, url_enc, label_reason_enc FROM yt_channels "
+            "WHERE user_id = $1 AND label = 'blocked'",
+            user_id,
+        )
+    return Success([
+        {
+            "name": decrypt(key, r["name_enc"]) or "",
+            "url": decrypt(key, r["url_enc"]) or "",
+            "reason": decrypt(key, r["label_reason_enc"]) if r["label_reason_enc"] else None,
+        }
+        for r in rows
+    ])

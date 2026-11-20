@@ -104,13 +104,18 @@ async function refreshDomains() {
   }
 }
 
-chrome.runtime.onStartup?.addListener(() => void refreshDomains());
-chrome.runtime.onInstalled?.addListener(() => void refreshDomains());
-void refreshDomains(); // service-worker wake / persistent background load
+async function refreshAll() {
+  await refreshDomains();
+  await fetchBlocked();
+}
+
+chrome.runtime.onStartup?.addListener(() => void refreshAll());
+chrome.runtime.onInstalled?.addListener(() => void refreshAll());
+void refreshAll(); // service-worker wake / persistent background load
 
 chrome.alarms?.create("dreamedia:domains", { periodInMinutes: 30 });
 chrome.alarms?.onAlarm.addListener((alarm) => {
-  if (alarm.name === "dreamedia:domains") void refreshDomains();
+  if (alarm.name === "dreamedia:domains") void refreshAll();
 });
 
 // ---- live lane (ext v2 phase 2): graphql-transport-ws, HTTP fallback ----
@@ -218,7 +223,7 @@ async function liveGql(query, p) {
 
 const M_ANCHOR = `mutation Anchor($candidates: [String!]!, $pageUrl: String!) {
   anchorMatch(candidates: $candidates, pageUrl: $pageUrl) {
-    entryId season episode cursorSeason cursorEpisode
+    entryId season episode cursorSeason cursorEpisode blocked reason
   }
 }`;
 
@@ -226,6 +231,13 @@ async function anchorBind(tabId, candidates, pageUrl) {
   const data = await gqlHttp(M_ANCHOR, { candidates, pageUrl });
   const match = data?.anchorMatch;
   if (!match?.entryId || !tabId) return false;
+  // Phase 4: a blocked entry shows the disclaimer instead of binding.
+  if (match.blocked) {
+    await chrome.tabs.sendMessage(tabId, {
+      type: "dreamedia:blocked", title: "This anime is on your blocked list.", reason: match.reason,
+    }).catch(() => {});
+    return true;
+  }
   const binding = {
     entryId: match.entryId,
     season: match.season || match.cursorSeason || 1,
@@ -234,6 +246,24 @@ async function anchorBind(tabId, candidates, pageUrl) {
   await (chrome.storage.session || chrome.storage.local).set({ dreamediaBinding: binding });
   await chrome.tabs.sendMessage(tabId, { type: "dreamedia:bind", binding }).catch(() => {});
   return true;
+}
+
+// ---- blocked list (phase 4): server copy -> local cache ----
+
+const Q_BLOCKED = `query Blocked { blockedList { name url reason } }`;
+
+async function cachedBlocked() {
+  return (await chrome.storage.local.get("blockedYt")).blockedYt || [];
+}
+
+async function fetchBlocked() {
+  try {
+    const data = await gqlHttp(Q_BLOCKED, {});
+    await chrome.storage.local.set({ blockedYt: data.blockedList || [] });
+  } catch (_e) {
+    // vault locked / backend offline: keep the cached copy (stale beats none)
+  }
+  return cachedBlocked();
 }
 
 // ---- message lane ----
@@ -284,8 +314,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case "dreamedia:refreshDomains":
-          await refreshDomains();
+          await refreshAll();
           sendResponse({ ok: true });
+          break;
+        case "dreamedia:blockedYT":
+          sendResponse({ ok: true, data: await cachedBlocked() });
           break;
         default:
           sendResponse({ ok: false, error: "unknown message type" });
