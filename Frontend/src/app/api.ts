@@ -301,12 +301,17 @@ export const aniMarkRange = (entryId: number, from: number, to: number) =>
   );
 
 /** Correct the watch position — the only cursor move allowed to go backwards. */
-export const aniSetProgress = (entryId: number, season: number, episode: number) =>
+export const aniSetProgress = (
+  entryId: number,
+  season: number,
+  episode: number,
+  positionSeconds?: number | null,
+) =>
   gql<{ aniSetProgress: boolean }>(
-    `mutation Progress($id: Int!, $season: Int!, $episode: Int!) {
-      aniSetProgress(entryId: $id, season: $season, episode: $episode)
+    `mutation Progress($id: Int!, $season: Int!, $episode: Int!, $seconds: Int) {
+      aniSetProgress(entryId: $id, season: $season, episode: $episode, positionSeconds: $seconds)
     }`,
-    { id: entryId, season, episode },
+    { id: entryId, season, episode, seconds: positionSeconds ?? null },
   );
 
 export const aniFinish = (entryId: number) =>

@@ -228,6 +228,17 @@ async def test_set_progress_corrects_an_overshot_season():
         }
     assert flags == {1: True, 2: True, 3: False}
 
+    # Review fix: position_seconds (halfway bookmark) survives the backward-
+    # allowed correction path — it used to be NULLed unconditionally.
+    fixed = await store.set_progress(user_id, entry_id, 1, 3, 447)
+    assert isinstance(fixed, Success), fixed
+    pool = await db.get_pool()
+    async with pool.acquire() as con:
+        pos = await con.fetchval(
+            "SELECT cursor_position_seconds FROM ani_entries WHERE id = $1", entry_id
+        )
+    assert pos == 447
+
 
 async def test_set_progress_validates_season_and_owner():
     owner = await _user()

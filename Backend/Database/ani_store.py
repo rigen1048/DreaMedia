@@ -643,7 +643,8 @@ class AniStore:
         return Success({"season": season, "episode": episode, "position_seconds": position_seconds})
 
     async def set_progress(
-        self, user_id: int, entry_id: int, season: int, episode: int
+        self, user_id: int, entry_id: int, season: int, episode: int,
+        position_seconds: Optional[int] = None,
     ) -> Result[Dict[str, Any], str]:
         """Explicit progress correction — the one path that may move backwards.
 
@@ -653,6 +654,8 @@ class AniStore:
         the user and re-derives the season flags from the new position:
         seasons before the cursor are watched, the cursor season only when its
         episode count is known and reached, everything after is not watched.
+
+        position_seconds carries the halfway-watch bookmark (P15); None clears it.
         """
         if season < 1:
             return Failure("season must be >= 1")
@@ -674,8 +677,8 @@ class AniStore:
                     return Failure(f"season {season} not in this entry's chain")
                 await con.execute(
                     "UPDATE ani_entries SET cursor_season = $3, cursor_episode = $4, "
-                    "cursor_position_seconds = NULL WHERE id = $1 AND user_id = $2",
-                    entry_id, user_id, season, episode,
+                    "cursor_position_seconds = $5 WHERE id = $1 AND user_id = $2",
+                    entry_id, user_id, season, episode, position_seconds,
                 )
                 # A correction is also an answer to "where are you?": an entry
                 # waiting for a sequel becomes watchable again.
