@@ -275,6 +275,13 @@ function AnimeCard({ entry, expanded, onToggle }: { entry: AniEntry; expanded: b
           <div className="divide-y rounded-lg border">
             {entry.seasons.map((season) => (
               <div key={season.seasonNo} className="flex items-center gap-3 px-3 py-2 text-sm">
+                {season.poster && (
+                  <img
+                    src={season.poster}
+                    alt={`Season ${season.seasonNo} poster`}
+                    className="h-10 w-10 shrink-0 rounded object-cover border border-border"
+                  />
+                )}
                 <b className="w-8">S{season.seasonNo}</b>
                 <span className="min-w-0 flex-1 truncate">
                   {season.title ?? `Season ${season.seasonNo}`}

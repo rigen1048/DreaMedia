@@ -77,12 +77,13 @@ class AniStore:
             await con.execute(
                 """
                 INSERT INTO ani_seasons
-                    (entry_id, season_no, anilist_id, title_enc, status,
-                     episodes_total, episodes_aired, start_date,
+                    (entry_id, season_no, anilist_id, title_enc, poster_enc,
+                     status, episodes_total, episodes_aired, start_date,
                      next_airing_at, next_airing_ep)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
                 ON CONFLICT (entry_id, season_no) DO UPDATE SET
-                    title_enc = EXCLUDED.title_enc, status = EXCLUDED.status,
+                    title_enc = EXCLUDED.title_enc, poster_enc = EXCLUDED.poster_enc,
+                    status = EXCLUDED.status,
                     episodes_total = EXCLUDED.episodes_total,
                     episodes_aired = EXCLUDED.episodes_aired,
                     start_date = EXCLUDED.start_date,
@@ -91,6 +92,7 @@ class AniStore:
                 """,
                 entry_id, season_no, int(video["id"]),
                 encrypt(key, video.get("title")),
+                encrypt(key, video.get("thumbnail") or ""),
                 video.get("status"),
                 video.get("episodes"),
                 _aired(video),
@@ -502,7 +504,7 @@ class AniStore:
                        a.list, a.watch_state, a.active, a.notify_release,
                        a.canon_only, a.cursor_season, a.cursor_episode, a.cursor_position_seconds,
                        a.anime_type, a.airing_time, a.subdomain_id,
-                       s.season_no, s.title_enc AS s_title_enc, s.status, s.episodes_total,
+                       s.season_no, s.title_enc AS s_title_enc, s.poster_enc AS s_poster_enc, s.status, s.episodes_total,
                        s.episodes_aired, s.state, s.watched, s.start_date, s.release_date,
                        s.next_airing_at, s.next_airing_ep,
                        d.id AS d_id, d.name_enc AS d_enc, d.notify AS d_notify,
@@ -548,7 +550,9 @@ class AniStore:
             if r["season_no"] is not None:
                 entry["seasons"].append(
                     {
-                        "season_no": r["season_no"], "title": decrypt(key, r["s_title_enc"]),
+                        "season_no": r["season_no"],
+                        "title": decrypt(key, r["s_title_enc"]),
+                        "poster": decrypt(key, r["s_poster_enc"]) or None,
                         "status": r["status"],
                         "episodes_total": r["episodes_total"],
                         "episodes_aired": r["episodes_aired"],

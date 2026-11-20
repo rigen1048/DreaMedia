@@ -206,6 +206,7 @@ CREATE TABLE IF NOT EXISTS ani_seasons (
     season_no     INTEGER NOT NULL,
     anilist_id    INTEGER NOT NULL,
     title_enc     BYTEA,
+    poster_enc    BYTEA,                       -- P14: per-season poster (AniList coverImage)
     status        TEXT,
     episodes_total INTEGER,
     episodes_aired INTEGER,
@@ -218,6 +219,9 @@ CREATE TABLE IF NOT EXISTS ani_seasons (
     watched       BOOLEAN NOT NULL DEFAULT FALSE,  -- D21 awaited-tier
     PRIMARY KEY (entry_id, season_no)
 );
+
+-- P14: existing installs get the poster column too.
+ALTER TABLE ani_seasons ADD COLUMN IF NOT EXISTS poster_enc BYTEA;
 
 CREATE TABLE IF NOT EXISTS ani_schedule (
     entry_id      INTEGER NOT NULL REFERENCES ani_entries(id) ON DELETE CASCADE,

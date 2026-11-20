@@ -28,7 +28,7 @@ const WORKSPACE_QUERY = `
       episodeCount airedCount watchedSeasons releaseDate nextAiringAt nextAiringEp
       seasons {
         seasonNo title status episodesTotal episodesAired state watched
-        startDate releaseDate nextAiringAt nextAiringEp
+        startDate releaseDate nextAiringAt nextAiringEp poster
       }
     }
     aniEvents(includeSeen: true) {

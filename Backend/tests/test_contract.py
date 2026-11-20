@@ -225,3 +225,38 @@ async def test_ani_events_seen_and_management_meta():
         assert await store.mark_events_seen(user_id, [events[0]["id"]]) == 1
         assert (await store.events_feed(user_id, include_seen=True))[0]["seen"] is True
     await store.delete_entry(user_id, entry_id)
+
+
+# ---------- per-season posters (P14) ----------
+
+async def test_anime_seasons_store_all_posters():
+    """P14: every season's poster is stored and exposed via management view,
+    so the frontend can show the poster for the season the user is at."""
+    user_id = await _user_id()
+    store, entry_id, total = await _ani_entry(user_id)
+    assert total >= 2, "Naruto chain should resolve multiple seasons"
+
+    view = await store.management_view(user_id)
+    entry = [e for e in view if e["id"] == entry_id][0]
+    assert len(entry["seasons"]) == total
+
+    # every season carries a poster (AniList coverImage.large)
+    for season in entry["seasons"]:
+        assert season.get("poster"), f"season {season['seasonNo']} missing poster"
+        assert season["poster"].startswith("http"), f"season {season['seasonNo']} poster not a URL"
+
+    # poster differs per season (each season has its own cover)
+    posters = {s["poster"] for s in entry["seasons"]}
+    assert len(posters) == total, "each season should have its own poster"
+
+    # direct season row also has poster_enc
+    pool = await db.get_pool()
+    async with pool.acquire() as con:
+        rows = await con.fetch(
+            "SELECT season_no, poster_enc IS NOT NULL AS has_poster FROM ani_seasons "
+            "WHERE entry_id = $1 ORDER BY season_no",
+            entry_id,
+        )
+    assert all(r["has_poster"] for r in rows), "every season row should store poster_enc"
+
+    await store.delete_entry(user_id, entry_id)

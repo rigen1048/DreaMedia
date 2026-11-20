@@ -79,6 +79,7 @@ export type PlaylistCard = {
 export type AniSeason = {
   seasonNo: number;
   title: string | null;
+  poster: string | null;
   status: string | null;
   episodesTotal: number | null;
   episodesAired: number | null;
