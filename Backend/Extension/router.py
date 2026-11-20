@@ -14,6 +14,7 @@ from returns.result import Failure
 from Database.ani_store import AniStore
 from Database.card_store import CardStore
 from Database.pg_store import PgStore
+from Extension.store import ExtDomainStore
 from Extension.tokens import user_for_token
 
 router = APIRouter(prefix="/ext", tags=["extension"])
@@ -147,6 +148,36 @@ async def add_items(card_id: int, body: ItemsBody, user_id: int = Depends(ext_us
         else:
             added += 1
     return {"added": added, "requested": len(body.links), "errors": errors}
+
+
+# ---- extension v2 phase 1: domain allowlist ----
+
+@router.get("/domains")
+async def domains(user_id: int = Depends(ext_user)):
+    """Enabled allowlist for content-script registration. Requires the vault
+    (domain names are ciphertext) — 423 when locked; the extension keeps its
+    last cached copy then."""
+    rows = await ExtDomainStore().list_domains(user_id, enabled_only=True)
+    if any(r["domain"] is None for r in rows):
+        raise HTTPException(
+            423, "vault locked — log into DreaMedia once to unlock your data, then retry"
+        )
+    return {"domains": rows}
+
+
+class DomainBody(BaseModel):
+    domain: str
+    media: str = "ani"
+
+
+@router.post("/domains")
+async def add_domain(body: DomainBody, user_id: int = Depends(ext_user)):
+    """Popup's 'Enable DreaMedia on this site' button."""
+    result = await ExtDomainStore().add_domain(user_id, body.domain, body.media)
+    _locked(result)
+    if isinstance(result, Failure):
+        raise HTTPException(400, result.failure())
+    return {"ok": True, **result.unwrap()}
 
 
 @router.get("/ani/entries")

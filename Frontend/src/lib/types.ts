@@ -2,6 +2,13 @@ export type Viewer = { id: number; username: string; role: string };
 
 export type YtKind = "tracking" | "wordscan" | "playlist" | "random" | "withhold";
 
+export interface ExtDomain {
+  id: number;
+  domain: string | null;
+  media: "yt" | "ani";
+  enabled: boolean;
+}
+
 export type YtVideo = {
   id: number;
   channelId: number;
