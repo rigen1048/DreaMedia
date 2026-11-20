@@ -117,3 +117,45 @@ async def test_blocked_categories():
             "SELECT blocked_domain_enc IS NOT NULL FROM yt_channels WHERE user_id = $1", uid
         )
     assert ani_row and yt_row
+
+
+async def test_ani_trash_ownership_and_restore():
+    """Anime trash operations must use the entry owner, not a missing event column."""
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        await con.execute(
+            "DELETE FROM users WHERE username = ANY($1::text[])",
+            ["cleanup_trash_owner", "cleanup_trash_other"],
+        )
+    owner = await _user("cleanup_trash_owner")
+    other = await _user("cleanup_trash_other")
+    store = AniStore()
+    entry = await store.add_entry(owner, 21, "One Piece", None, PAYLOAD)
+    assert isinstance(entry, Success)
+
+    await store.emit_event(
+        owner,
+        entry.unwrap(),
+        1,
+        "episode_released",
+        "awaited",
+        {"episode": 1101, "title": "One Piece"},
+    )
+    async with pool.acquire() as con:
+        event_id = await con.fetchval(
+            "SELECT id FROM ani_events WHERE entry_id = $1 ORDER BY id DESC LIMIT 1",
+            entry.unwrap(),
+        )
+    assert event_id is not None
+
+    # A different user cannot trash or restore the owner's event.
+    assert await store.trash_events(other, [event_id]) == 0
+    assert await store.restore_events(other, [event_id]) == 0
+    assert await store.trash_feed(other) == []
+
+    assert await store.trash_events(owner, [event_id]) == 1
+    trash = await store.trash_feed(owner)
+    assert len(trash) == 1 and trash[0]["id"] == event_id
+
+    assert await store.restore_events(owner, [event_id]) == 1
+    assert await store.trash_feed(owner) == []
