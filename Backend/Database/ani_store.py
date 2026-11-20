@@ -238,8 +238,10 @@ class AniStore:
         pool = await get_pool()
         async with pool.acquire() as con:
             result = await con.execute(
-                "UPDATE ani_events SET seen = TRUE, trashed_at = now() "
-                "WHERE id = ANY($1) AND user_id = $2",
+                "UPDATE ani_events ev SET seen = TRUE, trashed_at = now() "
+                "FROM ani_entries entry "
+                "WHERE ev.entry_id = entry.id "
+                "AND ev.id = ANY($1) AND entry.user_id = $2",
                 event_ids, user_id,
             )
         return int(result.split()[-1])
@@ -250,8 +252,10 @@ class AniStore:
         pool = await get_pool()
         async with pool.acquire() as con:
             result = await con.execute(
-                "UPDATE ani_events SET trashed_at = NULL "
-                "WHERE id = ANY($1) AND user_id = $2",
+                "UPDATE ani_events ev SET trashed_at = NULL "
+                "FROM ani_entries entry "
+                "WHERE ev.entry_id = entry.id "
+                "AND ev.id = ANY($1) AND entry.user_id = $2",
                 event_ids, user_id,
             )
         return int(result.split()[-1])
@@ -267,7 +271,7 @@ class AniStore:
                 SELECT ev.id, ev.entry_id, ev.season_no, ev.kind, ev.tier, ev.seen,
                        ev.created_at, ev.trashed_at, ev.payload_enc, e.title_enc, e.cover_enc
                 FROM ani_events ev JOIN ani_entries e ON e.id = ev.entry_id
-                WHERE ev.user_id = $1 AND ev.trashed_at IS NOT NULL
+                WHERE e.user_id = $1 AND ev.trashed_at IS NOT NULL
                 ORDER BY ev.trashed_at DESC LIMIT $2
                 """,
                 user_id, limit,
