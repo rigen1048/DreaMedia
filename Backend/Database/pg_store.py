@@ -1079,7 +1079,7 @@ class PgStore:
         Management tree and the notification filter rail both read this."""
         key = await vault.get(user_id)
         if key is None:
-            return []
+            return {"domains": [], "unassigned_channels": 0}
         pool = await get_pool()
         async with pool.acquire() as con:
             rows = await con.fetch(
