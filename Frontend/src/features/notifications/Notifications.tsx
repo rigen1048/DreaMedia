@@ -98,7 +98,26 @@ export default function Notifications() {
         if (query && !`${row.event.title} ${row.event.label} ${row.event.domain} ${row.event.subdomain}`.toLowerCase().includes(query)) return false;
         return true;
       })
-      .sort((a, b) => b.at - a.at);
+      .sort((a, b) => {
+        // P5: serialize the feed so everything from one channel stays together
+        // (domain → subdomain → channel), newest-first within a channel,
+        // instead of a pure time sort that interleaves channels.
+        const aKey = [
+          a.kind === "yt" ? a.video.domain : a.event.domain,
+          a.kind === "yt" ? a.video.subdomain : a.event.subdomain,
+          a.kind === "yt" ? a.video.channel : a.event.title,
+        ];
+        const bKey = [
+          b.kind === "yt" ? b.video.domain : b.event.domain,
+          b.kind === "yt" ? b.video.subdomain : b.event.subdomain,
+          b.kind === "yt" ? b.video.channel : b.event.title,
+        ];
+        for (let i = 0; i < 3; i++) {
+          const c = String(aKey[i] ?? "").localeCompare(String(bKey[i] ?? ""));
+          if (c !== 0) return c;
+        }
+        return b.at - a.at;
+      })
   }, [bucket, group, mode, mutedOnly, search, scoped, unreadOnly]);
 
   const unreadVisible = filtered.filter((row) => (row.kind === "yt" ? !row.video.seen : !row.event.seen));
