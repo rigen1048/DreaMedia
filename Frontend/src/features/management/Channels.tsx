@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 const TYPE_LABEL: Record<YtKind, string> = {
   tracking: "Track", wordscan: "WordScan", playlist: "Playlist", random: "Random",
+  withhold: "Withhold",
 };
 
 const FREQUENCIES = [
@@ -85,13 +86,22 @@ function ChannelRow({
 }) {
   const [words, setWords] = useState(channel.words.join(", "));
   const [rank, setRank] = useState(channel.rank ?? "week");
+  const [withhold, setWithhold] = useState(channel.withholdThreshold ?? 2);
 
   const muted = !channel.notifyEnabled;
   const status = channel.label === "blocked" ? "Blocked" : channel.active === false ? "Paused" : "Live";
+  // Withhold is a tracking row with a threshold — display it as its own type.
+  const displayKind: YtKind = channel.withholdThreshold ? "withhold" : (channel.kind ?? "tracking");
 
   const typeSelect = (kind: YtKind) =>
     act(() =>
-      api.ytSetMode(channel.id, kind, kind === "wordscan" ? channel.words : undefined, kind === "random" ? rank : undefined),
+      api.ytSetMode(
+        channel.id,
+        kind,
+        kind === "wordscan" ? channel.words : undefined,
+        kind === "random" ? rank : undefined,
+        kind === "withhold" ? withhold : undefined,
+      ),
     );
 
   return (
@@ -115,7 +125,7 @@ function ChannelRow({
         </div>
 
         <div className="max-lg:hidden">
-          <Select value={channel.kind ?? "tracking"} onValueChange={(value) => void typeSelect(value as YtKind)}>
+          <Select value={displayKind} onValueChange={(value) => void typeSelect(value as YtKind)}>
             <SelectTrigger className="h-8" aria-label={`Notification type for ${channel.name}`}>
               <SelectValue />
             </SelectTrigger>
@@ -160,7 +170,7 @@ function ChannelRow({
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <div className="space-y-1.5">
               <Label>Notification type</Label>
-              <Select value={channel.kind ?? "tracking"} onValueChange={(value) => void typeSelect(value as YtKind)}>
+              <Select value={displayKind} onValueChange={(value) => void typeSelect(value as YtKind)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {(Object.keys(TYPE_LABEL) as YtKind[]).map((kind) => (
@@ -171,6 +181,38 @@ function ChannelRow({
                 </SelectContent>
               </Select>
             </div>
+
+            {displayKind === "withhold" && (
+              <div className="space-y-1.5">
+                <Label>Withhold threshold</Label>
+                <div className="flex gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    value={withhold}
+                    aria-label="Withhold threshold"
+                    onChange={(event) => {
+                      const v = Number(event.target.value);
+                      if (Number.isFinite(v)) setWithhold(Math.max(1, Math.round(v)));
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      void act(
+                        () => api.ytSetMode(channel.id, "withhold", undefined, undefined, withhold),
+                        "Withhold threshold saved",
+                      )
+                    }
+                  >
+                    Apply
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  New videos buffer invisibly until this many accumulate, then all show at once.
+                </p>
+              </div>
+            )}
 
             {channel.kind === "wordscan" && (
               <div className="space-y-1.5">

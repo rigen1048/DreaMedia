@@ -1,6 +1,6 @@
 export type Viewer = { id: number; username: string; role: string };
 
-export type YtKind = "tracking" | "wordscan" | "playlist" | "random";
+export type YtKind = "tracking" | "wordscan" | "playlist" | "random" | "withhold";
 
 export type YtVideo = {
   id: number;
@@ -30,6 +30,7 @@ export type YtChannel = {
   kind: YtKind | null;
   active: boolean | null;
   rank: string | null;
+  withholdThreshold: number | null;
   words: string[];
   domain: string;
   subdomain: string;

@@ -18,6 +18,7 @@ type Source = "youtube" | "anime";
 
 const MODE_LABEL: Record<YtKind, string> = {
   tracking: "Track", wordscan: "WordScan", playlist: "Playlist", random: "Random",
+  withhold: "Withhold",
 };
 
 type Row =

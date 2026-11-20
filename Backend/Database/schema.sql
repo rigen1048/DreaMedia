@@ -340,6 +340,13 @@ ALTER TABLE ani_events ADD CONSTRAINT ani_events_kind_check CHECK (kind IN (
     'episode_postponed', 'next_sequel', 'release_confirmed',
     'release_changed', 'episode_released'));
 
+-- F1 Withhold: quantity-batched notifications. Videos from a withhold
+-- subscription buffer (withheld=TRUE, hidden from the feed) until the
+-- buffered count reaches the threshold, then release as one batch.
+ALTER TABLE yt_tracking ADD COLUMN IF NOT EXISTS withhold_threshold INTEGER;
+ALTER TABLE yt_videos  ADD COLUMN IF NOT EXISTS withheld BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_yt_videos_withheld ON yt_videos(channel_id) WHERE withheld;
+
 -- Drift repair (found during review, 2026-11-20): databases created before
 -- the FK constraints existed never got them — CREATE TABLE IF NOT EXISTS is
 -- a no-op for existing tables, so inline REFERENCES clauses were skipped.
