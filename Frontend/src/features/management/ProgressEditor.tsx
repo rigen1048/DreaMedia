@@ -21,8 +21,10 @@ export function ProgressEditor({
   compact?: boolean;
 }) {
   const { notify, refresh } = useApp();
-  const [draftSeason, setDraftSeason] = useState(season);
-  const [draftEpisode, setDraftEpisode] = useState(episode);
+  // Drafts are `number | undefined` so the user can clear a field mid-edit
+  // instead of the controlled input snapping straight back to 0 (P12).
+  const [draftSeason, setDraftSeason] = useState<number | undefined>(season);
+  const [draftEpisode, setDraftEpisode] = useState<number | undefined>(episode);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -30,11 +32,12 @@ export function ProgressEditor({
     setDraftEpisode(episode);
   }, [season, episode]);
 
-  const dirty = draftSeason !== season || draftEpisode !== episode;
+  const dirty =
+    (draftSeason ?? season) !== season || (draftEpisode ?? episode) !== episode;
 
   const save = async () => {
-    const nextSeason = Math.max(1, Math.round(draftSeason) || 1);
-    const nextEpisode = Math.max(0, Math.round(draftEpisode) || 0);
+    const nextSeason = Math.max(1, Math.round(draftSeason ?? season));
+    const nextEpisode = Math.max(0, Math.round(draftEpisode ?? episode));
     setBusy(true);
     try {
       await api.aniSetProgress(entryId, nextSeason, nextEpisode);
@@ -55,7 +58,10 @@ export function ProgressEditor({
         min={1}
         value={draftSeason}
         aria-label="Season"
-        onChange={(event) => setDraftSeason(Number(event.target.value))}
+        onChange={(event) => {
+          const v = event.target.value;
+          setDraftSeason(v === "" ? undefined : Number.isFinite(Number(v)) ? Number(v) : draftSeason);
+        }}
         onKeyDown={(event) => event.key === "Enter" && void save()}
         className="h-8 w-16 px-2 text-center"
       />
@@ -63,9 +69,12 @@ export function ProgressEditor({
       <Input
         type="number"
         min={0}
-        value={draftEpisode}
+        value={draftEpisode ?? ""}
         aria-label="Episode"
-        onChange={(event) => setDraftEpisode(Number(event.target.value))}
+        onChange={(event) => {
+          const v = event.target.value;
+          setDraftEpisode(v === "" ? undefined : Number.isFinite(Number(v)) ? Number(v) : draftEpisode);
+        }}
         onKeyDown={(event) => event.key === "Enter" && void save()}
         className="h-8 w-16 px-2 text-center"
       />
