@@ -100,7 +100,7 @@ function ChannelRow({
         "grid grid-cols-[1fr_130px_150px_70px_110px_50px] items-center gap-2 border-b px-3 py-2.5 max-lg:grid-cols-[1fr_50px]",
         open && "bg-accent/40",
       )}>
-        <div className="flex min-w-0 items-center gap-2.5">
+        <div className={cn("flex min-w-0 items-center gap-2.5 cursor-pointer", open && "bg-accent/20 rounded-md p-1")} onClick={onToggle} role="button" tabIndex={0} aria-label={`Edit ${channel.name}`}>
           {channel.logo ? (
             <img className="h-8 w-8 shrink-0 rounded-full object-cover" src={channel.logo} alt="" loading="lazy" referrerPolicy="no-referrer" />
           ) : (
