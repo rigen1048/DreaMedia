@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { BackendError, isAuthError } from "../lib/gql";
 import type { Workspace } from "../lib/types";
 import * as api from "./api";
@@ -46,6 +47,7 @@ const EMPTY: Workspace = {
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [manualRefreshing, setManualRefreshing] = useState(false);
   const toastId = useRef(0);
@@ -121,8 +123,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await api.logout();
     } finally {
       queryClient.clear();
+      // P8: kick out immediately — send the user straight to the login screen
+      // instead of leaving them in a loading state after the cache clears.
+      navigate("/");
     }
-  }, [queryClient]);
+  }, [queryClient, navigate]);
 
   const value = useMemo<AppState>(() => {
     const workspace = query.data ?? null;
