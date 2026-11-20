@@ -81,6 +81,21 @@ async def set_value(key: str, value: str) -> Result[str, str]:
             key,
             str(typed),
         )
+    # P6: honor the keep-last cap immediately on save — drop everything
+    # beyond the new maximum right away instead of waiting for the next
+    # scheduled backup.
+    if key == "backup_keep_latest":
+        from pathlib import Path
+
+        from Admin import backup
+
+        removed = await backup.prune_old_backups(
+            Path(str(await get_typed("backup_dir") or "./backups"))
+        )
+        if removed:
+            from Utility.logs import log
+
+            log.info("retention pruned %s old dump(s) after keep-last save", removed)
     return Success(str(typed))
 
 
