@@ -5,19 +5,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 /**
- * Direct season/episode editor. The "+1" cursor and the season bump only move
- * forward by design; this is the way back when a bump overshoots (or when the
- * anime was added with the wrong starting season).
+ * Direct season/episode/position editor. The "+1" cursor and the season bump
+ * only move forward by design; this is the way back when a bump overshoots
+ * (or when the anime was added with the wrong starting point).
+ *
+ * Supports "halfway watch" — seconds are persisted via aniSetCursor so the
+ * frontend can resume mid-episode (P15).
  */
 export function ProgressEditor({
   entryId,
   season,
   episode,
+  positionSeconds,
   compact = false,
 }: {
   entryId: number;
   season: number;
   episode: number;
+  positionSeconds?: number | null;
   compact?: boolean;
 }) {
   const { notify, refresh } = useApp();
@@ -25,24 +30,36 @@ export function ProgressEditor({
   // instead of the controlled input snapping straight back to 0 (P12).
   const [draftSeason, setDraftSeason] = useState<number | undefined>(season);
   const [draftEpisode, setDraftEpisode] = useState<number | undefined>(episode);
+  const [draftSeconds, setDraftSeconds] = useState<number | undefined>(
+    positionSeconds ?? 0,
+  );
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setDraftSeason(season);
     setDraftEpisode(episode);
-  }, [season, episode]);
+    setDraftSeconds(positionSeconds ?? 0);
+  }, [season, episode, positionSeconds]);
 
   const dirty =
-    (draftSeason ?? season) !== season || (draftEpisode ?? episode) !== episode;
+    (draftSeason ?? season) !== season ||
+    (draftEpisode ?? episode) !== episode ||
+    (draftSeconds ?? 0) !== Math.max(0, positionSeconds ?? 0);
 
   const save = async () => {
     const nextSeason = Math.max(1, Math.round(draftSeason ?? season));
     const nextEpisode = Math.max(0, Math.round(draftEpisode ?? episode));
+    const nextSeconds = Math.max(0, Math.round(draftSeconds ?? 0));
     setBusy(true);
     try {
-      await api.aniSetProgress(entryId, nextSeason, nextEpisode);
+      await api.aniSetCursor(entryId, nextSeason, nextEpisode, nextSeconds);
       await refresh();
-      notify(`Progress set to S${nextSeason} E${nextEpisode}`, "ok");
+      notify(
+        `Progress set to S${nextSeason} E${nextEpisode}${
+          nextSeconds > 0 ? ` @ ${nextSeconds}s` : ""
+        }`,
+        "ok",
+      );
     } catch (error) {
       notify(error instanceof Error ? error.message : "Could not set progress", "error");
     } finally {
@@ -77,6 +94,20 @@ export function ProgressEditor({
         }}
         onKeyDown={(event) => event.key === "Enter" && void save()}
         className="h-8 w-16 px-2 text-center"
+      />
+      <span className="text-muted-foreground">·</span>
+      <Input
+        type="number"
+        min={0}
+        value={draftSeconds ?? ""}
+        aria-label="Time (seconds)"
+        placeholder="0s"
+        onChange={(event) => {
+          const v = event.target.value;
+          setDraftSeconds(v === "" ? undefined : Number.isFinite(Number(v)) ? Number(v) : draftSeconds);
+        }}
+        onKeyDown={(event) => event.key === "Enter" && void save()}
+        className="h-8 w-20 px-2 text-center"
       />
       <Button
         size="sm"

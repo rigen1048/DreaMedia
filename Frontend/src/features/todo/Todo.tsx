@@ -286,7 +286,7 @@ function QueueCard({ entryId }: { entryId: number }) {
               </Button>
               <Button size="sm" variant="secondary" onClick={() => void advance()}>Next season</Button>
               <Button size="sm" variant="ghost" onClick={() => void act(() => api.aniFinish(entry.id), "Completed")}>Finish</Button>
-              <ProgressEditor entryId={entry.id} season={season} episode={episode} compact />
+              <ProgressEditor entryId={entry.id} season={season} episode={episode} positionSeconds={entry.positionSeconds ?? 0} compact />
             </>
           ) : (
             <Button size="sm" onClick={() => void act(() => api.aniUpdateEntry(entry.id, { listKind: "watching" }), "Moved to watching")}>

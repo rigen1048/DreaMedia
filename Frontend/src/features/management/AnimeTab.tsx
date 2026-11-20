@@ -248,7 +248,7 @@ function AnimeCard({ entry, expanded, onToggle }: { entry: AniEntry; expanded: b
             <strong className="text-sm">Seasons</strong>
             <span className="text-xs text-muted-foreground">{entry.seasons.length} tracked</span>
             <span className="grow" />
-            <ProgressEditor entryId={entry.id} season={entry.cursorSeason ?? 1} episode={entry.cursorEpisode ?? 0} compact />
+            <ProgressEditor entryId={entry.id} season={entry.cursorSeason ?? 1} episode={entry.cursorEpisode ?? 0} positionSeconds={entry.positionSeconds ?? 0} compact />
             <Button
               size="sm"
               onClick={() =>
