@@ -912,16 +912,20 @@ class PgStore:
     async def set_channel_active(
         self, user_id: int, channel_id: int, active: bool
     ) -> Result[Dict[str, Any], str]:
-        """Channel active switch = reserved label (D22). Never touches blocked."""
+        """Channel active switch = the single Paused control (P3): reserved
+        label AND channel-level notify are one concept. Never touches blocked.
+        Resuming also clears any legacy channel mute (notify=TRUE)."""
         key = await vault.get(user_id)
         if key is None:
             return Failure("vault locked (D9)")
         pool = await get_pool()
         async with pool.acquire() as con:
             result = await con.execute(
-                "UPDATE yt_channels SET label = $3 WHERE id = $1 AND user_id = $2 "
+                "UPDATE yt_channels SET label = $3, "
+                "notify = CASE WHEN $4 THEN TRUE ELSE notify END "
+                "WHERE id = $1 AND user_id = $2 "
                 "AND label != 'blocked'",
-                channel_id, user_id, "none" if active else "reserved",
+                channel_id, user_id, "none" if active else "reserved", active,
             )
         if result.endswith("0"):
             return Failure("channel not found (or blocked)")

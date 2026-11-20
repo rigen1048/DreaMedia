@@ -56,8 +56,8 @@ export default function Channels({ search, filter, onAdd }: Props) {
 
   return (
     <div className="overflow-hidden rounded-xl border">
-      <div className="grid grid-cols-[1fr_130px_150px_70px_110px_50px] gap-2 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground max-lg:hidden">
-        <span>Source</span><span>Type</span><span>Category</span><span>Notify</span><span>Status</span><span className="text-right">Open</span>
+      <div className="grid grid-cols-[1fr_130px_150px_110px_50px] gap-2 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground max-lg:hidden">
+        <span>Source</span><span>Type</span><span>Category</span><span>Status</span><span className="text-right">Open</span>
       </div>
       {rows.length === 0 && <EmptyState title="No sources match" hint="Try clearing the search or filter." />}
       {rows.map((channel) => (
@@ -97,7 +97,7 @@ function ChannelRow({
   return (
     <>
       <div className={cn(
-        "grid grid-cols-[1fr_130px_150px_70px_110px_50px] items-center gap-2 border-b px-3 py-2.5 max-lg:grid-cols-[1fr_50px]",
+        "grid grid-cols-[1fr_130px_150px_110px_50px] items-center gap-2 border-b px-3 py-2.5 max-lg:grid-cols-[1fr_50px]",
         open && "bg-accent/40",
       )}>
         <div className={cn("flex min-w-0 items-center gap-2.5 cursor-pointer", open && "bg-accent/20 rounded-md p-1")} onClick={onToggle} role="button" tabIndex={0} aria-label={`Edit ${channel.name}`}>
@@ -133,14 +133,6 @@ function ChannelRow({
           <b>{channel.domain}</b>
           <i className="not-italic opacity-50"> / </i>
           {channel.subdomain}
-        </div>
-
-        <div className="max-lg:hidden">
-          <Switch
-            checked={channel.notify}
-            aria-label={`Notify for ${channel.name}`}
-            onCheckedChange={(next) => void act(() => api.ytSetNotify(channel.id, next))}
-          />
         </div>
 
         <div className="max-lg:hidden">
@@ -242,21 +234,6 @@ function ChannelRow({
             </div>
 
             <div className="space-y-1.5">
-              <Label>Label</Label>
-              <Select
-                value={channel.label}
-                onValueChange={(value) => void act(() => api.ytSetLabel(channel.id, value, channel.labelReason ?? undefined))}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  <SelectItem value="reserved">Reserved (paused)</SelectItem>
-                  <SelectItem value="blocked">Blocked</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-1.5">
               <Label>Channel state</Label>
               <div className="flex h-9 items-center gap-2">
                 <Switch
@@ -264,7 +241,7 @@ function ChannelRow({
                   aria-label="Channel active"
                   onCheckedChange={(next) => void act(() => api.ytSetActive(channel.id, next))}
                 />
-                <span className="text-xs text-muted-foreground">{channel.active === false ? "Paused" : "Receiving"}</span>
+                <span className="text-xs text-muted-foreground">{channel.active === false ? "Paused — still subscribed, receiving nothing" : "Receiving"}</span>
               </div>
             </div>
           </div>
