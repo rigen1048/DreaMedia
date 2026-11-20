@@ -347,6 +347,21 @@ ALTER TABLE yt_tracking ADD COLUMN IF NOT EXISTS withhold_threshold INTEGER;
 ALTER TABLE yt_videos  ADD COLUMN IF NOT EXISTS withheld BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_yt_videos_withheld ON yt_videos(channel_id) WHERE withheld;
 
+-- Extension v2 phase 1: per-user website allowlist (design:
+-- Extension/Docs/extension-design.md). The extension registers its content
+-- scripts ONLY on these domains — nothing runs on arbitrary pages. media
+-- picks the module ('yt' | 'ani') that activates on the domain.
+CREATE TABLE IF NOT EXISTS ext_domains (
+    id            SERIAL PRIMARY KEY,
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    domain_enc    BYTEA NOT NULL,
+    domain_hash   BYTEA NOT NULL,           -- blind index (crypto.index_hash)
+    media         TEXT NOT NULL CHECK (media IN ('yt', 'ani')),
+    enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+    added_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, domain_hash, media)
+);
+
 -- Drift repair (found during review, 2026-11-20): databases created before
 -- the FK constraints existed never got them — CREATE TABLE IF NOT EXISTS is
 -- a no-op for existing tables, so inline REFERENCES clauses were skipped.

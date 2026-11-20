@@ -30,8 +30,42 @@ $("saveConfig").addEventListener("click", async () => {
   await chrome.storage.local.set({ backendUrl: $("backendUrl").value.trim(), token: $("token").value.trim() });
   const r = await send("dreamedia:ping");
   status("configStatus", r.ok ? "Connected ✓" : `Failed: ${r.error}`, r.ok ? "ok" : "err");
-  if (r.ok) loadLists();
+  if (r.ok) {
+    await send("dreamedia:refreshDomains");
+    loadLists();
+    checkSite();
+  }
 });
+
+// ---- this site (ext v2: domain allowlist) ----
+async function checkSite() {
+  const tab = await currentTab();
+  if (!tab?.url || !/^https?:/.test(tab.url)) {
+    $("siteHost").textContent = "";
+    $("siteEnable").style.display = "none";
+    return;
+  }
+  const r = await send("dreamedia:domainStatus", { url: tab.url });
+  if (!r.ok) return;
+  if (r.registered) {
+    $("siteHost").textContent = `${r.host} — enabled (${r.registered.media === "ani" ? "anime" : "youtube"})`;
+    $("siteEnable").style.display = "none";
+  } else {
+    $("siteHost").textContent = `${r.host} — not enabled`;
+    $("siteEnable").style.display = "";
+  }
+}
+
+$("enableSite").addEventListener("click", async () => {
+  status("siteStatus", "Enabling…");
+  const r = await send("dreamedia:addDomain", {
+    domain: (await currentTab()).url,
+    media: $("siteMedia").value,
+  });
+  status("siteStatus", r.ok ? "Enabled ✓ — tracking starts on next page load" : `Failed: ${r.error}`, r.ok ? "ok" : "err");
+  if (r.ok) checkSite();
+});
+checkSite();
 
 // ---- conditional fields ----
 $("kind").addEventListener("change", () => {

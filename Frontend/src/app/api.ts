@@ -1,5 +1,5 @@
 import { API_BASE, gql } from "../lib/gql";
-import type { Workspace } from "../lib/types";
+import type { ExtDomain, Workspace } from "../lib/types";
 
 const WORKSPACE_QUERY = `
   query Workspace {
@@ -593,6 +593,31 @@ export const extIssueToken = () =>
 
 export const extRevokeToken = () =>
   gql<{ extRevokeToken: boolean }>(`mutation RevokeToken { extRevokeToken }`);
+
+export const extDomains = () =>
+  gql<{ extDomains: ExtDomain[] }>(`query ExtDomains { extDomains { id domain media enabled } }`);
+
+export const extAddDomain = (domain: string, media: string) =>
+  gql<{ extAddDomain: ExtDomain }>(
+    `mutation ExtAddDomain($domain: String!, $media: String!) {
+      extAddDomain(domain: $domain, media: $media) { id domain media enabled }
+    }`,
+    { domain, media },
+  );
+
+export const extSetDomainEnabled = (domainId: number, enabled: boolean) =>
+  gql<{ extSetDomainEnabled: boolean }>(
+    `mutation ExtSetDomainEnabled($id: Int!, $enabled: Boolean!) {
+      extSetDomainEnabled(domainId: $id, enabled: $enabled)
+    }`,
+    { id: domainId, enabled },
+  );
+
+export const extRemoveDomain = (domainId: number) =>
+  gql<{ extRemoveDomain: boolean }>(
+    `mutation ExtRemoveDomain($id: Int!) { extRemoveDomain(domainId: $id) }`,
+    { id: domainId },
+  );
 
 export const exportData = () =>
   gql<{ exportData: string }>(`query ExportData { exportData }`);

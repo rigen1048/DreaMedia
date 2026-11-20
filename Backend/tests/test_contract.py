@@ -8,6 +8,7 @@ from Auth import auth
 from Database import db
 from Database.ani_store import AniStore
 from Database.pg_store import PgStore, PgSubscription
+from Extension.store import ExtDomainStore
 from Orchestrator.Ani.Fetch.ani_track import ani_fetch
 from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
 
@@ -201,6 +202,51 @@ async def test_withhold_buffers_then_releases_as_a_batch():
     assert view["withhold_threshold"] is None
 
     await store.delete_channel(user_id, cid)
+
+
+# ---------- extension v2 phase 1: domain allowlist ----------
+
+async def test_ext_domains_allowlist_crud():
+    """Ext v2: the extension runs only on allowlisted domains. Add (with URL
+    normalization), list, toggle, remove; same domain allowed per media."""
+    user_id = await _user_id()
+    store = ExtDomainStore()
+
+    added = await store.add_domain(user_id, "HTTPS://WWW.Example.com/watch?v=1", "ani")
+    assert isinstance(added, Success)
+    row = added.unwrap()
+    assert row["domain"] == "example.com" and row["media"] == "ani" and row["enabled"]
+
+    # Invalid input rejected
+    assert isinstance(await store.add_domain(user_id, "localhost", "ani"), Failure)
+    assert isinstance(await store.add_domain(user_id, "example.org", "podcast"), Failure)
+
+    # Same domain under the other media is a separate row
+    added_yt = await store.add_domain(user_id, "example.com", "yt")
+    assert isinstance(added_yt, Success)
+
+    # Re-adding an existing (domain, media) re-enables instead of duplicating
+    again = await store.add_domain(user_id, "example.com", "ani")
+    assert isinstance(again, Success) and again.unwrap()["id"] == row["id"]
+
+    rows = await store.list_domains(user_id)
+    assert {(r["domain"], r["media"]) for r in rows} == {
+        ("example.com", "ani"), ("example.com", "yt"),
+    }
+
+    # Toggle off -> excluded from enabled_only; on -> back
+    assert isinstance(await store.set_enabled(user_id, row["id"], False), Success)
+    enabled = await store.list_domains(user_id, enabled_only=True)
+    assert all(r["domain"] != "example.com" or r["media"] != "ani" for r in enabled)
+    assert isinstance(await store.set_enabled(user_id, row["id"], True), Success)
+
+    # Ownership guard
+    assert isinstance(await store.set_enabled(user_id, 999999, True), Failure)
+    assert isinstance(await store.remove_domain(user_id, 999999), Failure)
+
+    assert isinstance(await store.remove_domain(user_id, row["id"]), Success)
+    assert isinstance(await store.remove_domain(user_id, added_yt.unwrap()["id"]), Success)
+    assert await store.list_domains(user_id) == []
 
 
 # ---------- category CRUD (P1) ----------

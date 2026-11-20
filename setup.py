@@ -124,7 +124,9 @@ def build_extensions() -> None:
         for src in sorted(SHARED.iterdir()):
             if src.is_file():
                 shutil.copy2(src, target / src.name)
-        print(f"→ extension built: {variant}/ ({len(list(target.iterdir()))} files)")
+            elif src.is_dir():
+                shutil.copytree(src, target / src.name, dirs_exist_ok=True)
+        print(f"→ extension built: {variant}/ ({len(list(target.iterdir()))} entries)")
 
 
 def db_running(env) -> bool:
