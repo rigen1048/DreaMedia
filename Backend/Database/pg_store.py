@@ -866,16 +866,36 @@ class PgStore:
                 if not owner:
                     return Failure("channel not found")
                 if kind in ("tracking", "wordscan"):
-                    rss_id = await con.fetchval(
-                        "SELECT rss_id_enc FROM yt_tracking WHERE channel_id = $1", channel_id
+                    # P2: resolve the RSS source — prefer the existing tracking
+                    # row; fall back to the channel's own URL so a random- or
+                    # playlist-mode channel can switch into tracking/wordscan.
+                    row = await con.fetchrow(
+                        "SELECT t.rss_id_enc AS tracking_enc, c.url_enc AS url_enc "
+                        "FROM yt_channels c "
+                        "LEFT JOIN yt_tracking t ON t.channel_id = c.id "
+                        "WHERE c.id = $1 AND c.user_id = $2",
+                        channel_id, user_id,
                     )
-                    if rss_id is None:
+                    if row is None:
+                        return Failure("channel not found")
+                    tracking_enc = row["tracking_enc"]
+                    rss_plain = decrypt(key, tracking_enc) if tracking_enc else None
+                    if not rss_plain:
+                        rss_plain = decrypt(key, row["url_enc"]) or ""
+                    if not rss_plain:
                         return Failure("no RSS link on this channel to switch into tracking/wordscan")
+                    rss_id_enc = encrypt(key, rss_plain)
+                    rss_hash = index_hash(key, rss_plain)
                     await con.execute("DELETE FROM yt_playlists WHERE channel_id = $1", channel_id)
                     await con.execute("DELETE FROM yt_randomsubs WHERE channel_id = $1", channel_id)
                     await con.execute(
-                        "UPDATE yt_tracking SET kind = $2, word_enc = $3 WHERE channel_id = $1",
-                        channel_id, kind, encrypt(key, ",".join(words)) if words else None,
+                        "INSERT INTO yt_tracking (channel_id, rss_id_enc, rss_hash, kind, word_enc) "
+                        "VALUES ($1, $2, $3, $4, $5) "
+                        "ON CONFLICT (channel_id) DO UPDATE SET "
+                        "rss_id_enc = EXCLUDED.rss_id_enc, rss_hash = EXCLUDED.rss_hash, "
+                        "kind = EXCLUDED.kind, word_enc = EXCLUDED.word_enc",
+                        channel_id, rss_id_enc, rss_hash, kind,
+                        encrypt(key, ",".join(words)) if words else None,
                     )
                 elif kind == "playlist":
                     return Failure("switching to playlist requires re-subscribing with the playlist link")

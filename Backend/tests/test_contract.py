@@ -105,6 +105,42 @@ async def test_switch_mode_exclusive_and_active_toggle():
     await store.delete_channel(user_id, cid)
 
 
+# ---------- mode switch: random -> tracking/wordscan (P2) ----------
+
+async def test_switch_mode_random_to_tracking_and_wordscan():
+    """P2: a channel in random mode can be switched into tracking/wordscan,
+    using its own URL as the RSS source (no tracking row exists yet)."""
+    user_id = await _user_id()
+    store = PgStore()
+    added = await store.add_tracking(user_id, "UCp2chan", "P2 Chan", "https://yt/UCp2chan")
+    cid = added.unwrap()
+
+    # tracking -> random (tracking row dropped, randomsub created)
+    result = await store.switch_mode(user_id, cid, "random", rank="week")
+    assert isinstance(result, Success)
+    pool = await db.get_pool()
+    async with pool.acquire() as con:
+        assert await con.fetchval("SELECT 1 FROM yt_tracking WHERE channel_id = $1", cid) is None
+        assert await con.fetchval("SELECT rank FROM yt_randomsubs WHERE channel_id = $1", cid) == "week"
+
+    # random -> tracking: should now succeed (P2 fix), reusing the channel URL as RSS
+    result = await store.switch_mode(user_id, cid, "tracking")
+    assert isinstance(result, Success)
+    view = [c for c in await store.channels_view(user_id) if c["id"] == cid][0]
+    assert view["kind"] == "tracking"
+    async with pool.acquire() as con:
+        assert await con.fetchval("SELECT 1 FROM yt_tracking WHERE channel_id = $1", cid) is not None
+        assert await con.fetchval("SELECT 1 FROM yt_randomsubs WHERE channel_id = $1", cid) is None
+
+    # tracking -> wordscan (exclusive, keeps the row)
+    result = await store.switch_mode(user_id, cid, "wordscan", words=["p2"])
+    assert isinstance(result, Success)
+    view = [c for c in await store.channels_view(user_id) if c["id"] == cid][0]
+    assert view["kind"] == "wordscan" and view["words"] == ["p2"]
+
+    await store.delete_channel(user_id, cid)
+
+
 # ---------- category CRUD (P1) ----------
 
 async def test_category_crud_and_quick_rename():
