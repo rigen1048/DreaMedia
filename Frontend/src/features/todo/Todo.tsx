@@ -88,7 +88,7 @@ export default function Todo() {
       {/* Playlists */}
       <section className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-sm font-semibold">Playlists</h2>
+          <h2 className="text-sm font-semibold">Custom playlist</h2>
           <span className="text-xs text-muted-foreground">Built from video links only — never from notification data.</span>
           <div className="ml-auto flex gap-2">
             <Input
@@ -122,7 +122,7 @@ export default function Todo() {
       {/* Anime queue */}
       <section className="space-y-3">
         <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold">Anime</h2>
+          <h2 className="text-sm font-semibold">Halfway</h2>
           <span className="text-xs text-muted-foreground">Every tracked entry — cursors update Management and notifications.</span>
         </div>
 
