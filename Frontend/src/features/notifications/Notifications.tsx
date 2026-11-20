@@ -55,8 +55,6 @@ export default function Notifications() {
   const [domain, setDomain] = useState<string | null>(null);
   const [subdomain, setSubdomain] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [unreadOnly, setUnreadOnly] = useState(false);
-  const [mutedOnly, setMutedOnly] = useState(false);
 
   const ytRows = useMemo<Row[]>(
     () => workspace.ytFeed.map((video) => ({ kind: "yt" as const, id: video.id, at: (video.publishedAt ?? 0) * 1000, video })),
@@ -86,15 +84,11 @@ export default function Notifications() {
       .filter((row) => {
         if (row.kind === "yt") {
           if (mode !== "all" && row.video.mode !== mode) return false;
-          if (unreadOnly && row.video.seen) return false;
-          if (mutedOnly && row.video.notifyEnabled) return false;
           if (query && !`${row.video.title} ${row.video.channel} ${row.video.domain} ${row.video.subdomain}`.toLowerCase().includes(query)) return false;
           return true;
         }
         if (group !== "all" && row.event.group !== group) return false;
         if (bucket !== "all" && row.event.bucket !== bucket) return false;
-        if (unreadOnly && row.event.seen) return false;
-        if (mutedOnly && row.event.notifyEnabled) return false;
         if (query && !`${row.event.title} ${row.event.label} ${row.event.domain} ${row.event.subdomain}`.toLowerCase().includes(query)) return false;
         return true;
       })
@@ -118,7 +112,7 @@ export default function Notifications() {
         }
         return b.at - a.at;
       })
-  }, [bucket, group, mode, mutedOnly, search, scoped, unreadOnly]);
+  }, [bucket, group, mode, search, scoped]);
 
   const unreadVisible = filtered.filter((row) => (row.kind === "yt" ? !row.video.seen : !row.event.seen));
 
@@ -155,8 +149,6 @@ export default function Notifications() {
     }
     return [...map.values()].sort((a, b) => b.count - a.count);
   }, [sourceRows]);
-
-  const mutedCount = scoped.filter((row) => (row.kind === "yt" ? !row.video.notifyEnabled : !row.event.notifyEnabled)).length;
 
   const markAllVisible = async () => {
     const videoIds = unreadVisible.filter((row): row is Extract<Row, { kind: "yt" }> => row.kind === "yt").map((row) => row.video.id);
@@ -203,10 +195,6 @@ export default function Notifications() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span><b className="text-foreground">{filtered.length}</b> shown</span>
-            <span>·</span>
-            <span><b className="text-foreground">{unreadVisible.length}</b> unread</span>
-            <span>·</span>
-            <span><b className="text-foreground">{mutedCount}</b> muted</span>
           </div>
           <Button variant="ghost" size="sm" onClick={() => void handleRefresh()} disabled={isRefreshing}>
             <RefreshCw size={13} className={isRefreshing ? "animate-spin" : undefined} />
@@ -259,9 +247,6 @@ export default function Notifications() {
                 ))}
               </>
             )}
-
-            <Chip active={unreadOnly} onClick={() => setUnreadOnly((v) => !v)}>Unread</Chip>
-            <Chip active={mutedOnly} onClick={() => setMutedOnly((v) => !v)}><BellOff size={12} /> Muted</Chip>
 
             <div className="relative ml-auto">
               <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
