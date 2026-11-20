@@ -27,7 +27,7 @@ export default function Management() {
   const { notify, refresh } = useApp();
   const [tab, setTab] = useState<TabKey>("channels");
   const [search, setSearch] = useState("");
-  const [scope, setScope] = useState<"all" | "muted" | "inactive">("all");
+  const [scope, setScope] = useState<"all" | "muted">("all");
   const [animeList, setAnimeList] = useState("all");
   const [dialog, setDialog] = useState<"source" | "anime" | null>(null);
   const [fetching, setFetching] = useState(false);
@@ -104,7 +104,6 @@ export default function Management() {
             <SelectContent>
               <SelectItem value="all">All sources</SelectItem>
               <SelectItem value="muted">Muted only</SelectItem>
-              <SelectItem value="inactive">Paused only</SelectItem>
             </SelectContent>
           </Select>
         )}

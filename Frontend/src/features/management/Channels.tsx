@@ -22,7 +22,7 @@ const FREQUENCIES = [
   ["bi_week", "Every 2 weeks"], ["month", "Monthly"],
 ] as const;
 
-type Props = { search: string; filter: "all" | "muted" | "inactive"; onAdd: () => void };
+type Props = { search: string; filter: "all" | "muted"; onAdd: () => void };
 
 export default function Channels({ search, filter, onAdd }: Props) {
   const { act } = useApp();
@@ -35,7 +35,6 @@ export default function Channels({ search, filter, onAdd }: Props) {
       .filter((channel) => channel.label !== "blocked")
       .filter((channel) => {
         if (filter === "muted") return !channel.notifyEnabled;
-        if (filter === "inactive") return channel.active === false;
         return true;
       })
       .filter((channel) =>
@@ -88,8 +87,8 @@ function ChannelRow({
   const [rank, setRank] = useState(channel.rank ?? "week");
   const [withhold, setWithhold] = useState(channel.withholdThreshold ?? 2);
 
-  const muted = !channel.notifyEnabled;
-  const status = channel.label === "blocked" ? "Blocked" : channel.active === false ? "Paused" : "Live";
+  const muted = channel.label === "reserved" || channel.notify === false;
+  const status = channel.label === "blocked" ? "Blocked" : muted ? "Muted" : "Live";
   // Withhold is a tracking row with a threshold — display it as its own type.
   const displayKind: YtKind = channel.withholdThreshold ? "withhold" : (channel.kind ?? "tracking");
 
@@ -146,11 +145,11 @@ function ChannelRow({
         </div>
 
         <div className="max-lg:hidden">
-          {muted && status === "Live" ? (
+          {muted ? (
             <Badge variant="outline" className="gap-1 text-[10px]"><BellOff size={9} /> muted</Badge>
           ) : (
             <Badge
-              variant={status === "Live" ? "secondary" : status === "Paused" ? "outline" : "destructive"}
+              variant={status === "Live" ? "secondary" : status === "Muted" ? "outline" : "destructive"}
               className="text-[10px]"
             >
               {status}
@@ -276,14 +275,14 @@ function ChannelRow({
             </div>
 
             <div className="space-y-1.5">
-              <Label>Channel state</Label>
+              <Label>Notification state</Label>
               <div className="flex h-9 items-center gap-2">
                 <Switch
-                  checked={channel.active !== false}
-                  aria-label="Channel active"
+                  checked={!muted}
+                  aria-label={muted ? "Unmute channel" : "Mute channel"}
                   onCheckedChange={(next) => void act(() => api.ytSetActive(channel.id, next))}
                 />
-                <span className="text-xs text-muted-foreground">{channel.active === false ? "Paused — still subscribed, receiving nothing" : "Receiving"}</span>
+                <span className="text-xs text-muted-foreground">{muted ? "Muted — still subscribed, receiving nothing" : "Receiving"}</span>
               </div>
             </div>
           </div>
