@@ -142,9 +142,13 @@ function AnimeCard({ entry, expanded, onToggle }: { entry: AniEntry; expanded: b
             <span>{entry.totalSeasons || entry.seasons.length} season{(entry.totalSeasons || 1) > 1 ? "s" : ""}</span>
             <span>{entry.episodeCount} eps</span>
             {entry.releaseDate ? <span>{entry.releaseDate.slice(0, 4)}</span> : <span title="Release date unknown">TBA</span>}
-            <Badge variant="secondary" className="text-[10px]">
-              {entry.domain !== "—" ? `${entry.domain} / ${entry.subdomain}` : "uncategorized"}
-            </Badge>
+            {entry.domain !== "—" && (
+              <Badge variant="secondary" className="text-[10px]">
+                {entry.subdomain !== "—"
+                  ? `${entry.domain} / ${entry.subdomain}`
+                  : entry.domain}
+              </Badge>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
