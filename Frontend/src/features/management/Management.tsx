@@ -14,9 +14,9 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const TABS = [
+  { key: "anime", label: "Anime", icon: null },
   { key: "channels", label: "Channels", icon: Tv },
   { key: "categories", label: "Categories", icon: FolderTree },
-  { key: "anime", label: "Anime", icon: null },
   { key: "blocked", label: "Blocked", icon: Ban },
 ] as const;
 
