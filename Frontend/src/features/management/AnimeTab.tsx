@@ -117,6 +117,13 @@ function AnimeCard({ entry, expanded, onToggle }: { entry: AniEntry; expanded: b
 
   const blockLabel = entry.label === "none" ? "active" : entry.label;
 
+  // P13: show the position the user actually reached instead of the stale
+  // cursor defaulting to S1 · E0 when the entry is up to date.
+  const seasons = entry.seasons ?? [];
+  const inProgress = seasons.find((s) => !s.watched) ?? seasons.at(-1) ?? null;
+  const dispSeason = inProgress?.seasonNo ?? entry.cursorSeason ?? 1;
+  const dispEpisode = inProgress?.episodesAired ?? entry.cursorEpisode ?? 0;
+
   return (
     <>
       <article
@@ -141,7 +148,7 @@ function AnimeCard({ entry, expanded, onToggle }: { entry: AniEntry; expanded: b
           </div>
 
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-            <span>S<b className="text-foreground">{entry.cursorSeason ?? 1}</b> · E<b className="text-foreground">{entry.cursorEpisode ?? 0}</b></span>
+            <span>S<b className="text-foreground">{dispSeason}</b> · E<b className="text-foreground">{dispEpisode}</b></span>
             <span>{entry.watchedSeasons}/{entry.totalSeasons || "?"} seasons watched</span>
             {entry.airingTime && (
               <span className="inline-flex items-center gap-0.5"><CalendarClock size={10} /> {entry.airingTime}</span>
