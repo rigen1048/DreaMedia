@@ -101,7 +101,15 @@ async def test_switch_mode_exclusive_and_active_toggle():
     assert isinstance(await store.set_channel_active(user_id, cid, False), Success)
     view = [c for c in await store.channels_view(user_id) if c["id"] == cid][0]
     assert view["label"] == "reserved"
+
+    # P3: one Paused concept — a legacy channel mute is cleared on resume
+    assert isinstance(await store.set_channel_notify(user_id, cid, False), Success)
+    view = [c for c in await store.channels_view(user_id) if c["id"] == cid][0]
+    assert view["notify"] is False
     assert isinstance(await store.set_channel_active(user_id, cid, True), Success)
+    view = [c for c in await store.channels_view(user_id) if c["id"] == cid][0]
+    assert view["label"] == "none" and view["notify"] is True
+
     await store.delete_channel(user_id, cid)
 
 
