@@ -8,6 +8,7 @@ from Auth import auth
 from Database import db
 from Database.ani_store import AniStore
 from Database.pg_store import PgStore, PgSubscription
+from Extension import live
 from Extension.store import ExtDomainStore
 from Orchestrator.Ani.Fetch.ani_track import ani_fetch
 from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
@@ -247,6 +248,55 @@ async def test_ext_domains_allowlist_crud():
     assert isinstance(await store.remove_domain(user_id, row["id"]), Success)
     assert isinstance(await store.remove_domain(user_id, added_yt.unwrap()["id"]), Success)
     assert await store.list_domains(user_id) == []
+
+
+# ---------- extension v2 phase 2: live watch sessions ----------
+
+async def test_live_sessions_merge_and_crash_sweep():
+    """Ext v2: live upserts stay out of the cursor until pause/ended merges
+    them; a leftover row (power loss) is merged by the boot sweep."""
+    user_id = await _user_id()
+    _store, entry_id, _total = await _ani_entry(user_id)
+    pool = await db.get_pool()
+
+    async def _cursor():
+        async with pool.acquire() as con:
+            row = await con.fetchrow(
+                "SELECT cursor_season, cursor_episode, cursor_position_seconds "
+                "FROM ani_entries WHERE id = $1", entry_id)
+        return (row["cursor_season"], row["cursor_episode"], row["cursor_position_seconds"])
+
+    async def _live_row():
+        async with pool.acquire() as con:
+            return await con.fetchrow(
+                "SELECT season, episode, position_seconds FROM ext_live_sessions "
+                "WHERE user_id = $1 AND entry_id = $2", user_id, entry_id)
+
+    before = await _cursor()
+
+    # Upserts buffer in the live table only — the real cursor stays put.
+    assert isinstance(await live.upsert_position(user_id, entry_id, 1, 4, 612), Success)
+    assert isinstance(await live.upsert_position(user_id, entry_id, 1, 4, 700), Success)
+    row = await _live_row()
+    assert row["position_seconds"] == 700
+    assert await _cursor() == before, "an upsert alone must never move the cursor"
+
+    # Ownership: a foreign or unknown entry id cannot be upserted.
+    assert isinstance(await live.upsert_position(user_id, 999999, 1, 1, 0), Failure)
+
+    # Pause/ended: the final position becomes the real cursor; row deleted.
+    assert isinstance(await live.end_session(user_id, entry_id, 1, 4, 731), Success)
+    assert await _live_row() is None
+    assert await _cursor() == (1, 4, 731)
+
+    # Power loss: a leftover row is merged by the boot sweep.
+    assert isinstance(await live.upsert_position(user_id, entry_id, 1, 7, 120), Success)
+    merged = await live.sweep_all()
+    assert merged >= 1
+    assert await _live_row() is None
+    assert await _cursor() == (1, 7, 120)
+
+    await _store.delete_entry(user_id, entry_id)
 
 
 # ---------- category CRUD (P1) ----------

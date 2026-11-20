@@ -113,6 +113,102 @@ chrome.alarms?.onAlarm.addListener((alarm) => {
   if (alarm.name === "dreamedia:domains") void refreshDomains();
 });
 
+// ---- live lane (ext v2 phase 2): graphql-transport-ws, HTTP fallback ----
+// One socket carries watch progress; while it streams, MV3 keeps the
+// service worker alive. If the socket is down we POST to /ext/graphql.
+
+const M_PROGRESS = `mutation LiveProgress($entryId: Int!, $season: Int!, $episode: Int!, $positionSeconds: Int!) {
+  liveProgress(entryId: $entryId, season: $season, episode: $episode, positionSeconds: $positionSeconds)
+}`;
+const M_END = `mutation LiveEnd($entryId: Int!, $season: Int!, $episode: Int!, $positionSeconds: Int!) {
+  liveEnd(entryId: $entryId, season: $season, episode: $episode, positionSeconds: $positionSeconds)
+}`;
+
+let ws = null;
+let wsReady = false;
+let wsRetry = null;
+let gqlSeq = 0;
+const pendingOps = new Map();
+
+function wsDead() {
+  wsReady = false;
+  ws = null;
+  for (const resolve of pendingOps.values()) resolve(false);
+  pendingOps.clear();
+  if (!wsRetry) {
+    wsRetry = setTimeout(() => {
+      wsRetry = null;
+      void ensureWs();
+    }, 5000);
+  }
+}
+
+async function ensureWs() {
+  if (ws) return;
+  const { url, token } = await backend();
+  if (!token) return;
+  try {
+    ws = new WebSocket(`${url.replace(/^http/, "ws")}/ext/graphql`, "graphql-transport-ws");
+  } catch (_e) {
+    ws = null;
+    return;
+  }
+  ws.onopen = () => ws.send(JSON.stringify({ type: "connection_init", payload: { token } }));
+  ws.onmessage = (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch (_e) {
+      return;
+    }
+    if (msg.type === "connection_ack") {
+      wsReady = true;
+    } else if (msg.type === "ping") {
+      ws.send(JSON.stringify({ type: "pong" }));
+    } else if (msg.type === "next" || msg.type === "complete" || msg.type === "error") {
+      const resolve = pendingOps.get(msg.id);
+      if (resolve) {
+        pendingOps.delete(msg.id);
+        resolve(msg.type !== "error");
+      }
+    }
+  };
+  ws.onclose = wsDead;
+  ws.onerror = () => ws.close();
+}
+
+async function liveGql(query, p) {
+  const variables = {
+    entryId: p.entry_id, season: p.season, episode: p.episode, positionSeconds: p.position_seconds,
+  };
+  await ensureWs();
+  if (wsReady) {
+    return new Promise((resolve) => {
+      const id = String(++gqlSeq);
+      pendingOps.set(id, resolve);
+      ws.send(JSON.stringify({ id, type: "subscribe", payload: { query, variables } }));
+      setTimeout(() => {
+        const pending = pendingOps.get(id);
+        if (pending) {
+          pendingOps.delete(id);
+          pending(false);
+        }
+      }, 10000);
+    });
+  }
+  const { url, token } = await backend();
+  try {
+    const resp = await fetch(`${url}/ext/graphql`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-DreaMedia-Token": token },
+      body: JSON.stringify({ query, variables }),
+    });
+    return resp.ok;
+  } catch (_e) {
+    return false;
+  }
+}
+
 // ---- message lane ----
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -135,7 +231,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ ok: true, data: await call("/ext/ani/entries") });
           break;
         case "dreamedia:progress":
-          sendResponse({ ok: true, data: await call("/ext/progress", { method: "POST", body: msg.payload }) });
+          sendResponse({ ok: true, data: await liveGql(M_PROGRESS, msg.payload) });
+          break;
+        case "dreamedia:liveEnd":
+          sendResponse({ ok: true, data: await liveGql(M_END, msg.payload) });
           break;
         case "dreamedia:domainStatus": {
           const host = normalizeDomain(msg.url);

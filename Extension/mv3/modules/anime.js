@@ -1,19 +1,24 @@
 /* DreaMedia anime module (ext v2): watch tracking for allowlisted 'ani'
  * domains. Bound by the popup (manual override today; anchor-detection
- * auto-bind is design phase 3). Reports timestamps to the backend every
- * 15s and on pause/ended via the background lane. Requires core.js. */
+ * auto-bind is design phase 3). Live-session upserts stream every 5s over
+ * the websocket lane; pause/ended merge the final position into the real
+ * cursor. Requires core.js. */
 (() => {
-  function report(video, reason) {
+  const LIVE_INTERVAL_MS = 5000;
+
+  function payload(video) {
     const binding = window.__dreamediaBinding;
-    if (!binding || !binding.entryId) return; // popup binds this tab first
-    const payload = {
+    if (!binding || !binding.entryId) return null; // popup binds this tab first
+    return {
       entry_id: binding.entryId,
       season: binding.season,
       episode: binding.episode,
       position_seconds: Math.floor(video.currentTime || 0),
     };
-    chrome.runtime.sendMessage({ type: "dreamedia:progress", payload }, () => void chrome.runtime.lastError);
-    console.debug("[DreaMedia] progress", reason, payload);
+  }
+
+  function send(type, body) {
+    chrome.runtime.sendMessage({ type, ...body }, () => void chrome.runtime.lastError);
   }
 
   // Receive the popup's binding for this tab.
@@ -31,16 +36,22 @@
   }).catch(() => {});
 
   window.DreaMediaCore.start({
-    onInterval: (video) => report(video, "interval"),
-    onPause: (video) => report(video, "pause"),
+    onInterval: (video) => {
+      const p = payload(video);
+      if (p) send("dreamedia:progress", { payload: p });
+    },
+    onPause: (video) => {
+      const p = payload(video);
+      if (p) send("dreamedia:liveEnd", { payload: p });
+    },
     // Episode advances when a video ends (site-agnostic approximation).
     onEnded: (video) => {
       const binding = window.__dreamediaBinding;
-      if (binding) {
-        binding.episode = (binding.episode || 0) + 1;
-        (chrome.storage.session || chrome.storage.local).set({ dreamediaBinding: binding });
-        report(video, "ended");
-      }
+      if (!binding) return;
+      const p = payload(video); // final position of the finished episode
+      binding.episode = (binding.episode || 0) + 1;
+      (chrome.storage.session || chrome.storage.local).set({ dreamediaBinding: binding });
+      if (p) send("dreamedia:liveEnd", { payload: p });
     },
-  });
+  }, LIVE_INTERVAL_MS);
 })();

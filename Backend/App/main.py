@@ -25,7 +25,9 @@ from Graphql.supergraph import supergraph_schema
 from Orchestrator.Ani import manager as ani_manager
 from Orchestrator.Ani.Access.router import router as ani_access_router
 from Orchestrator.Ani.Feed.router import router as ani_feed_router
+from Extension import live as ext_live
 from Extension.router import router as ext_router
+from Graphql.ext_graph import ext_context, ext_schema
 from Orchestrator.Yt import manager as yt_manager
 from Orchestrator.Yt.Access.cards_router import router as yt_cards_router
 from Orchestrator.Yt.Access.router import router as yt_access_router
@@ -51,6 +53,9 @@ async def lifespan(app: FastAPI):
             f"Original error: {exc}"
         ) from exc
     await settings.seed_defaults()
+    # Ext v2 phase 2: leftover live-session rows mean an unclean shutdown —
+    # merge them into cursors so no watched position is ever lost.
+    await ext_live.sweep_all()
     managers = [
         asyncio.create_task(yt_manager.run_forever()),
         asyncio.create_task(ani_manager.run_forever()),
@@ -158,6 +163,11 @@ app.include_router(
 )
 app.include_router(
     GraphQLRouter(supergraph_schema, context_getter=_graphql_context), prefix="/graphql"
+)
+# Ext v2: the extension's own stable schema — HTTP POST and the
+# graphql-transport-ws websocket lane share this one path.
+app.include_router(
+    GraphQLRouter(ext_schema, context_getter=ext_context), prefix="/ext/graphql"
 )
 
 

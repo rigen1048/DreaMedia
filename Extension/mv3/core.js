@@ -38,22 +38,22 @@
     return null;
   }
 
-  function attach(video, handlers) {
+  function attach(video, handlers, intervalMs) {
     video.dataset.dreamedia = "true";
     sessionStorage.setItem(`dreamedia_${location.hostname}`, generateSelector(video));
     video.addEventListener("ended", () => handlers.onEnded(video));
     video.addEventListener("pause", () => handlers.onPause(video));
     setInterval(() => {
       if (!video.paused) handlers.onInterval(video);
-    }, REPORT_INTERVAL_MS);
+    }, intervalMs);
   }
 
   window.DreaMediaCore = {
     REPORT_INTERVAL_MS,
-    start(handlers) {
+    start(handlers, intervalMs = REPORT_INTERVAL_MS) {
       const observer = new MutationObserver(() => {
         const v = findVideo();
-        if (v) attach(v, handlers);
+        if (v) attach(v, handlers, intervalMs);
       });
       observer.observe(document, { childList: true, subtree: true });
       let lastUrl = location.href;
@@ -62,11 +62,11 @@
           lastUrl = location.href;
           sessionStorage.removeItem(`dreamedia_${location.hostname}`);
           const v = findVideo();
-          if (v) attach(v, handlers);
+          if (v) attach(v, handlers, intervalMs);
         }
       }, 1000);
       const v = findVideo();
-      if (v) attach(v, handlers);
+      if (v) attach(v, handlers, intervalMs);
     },
   };
 })();
