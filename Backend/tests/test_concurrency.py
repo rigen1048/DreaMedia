@@ -3,7 +3,7 @@ import asyncio
 import time
 
 import pytest
-from returns.result import Success
+from returns.result import Failure, Success
 
 from Admin import restore, settings
 from Admin.users import delete_user, set_role
@@ -79,3 +79,103 @@ async def test_concurrent_last_admin_transitions():
     finally:
         async with pool.acquire() as con:
             await con.execute("UPDATE users SET role = 'admin' WHERE id = ANY($1)", parked)
+
+
+async def _run_backup_file() -> str:
+    """Take a real backup and return the dump file name (feeds restore tests)."""
+    from Admin.backup import run_backup
+
+    dump = await run_backup()
+    assert isinstance(dump, Success), f"backup failed: {dump}"
+    return dump.unwrap().rsplit("/", 1)[-1]
+
+
+async def _wait_finished() -> None:
+    for _ in range(120):
+        if not restore.restore_in_progress():
+            return
+        await asyncio.sleep(1)
+    raise AssertionError("restore task never finished")
+
+
+class _FakeProc:
+    """Fake subprocess: returncode + communicate(), mimicking a real process."""
+
+    def __init__(self, returncode: int, stderr: bytes = b""):
+        self.returncode = returncode
+        self._stderr = stderr
+
+    async def communicate(self):
+        return b"", self._stderr
+
+
+def _script_pg_restore(monkeypatch, rollback_ok: bool) -> None:
+    """asyncio.create_subprocess_exec fake: pg_dump (snapshot) runs for real,
+    pg_restore is scripted — the restore call fails, the rollback call
+    succeeds iff rollback_ok."""
+    real = asyncio.create_subprocess_exec
+    state = {"restore_seen": False}
+
+    async def fake(*args, **kwargs):
+        if "--clean" in args:  # pg_restore invocation
+            if not state["restore_seen"]:
+                state["restore_seen"] = True
+                return _FakeProc(1, b"pg_restore: corrupt archive")
+            return _FakeProc(0 if rollback_ok else 1, b"pg_restore: boom")
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake)
+
+
+async def test_restore_gate_released_on_pre_snapshot_failure(monkeypatch):
+    """P0: pre-restore snapshot fails → gate still returns to 0."""
+    await settings.set_value("restore_active", "0")
+    monkeypatch.setattr(restore, "run_backup", lambda *a, **k: Failure("snapshot blew up"))
+    filename = await _run_backup_file()
+    result = await restore.start_restore(filename)
+    assert isinstance(result, Success)  # job accepted; the failure lands in the task
+    await _wait_finished()
+    assert await restore.restore_in_progress_db() is False  # DB row — survives a restart
+    assert await _gate() == "0"
+
+
+async def test_restore_gate_released_on_restore_failure_rollback_ok(monkeypatch):
+    """P0: pg_restore fails, rollback succeeds → gate returns to 0."""
+    await settings.set_value("restore_active", "0")
+    _script_pg_restore(monkeypatch, rollback_ok=True)
+    filename = await _run_backup_file()
+    result = await restore.start_restore(filename)
+    assert isinstance(result, Success)
+    await _wait_finished()
+    assert await restore.restore_in_progress_db() is False
+    assert await _gate() == "0"
+
+
+async def test_restore_gate_released_on_rollback_failure(monkeypatch):
+    """P0: pg_restore fails AND rollback fails → gate still returns to 0
+    (the operator must inspect the DB manually, but the app is not 503'd)."""
+    await settings.set_value("restore_active", "0")
+    _script_pg_restore(monkeypatch, rollback_ok=False)
+    filename = await _run_backup_file()
+    result = await restore.start_restore(filename)
+    assert isinstance(result, Success)
+    await _wait_finished()
+    assert await restore.restore_in_progress_db() is False
+    assert await _gate() == "0"
+
+
+async def test_restore_gate_released_on_exception(monkeypatch):
+    """P0: restore crashes mid-flight → the unconditional finally still releases
+    the gate, in-process and in the settings row."""
+    await settings.set_value("restore_active", "0")
+    filename = await _run_backup_file()  # real backup BEFORE subprocess is faked
+
+    async def boom(*args, **kwargs):
+        raise OSError("disk disappeared")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", boom)
+    result = await restore.start_restore(filename)
+    assert isinstance(result, Success)
+    await _wait_finished()
+    assert await restore.restore_in_progress_db() is False
+    assert await _gate() == "0"
