@@ -99,12 +99,12 @@ async def test_switch_mode_exclusive_and_active_toggle():
         assert await con.fetchval("SELECT 1 FROM yt_tracking WHERE channel_id = $1", cid) is None
         assert await con.fetchval("SELECT rank FROM yt_randomsubs WHERE channel_id = $1", cid) == "month"
 
-    # active toggle maps to reserved label, never touches blocked
+    # The channel switch is the one muted/receiving state.
     assert isinstance(await store.set_channel_active(user_id, cid, False), Success)
     view = [c for c in await store.channels_view(user_id) if c["id"] == cid][0]
-    assert view["label"] == "reserved"
+    assert view["label"] == "reserved" and view["notify"] is False
 
-    # P3: one Paused concept — a legacy channel mute is cleared on resume
+    # Legacy channel mute writes use the same state and resume clears it.
     assert isinstance(await store.set_channel_notify(user_id, cid, False), Success)
     view = [c for c in await store.channels_view(user_id) if c["id"] == cid][0]
     assert view["notify"] is False

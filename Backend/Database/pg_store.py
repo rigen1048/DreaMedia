@@ -664,7 +664,9 @@ class PgStore:
         pool = await get_pool()
         async with pool.acquire() as con:
             result = await con.execute(
-                "UPDATE yt_channels SET label = $3, label_reason_enc = $4 "
+                "UPDATE yt_channels SET label = $3, label_reason_enc = $4, "
+                "notify = CASE WHEN $3 = 'reserved' THEN FALSE "
+                "WHEN $3 = 'none' THEN TRUE ELSE notify END "
                 "WHERE id = $1 AND user_id = $2",
                 channel_id, user_id, label, encrypt(key, reason) if reason else None,
             )
@@ -967,9 +969,8 @@ class PgStore:
     async def set_channel_active(
         self, user_id: int, channel_id: int, active: bool
     ) -> Result[Dict[str, Any], str]:
-        """Channel active switch = the single Paused control (P3): reserved
-        label AND channel-level notify are one concept. Never touches blocked.
-        Resuming also clears any legacy channel mute (notify=TRUE)."""
+        """Channel state is one concept: reserved/muted or receiving.
+        Never changes blocked channels."""
         key = await vault.get(user_id)
         if key is None:
             return Failure("vault locked (D9)")
@@ -977,7 +978,7 @@ class PgStore:
         async with pool.acquire() as con:
             result = await con.execute(
                 "UPDATE yt_channels SET label = $3, "
-                "notify = CASE WHEN $4 THEN TRUE ELSE notify END "
+                "notify = $4 "
                 "WHERE id = $1 AND user_id = $2 "
                 "AND label != 'blocked'",
                 channel_id, user_id, "none" if active else "reserved", active,
@@ -1093,10 +1094,13 @@ class PgStore:
     async def set_channel_notify(
         self, user_id: int, channel_id: int, notify: bool
     ) -> Result[Dict[str, Any], str]:
+        """Compatibility mutation for the single channel muted/receiving state."""
         pool = await get_pool()
         async with pool.acquire() as con:
             result = await con.execute(
-                "UPDATE yt_channels SET notify = $3 WHERE id = $1 AND user_id = $2",
+                "UPDATE yt_channels SET notify = $3, "
+                "label = CASE WHEN $3 THEN 'none' ELSE 'reserved' END "
+                "WHERE id = $1 AND user_id = $2 AND label != 'blocked'",
                 channel_id, user_id, notify,
             )
         if result.endswith("0"):
