@@ -38,12 +38,40 @@
     return null;
   }
 
+  let activeVideo = null;
+  let activeInterval = null;
+  let activeEndedHandler = null;
+  let activePauseHandler = null;
+
+  function detachActiveVideo() {
+    if (activeInterval) {
+      clearInterval(activeInterval);
+      activeInterval = null;
+    }
+    if (activeVideo) {
+      if (activeEndedHandler) activeVideo.removeEventListener("ended", activeEndedHandler);
+      if (activePauseHandler) activeVideo.removeEventListener("pause", activePauseHandler);
+    }
+    activeVideo = null;
+    activeEndedHandler = null;
+    activePauseHandler = null;
+  }
+
   function attach(video, handlers, intervalMs) {
+    if (activeVideo === video) return;
+    detachActiveVideo();
     video.dataset.dreamedia = "true";
     sessionStorage.setItem(`dreamedia_${location.hostname}`, generateSelector(video));
-    video.addEventListener("ended", () => handlers.onEnded(video));
-    video.addEventListener("pause", () => handlers.onPause(video));
-    setInterval(() => {
+    activeVideo = video;
+    activeEndedHandler = () => handlers.onEnded(video);
+    activePauseHandler = () => handlers.onPause(video);
+    video.addEventListener("ended", activeEndedHandler);
+    video.addEventListener("pause", activePauseHandler);
+    activeInterval = setInterval(() => {
+      if (!video.isConnected) {
+        if (activeVideo === video) detachActiveVideo();
+        return;
+      }
       if (!video.paused) handlers.onInterval(video);
     }, intervalMs);
   }
@@ -129,7 +157,9 @@
       setInterval(() => {
         if (location.href !== lastUrl) {
           lastUrl = location.href;
+          detachActiveVideo();
           sessionStorage.removeItem(`dreamedia_${location.hostname}`);
+          handlers.onNavigate?.(lastUrl);
           const v = findVideo();
           if (v) attach(v, handlers, intervalMs);
         }

@@ -50,8 +50,14 @@ for the original AGPL-3.0 license.
 ## Files
 
 - `shared/` — the single source of truth (content/popup/background).
-- `mv3/`, `mv2/` — built variants (manifest + copies). After editing `shared/`,
-  copy the files over both variants.
+- `mv3/`, `mv2/` — loadable packages (variant manifests/icons + synchronized
+  copies of the shared source).
+- After editing `shared/`, run `python3 setup.py --build-extensions-only` to
+  synchronize both packages without starting or resetting the DreaMedia stack.
 
 The background worker/page is the only network lane: content and popup scripts
-message it, it calls `http://<backend>/ext/*` with `X-DreaMedia-Token`.
+message it, it calls `http://<backend>/ext/graphql` over HTTP with
+`X-DreaMedia-Token`, and sends live progress over the same route using the
+`graphql-transport-ws` subprotocol. The 20-second client ping keeps an idle
+service worker active; the popup shows green only after the socket's authenticated
+`extPing` query succeeds.

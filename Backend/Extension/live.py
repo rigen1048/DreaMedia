@@ -35,13 +35,14 @@ async def upsert_position(
             "INSERT INTO ext_live_sessions (user_id, entry_id, season, episode, position_seconds) "
             "SELECT $1, e.id, $3, $4, $5 FROM ani_entries e "
             "WHERE e.id = $2 AND e.user_id = $1 "
+            "AND EXISTS (SELECT 1 FROM ani_seasons s WHERE s.entry_id = e.id AND s.season_no = $3) "
             "ON CONFLICT (user_id, entry_id) DO UPDATE SET "
             "season = EXCLUDED.season, episode = EXCLUDED.episode, "
             "position_seconds = EXCLUDED.position_seconds, updated_at = now()",
             user_id, entry_id, season, episode, position_seconds,
         )
     if not result.endswith("1"):
-        return Failure("entry not found")
+        return Failure("entry or season not found")
     return Success(True)
 
 

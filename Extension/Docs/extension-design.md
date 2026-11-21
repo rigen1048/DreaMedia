@@ -44,8 +44,8 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
 - The `media` column of `ext_domains` decides which module is registered
   for a domain: youtube.com gets only the youtube module; an anime site
   gets only the anime module.
-- `setup.py build_extensions()` copies shared/ (including modules/) into
-  mv2/ and mv3/ as today; manifests stay variant-only.
+- `python3 setup.py --build-extensions-only` copies shared/ (including
+  modules/) into mv2/ and mv3/; manifests and variant-only icons stay put.
 
 ## 3) Anchor detection (auto-binding)
 
@@ -62,11 +62,12 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
 - Default: anchor detection tracks **existing entries only**; it does not
   auto-add unknown anime to the library (revisit if wanted).
 
-## 4) Video finding — unchanged (SyncNwatch model)
+## 4) Video finding (SyncNwatch model)
 
-- First ready `<video>`, robust selector cached per host, MutationObserver
-  re-attach, URL-poll for SPA navigation. Moves into the shared core
-  module as-is.
+- The shared core attaches one active video at a time, removing its timer and
+  event handlers when that video is replaced, detached, or the SPA URL changes.
+- A robust selector is cached per host; MutationObserver and URL polling find
+  replacements. Anime anchor retries reset on SPA navigation.
 
 ## 5) Local blocked list with disclaimer
 
@@ -95,9 +96,13 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
 
 ## 7) Websocket + live-session table (crash-safe progress)
 
-- The websocket **is the GraphQL transport** (graphql-ws protocol,
-  supported by Strawberry): one token-authed connection carries all
-  extension traffic including position updates.
+- The live-update websocket uses Strawberry's `graphql-transport-ws`
+  subprotocol. After the protocol acknowledgement, the extension executes
+  token-authenticated `extPing`; only a successful result counts as connected.
+- Popup and configuration actions use HTTP GraphQL at the same `/ext/graphql`
+  endpoint; the websocket carries live progress and end-session mutations.
+- A client `ping` is sent every 20 seconds to keep an idle MV3 service worker
+  active, and server `ping` payloads are mirrored in the corresponding `pong`.
 - New table `ext_live_sessions`: `user_id, entry_id, season, episode,
   position_seconds, updated_at` — one row per active watch.
   - While watching: the extension upserts every few seconds.
@@ -134,7 +139,8 @@ background: registerContentScripts per domain, per media type
         └── anime module: anchor detect → server match → auto-bind
                           video attach (shared core) → position stream
         │
-        ▼  single lane: graphql-ws (token-authed) → /ext/graphql schema
+        ├── HTTP GraphQL actions ─────────────────────────────► /ext/graphql
+        ▼  live lane: graphql-transport-ws (token-authenticated) → /ext/graphql
         ▼
 Backend: mutations → stores → Postgres
          live positions → ext_live_sessions → boot sweep merge → ani cursor
@@ -145,9 +151,9 @@ Backend: mutations → stores → Postgres
 ## Build order (one commit per phase, verified then pushed)
 
 1. `ext_domains` table + store + GraphQL + DreaMedia domains page;
-   extension dynamic content-script registration + modular split
-   (kills the `<all_urls>` waste).
-2. `/ext/graphql` schema + websocket transport + `ext_live_sessions`
+   dynamic registration gates script execution to the allowlist. The current
+   manifests still request broad `<all_urls>` host access for user-added sites.
+2. `/ext/graphql` schema + graphql-transport-ws live lane + `ext_live_sessions`
    + boot sweep.
 3. Anchor detection + server-side matching + auto-bind.
 4. Blocked-list cache + disclaimer.

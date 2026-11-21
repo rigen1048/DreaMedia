@@ -7,6 +7,7 @@ the user teaches the extension their sites instead of us prescribing any.
 from __future__ import annotations
 
 from typing import Any, Dict, List
+from urllib.parse import urlsplit
 
 from returns.result import Failure, Result, Success
 
@@ -16,15 +17,21 @@ from Database.db import get_pool
 
 
 def _normalize(domain: str) -> str:
-    """'https://WWW.Example.com/path' -> 'example.com'."""
-    d = domain.strip().lower()
-    for prefix in ("https://", "http://"):
-        if d.startswith(prefix):
-            d = d[len(prefix):]
-    d = d.split("/")[0].split("?")[0].split(":")[0]
-    if d.startswith("www."):
-        d = d[4:]
-    return d
+    """Normalize a host from either a bare domain or an HTTP(S) page URL."""
+    value = (domain or "").strip()
+    if not value:
+        return ""
+    if "://" in value and value.split("://", 1)[0].lower() not in ("http", "https"):
+        return ""
+    candidate = value if "://" in value else f"https://{value}"
+    try:
+        parsed = urlsplit(candidate)
+        _ = parsed.port  # reject malformed ports instead of silently accepting them
+        host = parsed.hostname or ""
+        host = host.rstrip(".").encode("idna").decode("ascii").lower()
+    except (UnicodeError, ValueError):
+        return ""
+    return host[4:] if host.startswith("www.") else host
 
 
 class ExtDomainStore:

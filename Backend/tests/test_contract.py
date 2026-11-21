@@ -7,6 +7,7 @@ from returns.result import Failure, Success
 from Auth import auth
 from Database import csvio, db
 from Database.ani_store import AniStore
+from Database.card_store import CardStore
 from Database.pg_store import PgStore, PgSubscription
 from Extension import anchor, live, sites
 from Extension.store import ExtDomainStore, list_blocked_yt
@@ -115,6 +116,42 @@ async def test_switch_mode_exclusive_and_active_toggle():
     await store.delete_channel(user_id, cid)
 
 
+async def test_direct_subscription_upserts_keep_modes_exclusive():
+    user_id = await _user_id()
+    store = PgStore()
+    url = "https://www.youtube.com/@exclusive-contract"
+    added = await store.add_tracking(user_id, "UCexclusive", "Exclusive channel", url)
+    assert isinstance(added, Success)
+    cid = added.unwrap()
+    assert isinstance(await store.switch_mode(user_id, cid, "withhold", withhold=2), Success)
+
+    playlist = await store.add_playlist(user_id, "PLexclusive", "Exclusive channel", url)
+    assert isinstance(playlist, Success) and playlist.unwrap() == cid
+    pool = await db.get_pool()
+    async with pool.acquire() as con:
+        assert await con.fetchval("SELECT 1 FROM yt_tracking WHERE channel_id = $1", cid) is None
+        assert await con.fetchval("SELECT 1 FROM yt_playlists WHERE channel_id = $1", cid) is not None
+        assert await con.fetchval("SELECT 1 FROM yt_randomsubs WHERE channel_id = $1", cid) is None
+
+    random = await store.add_random(user_id, "Exclusive channel", url, rank="month")
+    assert isinstance(random, Success) and random.unwrap() == cid
+    async with pool.acquire() as con:
+        assert await con.fetchval("SELECT 1 FROM yt_tracking WHERE channel_id = $1", cid) is None
+        assert await con.fetchval("SELECT 1 FROM yt_playlists WHERE channel_id = $1", cid) is None
+        assert await con.fetchval("SELECT 1 FROM yt_randomsubs WHERE channel_id = $1", cid) is not None
+    tracked = await store.add_tracking(user_id, "UCexclusive", "Exclusive channel", url, kind="wordscan", words=["new"])
+    assert isinstance(tracked, Success) and tracked.unwrap() == cid
+    async with pool.acquire() as con:
+        assert await con.fetchval("SELECT 1 FROM yt_playlists WHERE channel_id = $1", cid) is None
+        assert await con.fetchval("SELECT 1 FROM yt_randomsubs WHERE channel_id = $1", cid) is None
+        row = await con.fetchrow(
+            "SELECT kind, withhold_threshold FROM yt_tracking WHERE channel_id = $1", cid
+        )
+        assert row["kind"] == "wordscan" and row["withhold_threshold"] is None
+
+    await store.delete_channel(user_id, cid)
+
+
 # ---------- mode switch: random -> tracking/wordscan (P2) ----------
 
 async def test_switch_mode_random_to_tracking_and_wordscan():
@@ -218,6 +255,13 @@ async def test_ext_domains_allowlist_crud():
     row = added.unwrap()
     assert row["domain"] == "example.com" and row["media"] == "ani" and row["enabled"]
 
+    fragment_url = await store.add_domain(user_id, "HTTPS://WWW.Example.com#details", "ani")
+    assert isinstance(fragment_url, Success)
+    assert fragment_url.unwrap()["id"] == row["id"]
+    port_url = await store.add_domain(user_id, "https://www.example.com:8443/path?q=1#details", "ani")
+    assert isinstance(port_url, Success)
+    assert port_url.unwrap()["id"] == row["id"]
+
     # Invalid input rejected
     assert isinstance(await store.add_domain(user_id, "localhost", "ani"), Failure)
     assert isinstance(await store.add_domain(user_id, "example.org", "podcast"), Failure)
@@ -250,6 +294,30 @@ async def test_ext_domains_allowlist_crud():
     assert await store.list_domains(user_id) == []
 
 
+async def test_card_store_reports_duplicate_insert_without_breaking_legacy_add():
+    user_id = await _user_id()
+    store = CardStore()
+    created = await store.create_card(user_id, "Extension add-item regression")
+    assert isinstance(created, Success)
+    card_id = created.unwrap()
+
+    first = await store.add_item_detailed(
+        user_id, card_id, "card-test-video", "https://youtu.be/card-test-video", "Test video", None
+    )
+    duplicate = await store.add_item_detailed(
+        user_id, card_id, "card-test-video", "https://youtu.be/card-test-video", "Test video", None
+    )
+    legacy = await store.add_item(
+        user_id, card_id, "card-test-video", "https://youtu.be/card-test-video", "Test video", None
+    )
+
+    assert isinstance(first, Success) and first.unwrap()["added"] is True
+    assert isinstance(duplicate, Success) and duplicate.unwrap()["added"] is False
+    assert duplicate.unwrap()["id"] == first.unwrap()["id"]
+    assert isinstance(legacy, Success) and legacy.unwrap() == first.unwrap()["id"]
+    assert isinstance(await store.delete_card(user_id, card_id), Success)
+
+
 # ---------- extension v2 phase 2: live watch sessions ----------
 
 async def test_live_sessions_merge_and_crash_sweep():
@@ -273,6 +341,9 @@ async def test_live_sessions_merge_and_crash_sweep():
                 "WHERE user_id = $1 AND entry_id = $2", user_id, entry_id)
 
     before = await _cursor()
+
+    assert isinstance(await live.upsert_position(user_id, entry_id, 999, 4, 612), Failure)
+    assert await _live_row() is None, "an invalid season must not leave an unmergeable live row"
 
     # Upserts buffer in the live table only — the real cursor stays put.
     assert isinstance(await live.upsert_position(user_id, entry_id, 1, 4, 612), Success)

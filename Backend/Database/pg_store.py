@@ -72,14 +72,15 @@ class PgStore:
         async with pool.acquire() as con:
             async with con.transaction():
                 channel_id = await self._get_or_create_channel(con, key, user_id, channel_name, channel_url, logo)
-                # yt_tracking.channel_id is PK (owner schema: 1 subscription row
-                # per channel). Re-subscribing with a different kind UPDATES it:
-                # a channel is either tracked wholesale or word-scanned.
+                # Subscription modes are mutually exclusive across the three
+                # mode tables; direct GraphQL adds must match switch_mode.
+                await con.execute("DELETE FROM yt_playlists WHERE channel_id = $1", channel_id)
+                await con.execute("DELETE FROM yt_randomsubs WHERE channel_id = $1", channel_id)
                 await con.execute(
                     "INSERT INTO yt_tracking (channel_id, rss_id_enc, rss_hash, kind, word_enc) "
                     "VALUES ($1, $2, $3, $4, $5) "
                     "ON CONFLICT (channel_id) DO UPDATE SET "
-                    "kind = EXCLUDED.kind, word_enc = EXCLUDED.word_enc",
+                    "kind = EXCLUDED.kind, word_enc = EXCLUDED.word_enc, withhold_threshold = NULL",
                     channel_id,
                     encrypt(key, rss_id),
                     index_hash(key, rss_id),
@@ -767,6 +768,8 @@ class PgStore:
         async with pool.acquire() as con:
             async with con.transaction():
                 channel_id = await self._get_or_create_channel(con, key, user_id, channel_name, channel_url, logo)
+                await con.execute("DELETE FROM yt_tracking WHERE channel_id = $1", channel_id)
+                await con.execute("DELETE FROM yt_randomsubs WHERE channel_id = $1", channel_id)
                 await con.execute(
                     "INSERT INTO yt_playlists (channel_id, playlist_id) VALUES ($1, $2) "
                     "ON CONFLICT (channel_id) DO UPDATE SET playlist_id = EXCLUDED.playlist_id",
@@ -785,6 +788,8 @@ class PgStore:
         async with pool.acquire() as con:
             async with con.transaction():
                 channel_id = await self._get_or_create_channel(con, key, user_id, channel_name, channel_url, logo)
+                await con.execute("DELETE FROM yt_tracking WHERE channel_id = $1", channel_id)
+                await con.execute("DELETE FROM yt_playlists WHERE channel_id = $1", channel_id)
                 await con.execute(
                     "INSERT INTO yt_randomsubs (channel_id, rank) VALUES ($1, $2) "
                     "ON CONFLICT (channel_id) DO UPDATE SET rank = EXCLUDED.rank",

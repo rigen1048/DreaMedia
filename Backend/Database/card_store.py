@@ -98,6 +98,15 @@ class CardStore:
         self, user_id: int, card_id: int, video_id: str, url: str, title: str,
         thumbnail: Optional[str],
     ) -> Result[int, str]:
+        result = await self.add_item_detailed(user_id, card_id, video_id, url, title, thumbnail)
+        if isinstance(result, Failure):
+            return result
+        return Success(result.unwrap()["id"])
+
+    async def add_item_detailed(
+        self, user_id: int, card_id: int, video_id: str, url: str, title: str,
+        thumbnail: Optional[str],
+    ) -> Result[Dict[str, Any], str]:
         key = await vault.get(user_id)
         if key is None:
             return Failure("vault locked (D9)")
@@ -112,15 +121,23 @@ class CardStore:
                 "SELECT COALESCE(MAX(position), 0) + 1 FROM yt_card_items WHERE card_id = $1",
                 card_id,
             )
+            url_hash = index_hash(key, url)
             item_id = await con.fetchval(
                 "INSERT INTO yt_card_items (card_id, video_id, url_enc, url_hash, title_enc, thumbnail_enc, position) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7) "
-                "ON CONFLICT (card_id, url_hash) DO UPDATE SET card_id = EXCLUDED.card_id "
-                "RETURNING id",
-                card_id, video_id, encrypt(key, url), index_hash(key, url),
+                "ON CONFLICT (card_id, url_hash) DO NOTHING RETURNING id",
+                card_id, video_id, encrypt(key, url), url_hash,
                 encrypt(key, title), encrypt(key, thumbnail) if thumbnail else None, position,
             )
-        return Success(item_id)
+            inserted = item_id is not None
+            if not inserted:
+                item_id = await con.fetchval(
+                    "SELECT id FROM yt_card_items WHERE card_id = $1 AND url_hash = $2",
+                    card_id, url_hash,
+                )
+                if item_id is None:
+                    return Failure("duplicate item could not be located")
+        return Success({"id": item_id, "added": inserted})
 
     async def update_item_meta(
         self, user_id: int, item_id: int, title: str, thumbnail: Optional[str]

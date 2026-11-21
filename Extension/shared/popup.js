@@ -141,11 +141,9 @@ async function loadConfiguration() {
 action("saveConfig", "configStatus", async () => {
   await chrome.storage.local.set({ backendUrl: $("backendUrl").value.trim(), token: $("token").value.trim() });
   status("configStatus", "Checking connection…");
-  setConnection("loading", "Checking connection…");
   const r = await send("dreamedia:ping");
-  status("configStatus", r.ok ? "Connection verified" : `Connection failed: ${r.error}`, r.ok ? "ok" : "err");
-  if (r.ok) setConnection("ok", "Connected");
-  else setConnection("loading", "Retrying connection…");
+  status("configStatus", r.ok ? "Backend verified over HTTP" : `Connection failed: ${r.error}`, r.ok ? "ok" : "err");
+  await syncConnectionStatus();
   if (r.ok) {
     const refreshed = await send("dreamedia:refreshDomains");
     if (!refreshed.ok) throw new Error(refreshed.error || "Background refresh failed");
@@ -238,6 +236,7 @@ $("kind").addEventListener("change", showSubscriptionFields);
 showSubscriptionFields();
 
 let categories = [];
+let lastCategoryDomainValue = "";
 function fillDatalist(id, values) {
   const list = $(id);
   list.replaceChildren();
@@ -249,6 +248,10 @@ function fillDatalist(id, values) {
 }
 function updateCategorySuggestions() {
   const domainName = $("domain").value.trim();
+  if (domainName.toLowerCase() !== lastCategoryDomainValue.toLowerCase()) {
+    $("subdomain").value = "";
+    lastCategoryDomainValue = domainName;
+  }
   const domain = categories.find((row) => row.name.toLowerCase() === domainName.toLowerCase());
   const subdomainInput = $("subdomain");
   subdomainInput.disabled = !domainName;
@@ -286,9 +289,10 @@ action("addVideo", "cardStatus", async () => {
   if (!cardId) return status("cardStatus", "Pick a playlist first", "err");
   status("cardStatus", "Adding video…");
   const r = await send("dreamedia:addItem", { cardId, links: [tab.url] });
-  const added = r.ok && r.data.added > 0;
+  const added = Boolean(r.ok && r.data?.added > 0);
+  const duplicate = Boolean(r.ok && r.data && r.data.added === 0 && r.data.requested > 0 && !r.data.errors?.length);
   const reason = r.data?.errors?.[0]?.replace(`${tab.url}: `, "") || r.error;
-  status("cardStatus", added ? "Video added" : reason || "No video was added", added ? "ok" : "err");
+  status("cardStatus", added ? "Video added" : duplicate ? "Already in this playlist" : reason || "No video was added", added || duplicate ? "ok" : "err");
 });
 
 // ---- anime binding ----
@@ -300,7 +304,7 @@ action("bind", "bindStatus", async () => {
   const binding = { entryId, season: Number($("season").value) || 1, episode: Number($("episode").value) || 1 };
   await (chrome.storage.session || chrome.storage.local).set({ dreamediaBinding: binding });
   const delivered = await chrome.tabs.sendMessage(tab.id, { type: "dreamedia:bind", binding }).then(() => true, () => false);
-  status("bindStatus", delivered ? "Binding saved. Progress syncs every 15 seconds during playback." : "Binding saved. Reload an enabled anime tab to start syncing.", "ok");
+  status("bindStatus", delivered ? "Binding saved. Progress syncs every 5 seconds during playback." : "Binding saved. Reload an enabled anime tab to start syncing.", "ok");
 });
 
 // ---- lists ----

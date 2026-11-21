@@ -33,6 +33,7 @@
   }
 
   let anchorAttempts = 0;
+  let anchorRetryTimer = null;
   function tryAnchor() {
     if (window.__dreamediaBinding?.entryId || anchorAttempts >= 6) return;
     anchorAttempts += 1;
@@ -59,6 +60,14 @@
   }).catch(() => {});
 
   window.DreaMediaCore.start({
+    onNavigate: () => {
+      anchorAttempts = 0;
+      if (anchorRetryTimer) clearTimeout(anchorRetryTimer);
+      anchorRetryTimer = setTimeout(() => {
+        anchorRetryTimer = null;
+        tryAnchor();
+      }, 1500);
+    },
     onInterval: (video) => {
       const p = payload(video);
       if (p) send("dreamedia:progress", { payload: p });

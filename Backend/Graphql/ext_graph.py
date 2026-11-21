@@ -302,12 +302,12 @@ class ExtMutation:
                 errors.append(f"{link}: {info_r.failure()}")
                 continue
             video = info_r.unwrap()
-            result = await _cards.add_item(
+            result = await _cards.add_item_detailed(
                 user_id, card_id, video.video_id, video.url, video.title, video.thumbnail
             )
             if isinstance(result, Failure):
                 errors.append(f"{link}: {result.failure()}")
-            else:
+            elif result.unwrap()["added"]:
                 added += 1
         return AddItemsResult(added=added, requested=len(links), errors=errors)
 

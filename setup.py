@@ -121,6 +121,17 @@ def build_extensions() -> None:
     for variant in ("mv2", "mv3"):
         target = EXTENSION / variant
         target.mkdir(parents=True, exist_ok=True)
+        shared_names = {src.name for src in SHARED.iterdir()}
+        variant_only = {"manifest.json"}
+        if "icons" not in shared_names:
+            variant_only.add("icons")
+        for existing in target.iterdir():
+            if existing.name in variant_only:
+                continue
+            if existing.is_dir():
+                shutil.rmtree(existing)
+            else:
+                existing.unlink()
         for src in sorted(SHARED.iterdir()):
             if src.is_file():
                 shutil.copy2(src, target / src.name)
@@ -194,7 +205,13 @@ def main() -> None:
     parser.add_argument("--dev", action="store_true",
                         help="dev mode: local uvicorn + bun dev in the foreground "
                              "(default: full docker stack — db, backend, frontend)")
+    parser.add_argument("--build-extensions-only", action="store_true",
+                        help="synchronize Extension/shared into the mv2 and mv3 packages, then exit")
     args = parser.parse_args()
+
+    if args.build_extensions_only:
+        build_extensions()
+        return
 
     env = load_env()
     build_extensions()
