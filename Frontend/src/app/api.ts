@@ -628,6 +628,20 @@ export const aniWatchLink = (eventId: number) =>
     { id: eventId },
   );
 
+export const exportCsv = (media: "yt" | "ani") =>
+  gql<{ exportCsv: string }>(
+    `query ExportCsv($media: String!) { exportCsv(media: $media) }`,
+    { media },
+  );
+
+export const importCsv = (media: "yt" | "ani", payload: string) =>
+  gql<{ importCsv: { imported: number; skipped: number; errors: string[] } }>(
+    `mutation ImportCsv($media: String!, $payload: String!) {
+      importCsv(media: $media, payload: $payload) { imported skipped errors }
+    }`,
+    { media, payload },
+  );
+
 export const importData = (payload: string) =>
   gql<{ importData: { channels: number; cards: number; anime: number; skipped: number } }>(
     `mutation ImportData($payload: String!) {

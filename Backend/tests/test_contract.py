@@ -5,7 +5,7 @@ import pytest
 from returns.result import Failure, Success
 
 from Auth import auth
-from Database import db
+from Database import csvio, db
 from Database.ani_store import AniStore
 from Database.pg_store import PgStore, PgSubscription
 from Extension import anchor, live, sites
@@ -521,6 +521,83 @@ async def test_watch_sites_learn_and_resolve():
     assert link == "https://plain.example"
 
     await store.delete_entry(user_id, entry_id)
+
+
+# ---------- CSV backup (export/import) ----------
+
+async def test_csv_youtube_roundtrip():
+    """Our YouTube CSV round-trips fully: mode, words, label, category.
+    Rows with a stored rss id re-import without network resolution."""
+    user_id = await _user_id()
+    yt = PgStore()
+    cid = (await yt.add_tracking(
+        user_id, "UCcsv", "CSV Chan", "https://yt/UCcsv", kind="wordscan", words=["abc"])).unwrap()
+    await yt.assign_category(user_id, cid, "Tech", "Cloud")
+
+    text = (await csvio.export_youtube(user_id)).unwrap()
+    first_line = text.splitlines()[0]
+    assert first_line.startswith("Channel ID,Channel URL,Channel Title"), "FreeTube compat"
+    assert "CSV Chan" in text and "wordscan" in text and "abc" in text
+
+    await yt.delete_channel(user_id, cid)
+    assert [c for c in await yt.channels_view(user_id) if c["name"] == "CSV Chan"] == []
+
+    result = (await csvio.import_youtube(user_id, text)).unwrap()
+    assert result["imported"] >= 1 and not result["errors"]
+    view = [c for c in await yt.channels_view(user_id) if c["name"] == "CSV Chan"][0]
+    assert view["kind"] == "wordscan" and view["words"] == ["abc"]
+    assert view["domain"] == "Tech" and view["subdomain"] == "Cloud"
+
+    await yt.delete_channel(user_id, view["id"])
+
+
+async def test_csv_youtube_freetube_import():
+    """FreeTube's exact 3-column export imports, resolving channels the same
+    way subscribe-from-page does."""
+    user_id = await _user_id()
+    freetube = (
+        "Channel ID,Channel URL,Channel Title\n"
+        "UCX6OQ3DkcsbYNE6H8uQQuVA,https://www.youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA,MrBeast\n"
+    )
+    result = (await csvio.import_youtube(user_id, freetube)).unwrap()
+    assert result["imported"] == 1, result["errors"]
+    view = [c for c in await yt_channels(user_id) if "MrBeast" in (c["name"] or "")]
+    assert view, "MrBeast should be subscribed from the FreeTube row"
+    await PgStore().delete_channel(user_id, view[0]["id"])
+
+
+async def yt_channels(user_id):
+    return await PgStore().channels_view(user_id)
+
+
+async def test_csv_anime_roundtrip():
+    """anime.csv carries title, list and cursor; re-import re-tracks through
+    AniList and restores the position."""
+    user_id = await _user_id()
+    store, entry_id, _ = await _ani_entry(user_id)
+    assert isinstance(await store.set_progress(user_id, entry_id, 2, 40, 90), Success)
+
+    text = (await csvio.export_anime(user_id)).unwrap()
+    assert text.splitlines()[0].startswith("Title,AniList ID,List")
+    assert "Naruto" in text
+
+    await store.delete_entry(user_id, entry_id)
+    result = (await csvio.import_anime(user_id, text)).unwrap()
+    assert result["imported"] == 1, result["errors"]
+
+    view = await store.management_view(user_id)
+    entry = [e for e in view if e["title"] == "Naruto"][0]
+    cursor = entry["cursor"]
+    assert (cursor["season"], cursor["episode"], cursor["position_seconds"]) == (2, 40, 90)
+
+    await store.delete_entry(user_id, entry["id"])
+
+
+async def test_csv_rejects_garbage():
+    user_id = await _user_id()
+    assert isinstance(await csvio.import_youtube(user_id, "not,a\n1,2"), Success)
+    result = (await csvio.import_youtube(user_id, "not,a\n1,2")).unwrap()
+    assert result["imported"] == 0 and result["skipped"] == 1
 
 
 # ---------- category CRUD (P1) ----------
