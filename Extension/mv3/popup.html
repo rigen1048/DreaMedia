@@ -66,15 +66,6 @@
 
     <section id="subscribePanel" class="panel" role="tabpanel" aria-labelledby="subscribeTab">
       <h1>Add YouTube source</h1>
-      <div id="ytImport" class="subscription-import">
-        <h2 class="import-title">Import YouTube subscriptions</h2>
-        <div class="import-actions">
-          <button id="scanSubscriptions" class="secondary" type="button">Scan subscriptions</button>
-          <button id="importSubscriptions" class="primary" type="button" hidden disabled>Import all</button>
-        </div>
-        <ul id="importPreview" class="import-preview" hidden></ul>
-        <p id="importStatus" class="status" role="status"></p>
-      </div>
       <div class="fields">
         <div class="field">
           <label for="kind">Notification type</label>
@@ -123,10 +114,16 @@
           </div>
         </div>
       </div>
-      <div class="panel-actions">
-        <p id="subStatus" class="status" role="status"></p>
+      <div class="source-actions">
+        <div class="import-actions">
+          <button id="scanSubscriptions" class="secondary" type="button">Scan subscriptions</button>
+          <button id="importSubscriptions" class="primary" type="button" hidden disabled>Import all</button>
+        </div>
         <button id="subscribe" class="primary" type="button"><svg aria-hidden="true"><use href="#plus"/></svg>Add source</button>
       </div>
+      <ul id="importPreview" class="import-preview" hidden></ul>
+      <p id="importStatus" class="status" role="status"></p>
+      <p id="subStatus" class="status" role="status"></p>
     </section>
 
     <section id="playlistPanel" class="panel" role="tabpanel" aria-labelledby="playlistTab" hidden>
