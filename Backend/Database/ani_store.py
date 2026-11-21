@@ -526,7 +526,7 @@ class AniStore:
         async with pool.acquire() as con:
             rows = await con.fetch(
                 """
-                SELECT a.id, a.title_enc, a.cover_enc, a.label, a.label_reason_enc,
+                SELECT a.id, a.anilist_id, a.title_enc, a.cover_enc, a.label, a.label_reason_enc,
                        a.list, a.watch_state, a.active, a.notify_release,
                        a.canon_only, a.cursor_season, a.cursor_episode, a.cursor_position_seconds,
                        a.anime_type, a.airing_time, a.subdomain_id,
@@ -549,7 +549,8 @@ class AniStore:
             entry = entries.setdefault(
                 r["id"],
                 {
-                    "id": r["id"], "title": decrypt(key, r["title_enc"]),
+                    "id": r["id"], "anilist_id": r["anilist_id"],
+                    "title": decrypt(key, r["title_enc"]),
                     "cover": decrypt(key, r["cover_enc"]),
                     "label": r["label"],
                     "label_reason": decrypt(key, r["label_reason_enc"]),

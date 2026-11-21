@@ -7,7 +7,7 @@ import strawberry
 from returns.result import Failure
 from strawberry.types import Info
 
-from Database import portable
+from Database import csvio, portable
 from Extension import tokens
 from Extension.store import ExtDomainStore
 from Graphql.children import _uid, _unwrap
@@ -39,6 +39,17 @@ class AccountQuery:
         rows = await _domains.list_domains(await _uid(info))
         return [ExtDomain(**r) for r in rows]
 
+    @strawberry.field
+    async def export_csv(self, info: Info, media: str) -> str:
+        """CSV backup, one file per media (FreeTube-compatible YouTube
+        columns; anime carries title + AniList id + cursor)."""
+        user_id = await _uid(info)
+        if media == "yt":
+            return _unwrap(await csvio.export_youtube(user_id))
+        if media == "ani":
+            return _unwrap(await csvio.export_anime(user_id))
+        raise ValueError("media must be yt|ani")
+
 
 @strawberry.type
 class ImportResult:
@@ -49,6 +60,13 @@ class ImportResult:
 
 
 @strawberry.type
+class CsvImportResult:
+    imported: int
+    skipped: int
+    errors: List[str]
+
+
+@strawberry.type
 class AccountMutation:
     @strawberry.field
     async def import_data(self, info: Info, payload: str) -> ImportResult:
@@ -56,6 +74,16 @@ class AccountMutation:
         result = await portable.import_user(await _uid(info), payload)
         counts = _unwrap(result)
         return ImportResult(**counts)
+
+    @strawberry.field
+    async def import_csv(self, info: Info, media: str, payload: str) -> CsvImportResult:
+        """CSV import: FreeTube / HydraWatch / our own exports."""
+        user_id = await _uid(info)
+        if media == "yt":
+            return CsvImportResult(**_unwrap(await csvio.import_youtube(user_id, payload)))
+        if media == "ani":
+            return CsvImportResult(**_unwrap(await csvio.import_anime(user_id, payload)))
+        raise ValueError("media must be yt|ani")
 
     @strawberry.field
     async def ext_issue_token(self, info: Info) -> str:

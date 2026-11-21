@@ -82,7 +82,8 @@ class ExtQuery:
             AniEntryOption(
                 id=e.get("id"), title=e.get("title"),
                 seasons=[sn.get("season_no") for sn in e.get("seasons", []) if isinstance(sn, dict)],
-                cursor_season=e.get("cursor_season"), cursor_episode=e.get("cursor_episode"),
+                cursor_season=(e.get("cursor") or {}).get("season"),
+                cursor_episode=(e.get("cursor") or {}).get("episode"),
             )
             for e in view
         ]
