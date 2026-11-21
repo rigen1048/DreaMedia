@@ -10,6 +10,7 @@ import { ConfirmButton, EmptyState } from "../../app/ui";
 import { formatDate, plural, timeAgo } from "../../lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { FileButton } from "@/components/ui/file-button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -53,7 +54,6 @@ export default function Admin() {
   const [target, setTarget] = useState<string | null>(null);
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
 
   const admin = useQuery({ queryKey: ["admin"], queryFn: api.fetchAdmin, retry: false });
   const data = admin.data;
@@ -187,18 +187,20 @@ export default function Admin() {
         {TABS.map((item) => {
           const Icon = item.icon;
           return (
-            <button
+            <Button
               key={item.key}
+              variant="ghost"
+              size="sm"
               onClick={() => setTab(item.key)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors cursor-pointer",
-                tab === item.key ? "bg-primary text-primary-foreground border-transparent" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                "h-auto gap-1.5 rounded-full border px-3 py-1 text-xs font-medium",
+                tab === item.key ? "bg-primary text-primary-foreground border-transparent hover:bg-primary hover:text-primary-foreground" : "text-muted-foreground",
               )}
             >
               <Icon size={12} /> {item.label}
               {item.key === "backups" && <span className="opacity-60">{backups.length}</span>}
               {item.key === "users" && <span className="opacity-60">{users.length}</span>}
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -247,37 +249,32 @@ export default function Admin() {
               </p>
             </CardHeader>
             <CardContent className="space-y-4 p-4 pt-0">
-              <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed p-4 text-sm transition-colors hover:bg-accent/40">
-                <input
-                  ref={fileInput}
-                  type="file"
-                  accept=".dump,application/octet-stream"
-                  className="hidden"
-                  onChange={async (event) => {
-                    const file = event.target.files?.[0];
-                    event.target.value = "";
-                    if (!file) return;
-                    setBusy("upload");
-                    try {
-                      const saved = await api.uploadRestoreDump(file);
-                      setStaged(saved);
-                      setTarget(null);
-                      setTyped("");
-                      notify(`Uploaded ${saved.file} — validated as a pg_dump archive`, "ok");
-                      await reload();
-                    } catch (error) {
-                      notify(error instanceof Error ? error.message : "Upload rejected", "error");
-                    } finally {
-                      setBusy(null);
-                    }
-                  }}
-                />
+              <FileButton
+                variant="outline"
+                accept=".dump,application/octet-stream"
+                className="flex h-auto w-full items-center justify-start gap-3 rounded-xl border-dashed p-4 text-sm whitespace-normal"
+                onFile={async (file) => {
+                  setBusy("upload");
+                  try {
+                    const saved = await api.uploadRestoreDump(file);
+                    setStaged(saved);
+                    setTarget(null);
+                    setTyped("");
+                    notify(`Uploaded ${saved.file} — validated as a pg_dump archive`, "ok");
+                    await reload();
+                  } catch (error) {
+                    notify(error instanceof Error ? error.message : "Upload rejected", "error");
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+              >
                 {busy === "upload" ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} className="text-muted-foreground" />}
                 <span>
                   <strong className="block">Upload a .dump from your computer</strong>
                   <em className="text-xs not-italic text-muted-foreground">Validated with pg_restore -l before it is accepted; nothing is restored yet.</em>
                 </span>
-              </label>
+              </FileButton>
 
               <div className="space-y-1.5">
                 <span className="text-xs font-medium">Or pick a dump already on this box</span>
@@ -347,18 +344,19 @@ export default function Admin() {
             <CardContent className="space-y-1 p-4 pt-0">
               {backups.length === 0 && <p className="text-sm text-muted-foreground">No dumps on disk yet.</p>}
               {backups.map((row) => (
-                <button
+                <Button
                   key={row.file}
+                  variant="ghost"
                   onClick={() => { setTarget(row.file); setStaged(null); setTyped(""); }}
                   className={cn(
-                    "flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors cursor-pointer",
-                    target === row.file ? "border-sky-500 bg-sky-500/10" : "hover:bg-accent/50",
+                    "flex h-auto w-full items-center justify-start gap-3 rounded-lg border px-3 py-2 text-left whitespace-normal",
+                    target === row.file ? "border-sky-500 bg-sky-500/10 hover:bg-sky-500/10" : "",
                   )}
                 >
                   <code className="flex-1 truncate text-xs">{row.file}</code>
                   <span className="text-xs">{bytes(row.size)}</span>
                   <span className="text-xs text-muted-foreground">{timeAgo(row.mtime)}</span>
-                </button>
+                </Button>
               ))}
             </CardContent>
           </Card>

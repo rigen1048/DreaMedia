@@ -128,17 +128,19 @@ export default function Todo() {
 
         <div className="flex flex-wrap gap-1.5">
           {LIST_FILTERS.map(([value, label]) => (
-            <button
+            <Button
               key={value}
+              variant="ghost"
+              size="sm"
               onClick={() => setListFilter(value)}
               className={cn(
-                "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
-                listFilter === value ? "bg-primary text-primary-foreground border-transparent" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                "h-auto gap-1 rounded-full border px-2.5 py-1 text-xs font-medium",
+                listFilter === value ? "bg-primary text-primary-foreground border-transparent hover:bg-primary hover:text-primary-foreground" : "text-muted-foreground",
               )}
             >
               {label}
               <span className="opacity-60">{counts[value] ?? 0}</span>
-            </button>
+            </Button>
           ))}
         </div>
 
@@ -161,10 +163,11 @@ function PlaylistTile({ card, onOpen }: { card: PlaylistCard; onOpen: () => void
   const preview = card.items.slice(0, 3);
 
   return (
-    <button
+    <Button
+      variant="outline"
       onClick={onOpen}
       aria-label={`Open playlist ${card.name ?? "untitled"}`}
-      className="group flex flex-col gap-2 rounded-xl border bg-card p-3 text-left transition-colors hover:bg-accent/50 cursor-pointer"
+      className="group flex h-auto flex-col items-stretch gap-2 rounded-xl bg-card p-3 text-left whitespace-normal"
     >
       <div className="flex items-center gap-2">
         <ListVideo size={13} className="text-sky-500" />
@@ -193,7 +196,7 @@ function PlaylistTile({ card, onOpen }: { card: PlaylistCard; onOpen: () => void
         <span className="text-xs text-muted-foreground">{percent}%</span>
         <ChevronRight size={13} className="text-muted-foreground transition-transform group-hover:translate-x-0.5" />
       </div>
-    </button>
+    </Button>
   );
 }
 

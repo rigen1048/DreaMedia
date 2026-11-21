@@ -53,12 +53,14 @@ export default function AnimeTab({ search, list, onList, onAdd }: Props) {
     <>
       <div className="mb-3 flex flex-wrap gap-1.5">
         {FILTERS.map((item) => (
-          <button
+          <Button
             key={item.value}
+            variant="ghost"
+            size="sm"
             onClick={() => onList(item.value)}
             className={cn(
-              "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
-              list === item.value ? "bg-primary text-primary-foreground border-transparent" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              "h-auto gap-1 rounded-full border px-2.5 py-1 text-xs font-medium",
+              list === item.value ? "bg-primary text-primary-foreground border-transparent hover:bg-primary hover:text-primary-foreground" : "text-muted-foreground",
             )}
           >
             {item.label}
@@ -69,7 +71,7 @@ export default function AnimeTab({ search, list, onList, onAdd }: Props) {
                   ? workspace.aniEntries.filter((entry) => entry.label === item.value).length
                   : workspace.aniEntries.filter((entry) => entry.list === item.value).length}
             </span>
-          </button>
+          </Button>
         ))}
       </div>
 

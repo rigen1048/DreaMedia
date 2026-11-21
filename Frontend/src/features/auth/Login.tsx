@@ -88,20 +88,22 @@ export default function Login() {
             <form onSubmit={submit} className="space-y-4">
               <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
                 {(["login", "signup"] as const).map((m) => (
-                  <button
+                  <Button
                     key={m}
                     type="button"
+                    variant="ghost"
+                    size="sm"
                     onClick={() => {
                       setMode(m);
                       setError("");
                     }}
                     className={cn(
-                      "rounded-md px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer",
-                      mode === m ? "bg-background shadow" : "text-muted-foreground hover:text-foreground",
+                      "h-auto rounded-md px-3 py-1.5 text-sm font-medium",
+                      mode === m ? "bg-background text-foreground shadow hover:bg-background" : "text-muted-foreground",
                     )}
                   >
                     {m === "login" ? "Sign in" : "Sign up"}
-                  </button>
+                  </Button>
                 ))}
               </div>
 

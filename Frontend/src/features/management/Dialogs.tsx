@@ -201,16 +201,18 @@ export function AddAnimeDialog({ onClose }: { onClose: () => void }) {
             <Label>Track as</Label>
             <div className="flex gap-1.5">
               {([["watching", "Watching"], ["up_to_date", "UpToDate"], ["watchlist", "Watchlist"]] as const).map(([value, label]) => (
-                <button
+                <Button
                   key={value}
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setList(value)}
                   className={cn(
-                    "rounded-full border px-3 py-1 text-xs font-medium transition-colors cursor-pointer",
-                    list === value ? "bg-primary text-primary-foreground border-transparent" : "text-muted-foreground hover:bg-accent",
+                    "h-auto rounded-full border px-3 py-1 text-xs font-medium",
+                    list === value ? "bg-primary text-primary-foreground border-transparent hover:bg-primary hover:text-primary-foreground" : "text-muted-foreground",
                   )}
                 >
                   {label}
-                </button>
+                </Button>
               ))}
             </div>
           </div>

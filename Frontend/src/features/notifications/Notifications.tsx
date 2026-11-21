@@ -29,16 +29,18 @@ function Chip({
   active, onClick, disabled, children,
 }: { active?: boolean; onClick?: () => void; disabled?: boolean; children: React.ReactNode }) {
   return (
-    <button
+    <Button
+      variant="ghost"
+      size="sm"
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed",
-        active ? "bg-primary text-primary-foreground border-transparent" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+        "h-auto gap-1 rounded-full border px-2.5 py-1 text-xs font-medium",
+        active ? "bg-primary text-primary-foreground border-transparent hover:bg-primary hover:text-primary-foreground" : "text-muted-foreground",
       )}
     >
       {children}
-    </button>
+    </Button>
   );
 }
 
@@ -226,17 +228,19 @@ export default function Notifications() {
           <div className="flex flex-wrap items-center gap-1.5">
             <div className="mr-1 inline-flex rounded-lg bg-muted p-1">
               {(["youtube", "anime"] as const).map((s) => (
-                <button
+                <Button
                   key={s}
+                  variant="ghost"
+                  size="sm"
                   onClick={() => { setSource(s); setDomain(null); setSubdomain(null); }}
                   className={cn(
-                    "rounded-md px-3 py-1 text-sm font-medium transition-colors cursor-pointer",
-                    source === s ? "bg-background shadow" : "text-muted-foreground hover:text-foreground",
+                    "h-auto rounded-md px-3 py-1 text-sm font-medium",
+                    source === s ? "bg-background text-foreground shadow hover:bg-background" : "text-muted-foreground",
                   )}
                 >
                   {s === "youtube" ? "YouTube" : "Anime"}{" "}
                   <span className="opacity-60">{s === "youtube" ? ytRows.length : aniRows.length}</span>
-                </button>
+                </Button>
               ))}
             </div>
 

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ListVideo, Trash2, X } from "lucide-react";
+import { ListVideo, Trash2, X } from "lucide-react";
 import * as api from "../../app/api";
 import { useApp, useWorkspace } from "../../app/state";
 import { ConfirmButton } from "../../app/ui";
 import { formatDate } from "../../lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 
 /**
@@ -111,20 +112,15 @@ export function PlaylistDrawer({ cardId, onClose }: { cardId: number; onClose: (
                   key={item.id}
                   className={cn("flex items-center gap-2.5 rounded-lg p-1.5 hover:bg-accent/50", item.done && "opacity-55")}
                 >
-                  <button
+                  <Checkbox
                     aria-label={item.done ? "Mark not done" : "Mark done"}
-                    onClick={async () => {
-                      await api.ytSetCardItemDone(item.id, !item.done);
+                    checked={item.done}
+                    onCheckedChange={async (checked) => {
+                      await api.ytSetCardItemDone(item.id, checked === true);
                       await refresh();
                     }}
-                    className={cn(
-                      "flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded border transition-colors cursor-pointer",
-                      item.done ? "border-sky-500 bg-sky-500 text-white" : "border-muted-foreground/40 hover:border-foreground",
-                    )}
                     style={{ width: 18, height: 18 }}
-                  >
-                    {item.done && <Check size={10} strokeWidth={3} />}
-                  </button>
+                  />
                   <a
                     href={item.url ?? `https://www.youtube.com/watch?v=${item.videoId}`}
                     target="_blank"
