@@ -30,8 +30,12 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
 - **Current site** shows whether the site is enabled, paused, or not enabled.
   Add a new site as Anime or YouTube, then reload its tab. Manage paused
   sites in **Ext → Sites** in DreaMedia.
-- **Source** follows a YouTube channel (Track, WordScan, or Random) or a page
-  with a playlist link (Playlist).
+- **Source** follows a YouTube channel (Track, WordScan, Random, or Withhold)
+  or a page with a playlist link (Playlist). Withhold batches uploads until
+  the chosen threshold is reached.
+- **Categories** are optional. Existing YouTube domains and their own
+  subdomains are suggested from DreaMedia; choose both names or neither.
+  Entering a new domain/subdomain pair creates it when the source is added.
 - **Save video** adds the active YouTube video to a custom playlist in Todo.
 - **Bind anime** lets you manually link the tab to a tracked anime and set the
   season and episode. It does not replace automatic matching on enabled sites.

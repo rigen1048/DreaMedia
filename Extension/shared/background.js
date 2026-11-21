@@ -138,16 +138,20 @@ let wsKeepalive = null;
 let gqlSeq = 0;
 const pendingOps = new Map();
 
-let connectionState = { status: "disconnected", reason: "Not configured" };
-
 function extensionAction() {
   return chrome.action || chrome.browserAction;
 }
 
-async function publishConnectionState(status, reason = "") {
+const CONNECTION_FAILURE_GRACE_MS = 2500;
+let connectionFailureTimer = null;
+let pendingConnectionFailureReason = "";
+let connectionState = { status: "idle", reason: "Not configured" };
+
+async function commitConnectionState(status, reason = "") {
   connectionState = { status, reason };
   const action = extensionAction();
   const indicator = {
+    idle: { text: "", title: "DreaMedia: not connected" },
     connected: { text: "●", color: "#22c55e", title: "DreaMedia: connected" },
     connecting: { text: "●", color: "#eab308", title: "DreaMedia: connecting…" },
     disconnected: {
@@ -159,7 +163,7 @@ async function publishConnectionState(status, reason = "") {
   try {
     await action?.setBadgeText?.({ text: indicator?.text || "" });
     if (indicator) {
-      await action?.setBadgeBackgroundColor?.({ color: indicator.color });
+      if (indicator.color) await action?.setBadgeBackgroundColor?.({ color: indicator.color });
       await action?.setTitle?.({ title: indicator.title });
     }
   } catch (_e) {
@@ -170,6 +174,39 @@ async function publishConnectionState(status, reason = "") {
   } catch (_e) {
     // The popup is normally the only receiver and may be closed.
   }
+}
+
+async function publishConnectionState(status, reason = "") {
+  if (status === "disconnected") {
+    pendingConnectionFailureReason = reason;
+    if (!connectionFailureTimer) {
+      connectionFailureTimer = setTimeout(() => {
+        connectionFailureTimer = null;
+        void commitConnectionState("disconnected", pendingConnectionFailureReason);
+      }, CONNECTION_FAILURE_GRACE_MS);
+    }
+    return;
+  }
+  if (status === "connecting") {
+    // Keep an established failure visible during retries; don't flash yellow
+    // and red for every short-lived socket attempt.
+    if (connectionState.status === "disconnected") return;
+    await commitConnectionState("connecting");
+    if (!connectionFailureTimer) {
+      pendingConnectionFailureReason = "Connection timed out";
+      connectionFailureTimer = setTimeout(() => {
+        connectionFailureTimer = null;
+        void commitConnectionState("disconnected", pendingConnectionFailureReason);
+      }, CONNECTION_FAILURE_GRACE_MS);
+    }
+    return;
+  }
+  if (connectionFailureTimer) {
+    clearTimeout(connectionFailureTimer);
+    connectionFailureTimer = null;
+  }
+  pendingConnectionFailureReason = "";
+  await commitConnectionState(status, reason);
 }
 
 function stopWsKeepalive() {
@@ -214,7 +251,7 @@ async function ensureWs() {
   }
   const { url, token } = await backend();
   if (!token) {
-    await publishConnectionState("disconnected", "No extension token");
+    await publishConnectionState("idle", "Not configured");
     return;
   }
   await publishConnectionState("connecting");
@@ -346,19 +383,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       switch (msg.type) {
         case "dreamedia:ping":
-          sendResponse({ ok: true, data: await gqlHttp("query { extPing }", {}) });
           void ensureWs();
+          sendResponse({ ok: true, data: await gqlHttp("query { extPing }", {}) });
           break;
         case "dreamedia:connectionStatus":
           sendResponse({ ok: true, data: connectionState });
+          void ensureWs();
           break;
         case "dreamedia:subscribe": {
           const body = msg.body;
           const data = await gqlHttp(
-            `mutation Subscribe($link: String!, $kind: String!, $words: [String!], $rank: String) {
-              subscribe(link: $link, kind: $kind, words: $words, rank: $rank) { ok channelId }
+            `mutation Subscribe($link: String!, $kind: String!, $words: [String!], $rank: String, $withhold: Int, $domain: String, $subdomain: String) {
+              subscribe(link: $link, kind: $kind, words: $words, rank: $rank, withhold: $withhold, domain: $domain, subdomain: $subdomain) { ok channelId }
             }`,
-            { link: body.link, kind: body.kind, words: body.words ?? null, rank: body.rank ?? null },
+            {
+              link: body.link,
+              kind: body.kind,
+              words: body.words ?? null,
+              rank: body.rank ?? null,
+              withhold: body.withhold ?? null,
+              domain: body.domain ?? null,
+              subdomain: body.subdomain ?? null,
+            },
           );
           sendResponse({ ok: true, data: { ok: data.subscribe.ok } });
           break;
@@ -384,6 +430,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               entries: (await gqlHttp(
                 "query { aniEntries { id title seasons cursorSeason cursorEpisode } }", {},
               )).aniEntries,
+            },
+          });
+          break;
+        case "dreamedia:categories":
+          sendResponse({
+            ok: true,
+            data: {
+              categories: (await gqlHttp(
+                "query { ytCategories { id name subdomains { id name } } }", {},
+              )).ytCategories,
             },
           });
           break;

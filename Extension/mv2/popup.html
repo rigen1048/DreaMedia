@@ -75,6 +75,7 @@
               <option value="tracking">Track — every upload</option>
               <option value="wordscan">WordScan — matching titles</option>
               <option value="random">Random — occasional picks</option>
+              <option value="withhold">Withhold — release in batches</option>
               <option value="playlist">Playlist — new playlist items</option>
             </select>
             <svg><use href="#chevron"/></svg>
@@ -93,11 +94,29 @@
             <svg><use href="#chevron"/></svg>
           </div>
         </div>
+        <div id="withholdField" class="field" hidden>
+          <label for="withhold">Batch size</label>
+          <input id="withhold" type="number" min="1" step="1" value="2" aria-describedby="withholdHint">
+          <p id="withholdHint" class="field-note">Hold uploads until this many have accumulated.</p>
+        </div>
         <div id="wordsField" class="field" hidden>
           <label for="words">Words to match</label>
           <input id="words" placeholder="trailer, live, devlog" aria-describedby="wordsHint">
           <p id="wordsHint" class="field-note">Separate words with commas.</p>
         </div>
+        <div class="pair">
+          <div class="field">
+            <label for="domain">Domain (optional)</label>
+            <input id="domain" list="domainSuggestions" placeholder="Technology" autocomplete="off">
+            <datalist id="domainSuggestions"></datalist>
+          </div>
+          <div class="field">
+            <label for="subdomain">Subdomain (optional)</label>
+            <input id="subdomain" list="subdomainSuggestions" placeholder="Choose a domain first" autocomplete="off" disabled>
+            <datalist id="subdomainSuggestions"></datalist>
+          </div>
+        </div>
+        <p class="field-note">Choose both category names, or leave both empty. New pairs are created when the source is added.</p>
       </div>
       <div class="panel-actions">
         <p id="subStatus" class="status" role="status"></p>

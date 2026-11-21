@@ -28,6 +28,7 @@ function setConnection(state, text) {
 
 function applyConnectionState(data) {
   const labels = {
+    idle: ["idle", "Not connected"],
     connected: ["ok", "Connected"],
     connecting: ["loading", "Connecting…"],
     disconnected: ["err", data.reason ? `Disconnected: ${data.reason}` : "Disconnected"],
@@ -143,7 +144,8 @@ action("saveConfig", "configStatus", async () => {
   setConnection("loading", "Checking connection…");
   const r = await send("dreamedia:ping");
   status("configStatus", r.ok ? "Connection verified" : `Connection failed: ${r.error}`, r.ok ? "ok" : "err");
-  setConnection(r.ok ? "ok" : "err", r.ok ? "Connected" : "Connection failed");
+  if (r.ok) setConnection("ok", "Connected");
+  else setConnection("loading", "Retrying connection…");
   if (r.ok) {
     const refreshed = await send("dreamedia:refreshDomains");
     if (!refreshed.ok) throw new Error(refreshed.error || "Background refresh failed");
@@ -227,6 +229,7 @@ function showSubscriptionFields() {
   const kind = $("kind").value;
   $("wordsField").hidden = kind !== "wordscan";
   $("rankField").hidden = kind !== "random";
+  $("withholdField").hidden = kind !== "withhold";
   $("sourceHint").textContent = kind === "playlist"
     ? (page.playlist ? "Follow new items in the YouTube playlist linked to this page." : "Open a YouTube playlist or a video within that playlist.")
     : (page.kind === "channel" ? "Follow this channel in your DreaMedia feed." : "Open a YouTube channel page for this notification type.");
@@ -234,14 +237,41 @@ function showSubscriptionFields() {
 $("kind").addEventListener("change", showSubscriptionFields);
 showSubscriptionFields();
 
+let categories = [];
+function fillDatalist(id, values) {
+  const list = $(id);
+  list.replaceChildren();
+  for (const value of values) {
+    const option = document.createElement("option");
+    option.value = value;
+    list.append(option);
+  }
+}
+function updateCategorySuggestions() {
+  const domainName = $("domain").value.trim();
+  const domain = categories.find((row) => row.name.toLowerCase() === domainName.toLowerCase());
+  const subdomainInput = $("subdomain");
+  subdomainInput.disabled = !domainName;
+  subdomainInput.placeholder = domainName ? "Existing or new subdomain" : "Choose a domain first";
+  fillDatalist("subdomainSuggestions", (domain?.subdomains || []).map((row) => row.name));
+}
+$("domain").addEventListener("input", updateCategorySuggestions);
+
 // ---- subscribe ----
 action("subscribe", "subStatus", async () => {
   const tab = await currentTab();
   if (!tab?.url) return status("subStatus", "Open a YouTube page first", "err");
   const kind = $("kind").value;
+  const domain = $("domain").value.trim();
+  const subdomain = $("subdomain").value.trim();
+  if (Boolean(domain) !== Boolean(subdomain)) {
+    return status("subStatus", "Choose both a domain and subdomain, or leave both empty.", "err");
+  }
   const body = { kind, link: tab.url };
   if (kind === "wordscan") body.words = $("words").value.split(",").map((w) => w.trim()).filter(Boolean);
   if (kind === "random") body.rank = $("rank").value;
+  if (kind === "withhold") body.withhold = Math.max(1, Math.round(Number($("withhold").value) || 2));
+  if (domain && subdomain) Object.assign(body, { domain, subdomain });
   status("subStatus", "Subscribing…");
   const r = await send("dreamedia:subscribe", { body });
   const subscribed = r.ok && r.data?.ok;
@@ -317,6 +347,15 @@ async function loadLists(configured, updateConnection = true) {
   } else {
     fillOptions($("entry"), [], configured ? "Couldn’t load anime" : "Connect DreaMedia to load anime");
   }
+  const categoryResult = await send("dreamedia:categories");
+  if (categoryResult.ok) {
+    categories = categoryResult.data.categories || [];
+    fillDatalist("domainSuggestions", categories.map((row) => row.name));
+  } else {
+    categories = [];
+    fillDatalist("domainSuggestions", []);
+  }
+  updateCategorySuggestions();
 }
 loadConfiguration()
   .catch((error) => {

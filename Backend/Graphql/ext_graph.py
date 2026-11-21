@@ -96,6 +96,22 @@ class ExtQuery:
             raise ValueError("vault locked (D9)")
         return [ExtDomainInfo(**r) for r in rows]
 
+    @strawberry.field
+    async def yt_categories(self, info: Info) -> List[ExtCategoryOption]:
+        """Full YouTube category tree used for valid extension suggestions."""
+        tree = await _yt.domains_tree(await _ext_uid(info))
+        return [
+            ExtCategoryOption(
+                id=domain["id"],
+                name=domain.get("name") or "",
+                subdomains=[
+                    ExtSubdomainOption(id=subdomain["id"], name=subdomain.get("name") or "")
+                    for subdomain in domain.get("subdomains", [])
+                ],
+            )
+            for domain in tree.get("domains", [])
+        ]
+
 
 @strawberry.type
 class AnchorMatch:
@@ -129,6 +145,19 @@ class ExtDomainInfo:
     domain: Optional[str]
     media: str
     enabled: bool
+
+
+@strawberry.type
+class ExtSubdomainOption:
+    id: int
+    name: str
+
+
+@strawberry.type
+class ExtCategoryOption:
+    id: int
+    name: str
+    subdomains: List[ExtSubdomainOption]
 
 
 @strawberry.type
@@ -188,15 +217,23 @@ class ExtMutation:
     async def subscribe(
         self, info: Info, link: str, kind: str = "tracking",
         words: Optional[List[str]] = None, rank: Optional[str] = None,
+        withhold: Optional[int] = None,
         domain: Optional[str] = None, subdomain: Optional[str] = None,
     ) -> SubscribeResult:
         """Subscribe-from-page (HydraTracker capability): the popup sends
-        the current tab's URL; resolution happens server-side."""
+        the current tab's URL; resolution happens server-side. Categories
+        are optional as a pair because YouTube channels attach to subdomains."""
         import asyncio
 
         from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
 
         user_id = await _ext_uid(info)
+        if kind == "withhold" and (withhold is None or withhold < 1):
+            raise ValueError("withhold threshold must be >= 1")
+        category_domain = domain.strip() if domain and domain.strip() else None
+        category_subdomain = subdomain.strip() if subdomain and subdomain.strip() else None
+        if bool(category_domain) != bool(category_subdomain):
+            raise ValueError("choose both a domain and subdomain, or leave both empty")
         if kind == "playlist":
             playlist_id = parse_playlist_id(link)
             if not playlist_id:
@@ -208,14 +245,16 @@ class ExtMutation:
                 resolved = info_r.unwrap()
                 name, url, logo = resolved.name, resolved.url, resolved.logo
             result = await _yt.add_playlist(user_id, playlist_id, name, url, logo=logo)
-        elif kind in ("tracking", "wordscan"):
+        elif kind in ("tracking", "wordscan", "withhold"):
             info_r = await asyncio.to_thread(resolve_channel, link)
             if isinstance(info_r, Failure):
                 raise ValueError(info_r.failure())
             resolved = info_r.unwrap()
             result = await _yt.add_tracking(
                 user_id, resolved.rss_id, resolved.name, resolved.url,
-                kind=kind, words=words, logo=resolved.logo,
+                kind="tracking" if kind == "withhold" else kind,
+                words=words if kind == "wordscan" else None,
+                logo=resolved.logo,
             )
         elif kind == "random":
             info_r = await asyncio.to_thread(resolve_channel, link)
@@ -228,8 +267,17 @@ class ExtMutation:
         else:
             raise ValueError(f"unknown kind: {kind}")
         channel_id = _unwrap(result)
-        if domain:
-            await _yt.assign_category(user_id, channel_id, domain, subdomain)
+        if kind in ("tracking", "wordscan", "withhold"):
+            mode = "withhold" if kind == "withhold" else kind
+            _unwrap(await _yt.switch_mode(
+                user_id,
+                channel_id,
+                mode,
+                words=words if kind == "wordscan" else None,
+                withhold=withhold if kind == "withhold" else None,
+            ))
+        if category_domain and category_subdomain:
+            _unwrap(await _yt.assign_category(user_id, channel_id, category_domain, category_subdomain))
         return SubscribeResult(ok=True, channel_id=channel_id)
 
     @strawberry.field
