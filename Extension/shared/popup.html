@@ -1,90 +1,171 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<style>
-  body { width: 320px; margin: 0; padding: 14px; background: #141417; color: #fafafa;
-         font: 13px/1.45 ui-sans-serif, system-ui, sans-serif; }
-  h1 { font-size: 14px; margin: 0 0 10px; }
-  h1 span { color: #71717a; }
-  section { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid #27272a; }
-  section:last-child { border: 0; margin: 0; padding: 0; }
-  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #a1a1aa; margin: 0 0 6px; }
-  select, input, button { width: 100%; box-sizing: border-box; margin: 3px 0; padding: 7px 9px;
-    border-radius: 8px; border: 1px solid #3f3f46; background: #1c1c21; color: #fafafa; font: inherit; }
-  button { background: #fafafa; color: #18181b; font-weight: 600; cursor: pointer; border: 0; }
-  button.ghost { background: transparent; border: 1px solid #3f3f46; color: #d4d4d8; }
-  button:disabled { opacity: .5; cursor: default; }
-  .status { font-size: 11px; color: #a1a1aa; margin-top: 4px; min-height: 14px; }
-  .status.err { color: #f87171; }
-  .status.ok { color: #34d399; }
-  .row { display: flex; gap: 6px; } .row > * { flex: 1; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DreaMedia</title>
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-<h1>drea<span>/</span>media</h1>
+  <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="gear" viewBox="0 0 24 24"><path d="m9.4 4 .5-1.3h4.2l.5 1.3a2 2 0 0 0 1.8 1.2l1.4-.2 2.1 3.6-.9 1.1a2 2 0 0 0 0 2.1l.9 1.1-2.1 3.6-1.4-.2a2 2 0 0 0-1.8 1.2l-.5 1.3H9.9l-.5-1.3a2 2 0 0 0-1.8-1.2l-1.4.2-2.1-3.6.9-1.1a2 2 0 0 0 0-2.1l-.9-1.1 2.1-3.6 1.4.2A2 2 0 0 0 9.4 4Z" transform="translate(0 1.2)"/><circle cx="12" cy="12" r="2.8"/></symbol>
+    <symbol id="video" viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="4"/><path d="m10 9 5 3-5 3z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="3.75" ry="8.5"/><path d="M3.5 12h17"/></symbol>
+    <symbol id="bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9m-8 12a2.2 2.2 0 0 0 4 0"/></symbol>
+    <symbol id="list" viewBox="0 0 24 24"><path d="M3.5 6h14m-14 6h14m-14 6h8m6-3 4 3-4 3z"/></symbol>
+    <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+    <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="back" viewBox="0 0 24 24"><path d="m11 5-7 7 7 7m-7-7h16"/></symbol>
+    <symbol id="link" viewBox="0 0 24 24"><path d="m10 13 4-4m-5.5 6.5-1 1a3.5 3.5 0 0 1-5-5l4-4a3.5 3.5 0 0 1 5 0m1-1 1-1a3.5 3.5 0 0 1 5 5l-4 4a3.5 3.5 0 0 1-5 0" transform="translate(1.5 1)"/></symbol>
+  </svg>
 
-<section id="setup">
-  <h2>Setup</h2>
-  <input id="backendUrl" value="http://127.0.0.1:8123" placeholder="Backend URL">
-  <input id="token" placeholder="Extension token (dm_…)" type="password">
-  <button id="saveConfig" class="ghost">Save &amp; ping</button>
-  <div id="configStatus" class="status"></div>
-</section>
+  <header class="popup-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">d<span>/</span>m</span>
+      <span class="brand-name">DreaMedia</span>
+    </div>
+    <button id="closeSettings" class="icon-button" type="button" aria-label="Back to page actions" title="Back to page actions" hidden>
+      <svg aria-hidden="true"><use href="#back"/></svg>
+    </button>
+    <button id="openSettings" class="icon-button" type="button" aria-label="Connection settings" title="Connection settings">
+      <svg><use href="#gear"/></svg>
+    </button>
+  </header>
 
-<section id="site">
-  <h2>This site</h2>
-  <div id="siteHost" class="status"></div>
-  <div id="siteEnable" style="display:none">
-    <select id="siteMedia">
-      <option value="ani">Anime site</option>
-      <option value="yt">YouTube / video site</option>
-    </select>
-    <button id="enableSite">Enable DreaMedia on this site</button>
-  </div>
-  <div id="siteStatus" class="status"></div>
-</section>
+  <main id="actions" class="popup-content">
+    <section id="site" class="site" aria-label="Current site">
+      <div class="site-card">
+        <span id="siteIcon" class="site-icon"><svg><use href="#globe"/></svg></span>
+        <div class="site-info">
+          <p class="eyebrow">Current site</p>
+          <p id="siteHost" class="site-host" tabindex="-1">Checking site…</p>
+        </div>
+        <span id="siteBadge" class="site-badge" hidden></span>
+      </div>
+      <div id="siteEnable" class="site-enable" hidden>
+        <label class="sr-only" for="siteMedia">Site type</label>
+        <div class="select-wrap">
+          <select id="siteMedia">
+            <option value="ani">Anime</option>
+            <option value="yt">YouTube</option>
+          </select>
+          <svg><use href="#chevron"/></svg>
+        </div>
+        <button id="enableSite" class="secondary" type="button">Enable site</button>
+      </div>
+      <p id="siteStatus" class="status" role="status"></p>
+    </section>
 
-<section>
-  <h2>Subscribe this page</h2>
-  <div class="row">
-    <select id="kind">
-      <option value="tracking">Track — every upload</option>
-      <option value="wordscan">WordScan</option>
-      <option value="random">Random</option>
-      <option value="playlist">Playlist</option>
-    </select>
-    <select id="rank" style="display:none">
-      <option value="day">Daily</option>
-      <option value="tri_day">Every 3 days</option>
-      <option value="week" selected>Weekly</option>
-      <option value="bi_week">Every 2 weeks</option>
-      <option value="month">Monthly</option>
-    </select>
-  </div>
-  <input id="words" placeholder="WordScan words, comma separated" style="display:none">
-  <button id="subscribe">Subscribe current page</button>
-  <div id="subStatus" class="status"></div>
-</section>
+    <div class="tabs" role="tablist" aria-label="Page actions">
+      <button id="subscribeTab" type="button" role="tab" aria-selected="true" aria-controls="subscribePanel"><svg aria-hidden="true"><use href="#bell"/></svg>Source</button>
+      <button id="playlistTab" type="button" role="tab" aria-selected="false" aria-controls="playlistPanel" tabindex="-1"><svg aria-hidden="true"><use href="#list"/></svg>Save video</button>
+      <button id="trackTab" type="button" role="tab" aria-selected="false" aria-controls="trackPanel" tabindex="-1"><svg aria-hidden="true"><use href="#clock"/></svg>Bind anime</button>
+    </div>
 
-<section>
-  <h2>Add video to playlist</h2>
-  <select id="card"></select>
-  <button id="addVideo">Add current page’s video</button>
-  <div id="cardStatus" class="status"></div>
-</section>
+    <section id="subscribePanel" class="panel" role="tabpanel" aria-labelledby="subscribeTab">
+      <h1>Add YouTube source</h1>
+      <p id="sourceHint" class="description">Follow a YouTube channel or playlist in your feed.</p>
+      <div class="fields">
+        <div class="field">
+          <label for="kind">Notification type</label>
+          <div class="select-wrap">
+            <select id="kind" aria-describedby="sourceHint">
+              <option value="tracking">Track — every upload</option>
+              <option value="wordscan">WordScan — matching titles</option>
+              <option value="random">Random — occasional picks</option>
+              <option value="playlist">Playlist — new playlist items</option>
+            </select>
+            <svg><use href="#chevron"/></svg>
+          </div>
+        </div>
+        <div id="rankField" class="field" hidden>
+          <label for="rank">Frequency</label>
+          <div class="select-wrap">
+            <select id="rank">
+              <option value="day">Daily</option>
+              <option value="tri_day">Every 3 days</option>
+              <option value="week" selected>Weekly</option>
+              <option value="bi_week">Every 2 weeks</option>
+              <option value="month">Monthly</option>
+            </select>
+            <svg><use href="#chevron"/></svg>
+          </div>
+        </div>
+        <div id="wordsField" class="field" hidden>
+          <label for="words">Words to match</label>
+          <input id="words" placeholder="trailer, live, devlog" aria-describedby="wordsHint">
+          <p id="wordsHint" class="field-note">Separate words with commas.</p>
+        </div>
+      </div>
+      <div class="panel-actions">
+        <p id="subStatus" class="status" role="status"></p>
+        <button id="subscribe" class="primary" type="button"><svg aria-hidden="true"><use href="#plus"/></svg>Add source</button>
+      </div>
+    </section>
 
-<section>
-  <h2>Bind tab to anime (watch tracking)</h2>
-  <select id="entry"></select>
-  <div class="row">
-    <input id="season" type="number" min="1" value="1" placeholder="Season">
-    <input id="episode" type="number" min="0" value="1" placeholder="Episode">
-  </div>
-  <button id="bind">Bind &amp; track timestamps</button>
-  <div id="bindStatus" class="status"></div>
-</section>
+    <section id="playlistPanel" class="panel" role="tabpanel" aria-labelledby="playlistTab" hidden>
+      <h1>Add to a playlist</h1>
+      <p id="playlistHint" class="description">Save this video to a custom playlist in Todo.</p>
+      <div class="fields">
+        <div class="field">
+          <label for="card">Custom playlist</label>
+          <div class="select-wrap"><select id="card" aria-describedby="playlistHint"><option value="">Loading playlists…</option></select><svg><use href="#chevron"/></svg></div>
+        </div>
+      </div>
+      <div class="panel-actions">
+        <p id="cardStatus" class="status" role="status"></p>
+        <button id="addVideo" class="primary" type="button"><svg aria-hidden="true"><use href="#plus"/></svg>Add video</button>
+      </div>
+    </section>
 
-<script src="popup.js"></script>
+    <section id="trackPanel" class="panel" role="tabpanel" aria-labelledby="trackTab" hidden>
+      <h1>Bind tab to anime</h1>
+      <p id="trackHint" class="description">Manually link this tab to an anime you already track.</p>
+      <div class="fields">
+        <div class="field">
+          <label for="entry">Anime</label>
+          <div class="select-wrap"><select id="entry" aria-describedby="trackHint"><option value="">Loading anime…</option></select><svg><use href="#chevron"/></svg></div>
+        </div>
+        <div class="pair">
+          <div class="field"><label for="season">Season</label><input id="season" type="number" min="1" value="1"></div>
+          <div class="field"><label for="episode">Episode</label><input id="episode" type="number" min="0" value="1"></div>
+        </div>
+      </div>
+      <div class="panel-actions">
+        <p id="bindStatus" class="status" role="status"></p>
+        <button id="bind" class="primary" type="button"><svg aria-hidden="true"><use href="#link"/></svg>Bind tab</button>
+      </div>
+    </section>
+  </main>
+
+  <main id="setup" class="popup-content setup" hidden>
+    <section class="panel">
+      <h1 id="setupTitle" tabindex="-1">Connection settings</h1>
+      <p class="description">Use a personal extension token, not your login.</p>
+      <div class="fields">
+        <div class="field">
+          <label for="backendUrl">Backend URL</label>
+          <input id="backendUrl" value="http://127.0.0.1:8123" inputmode="url" spellcheck="false" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="token">Extension token</label>
+          <input id="token" type="password" placeholder="dm_…" spellcheck="false" autocomplete="off" aria-describedby="tokenHelp">
+          <p id="tokenHelp" class="field-note">In DreaMedia, open <strong>Ext → Token</strong> and choose <strong>Issue new token</strong>. It’s shown once.</p>
+        </div>
+      </div>
+      <div class="panel-actions">
+        <p id="configStatus" class="status" role="status"></p>
+        <button id="saveConfig" class="primary" type="button"><svg aria-hidden="true"><use href="#link"/></svg>Save &amp; ping</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="popup-footer">
+    <span id="connection" class="connection" data-state="loading" role="status"><span class="connection-dot"></span><span id="connectionText">Checking connection…</span></span>
+    <span class="version">v<span id="version">1.0.0</span></span>
+  </footer>
+  <script src="popup.js"></script>
 </body>
 </html>
