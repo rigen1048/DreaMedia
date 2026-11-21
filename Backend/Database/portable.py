@@ -140,10 +140,11 @@ async def import_user(user_id: int, text: str) -> Result[Dict[str, int], str]:
                 continue
             counts["anime"] += 1
             entry_id = added.unwrap()
-            if entry.get("cursor_season"):
+            cursor = entry.get("cursor") or {}
+            if cursor.get("season"):
                 await ani.set_cursor(
-                    user_id, entry_id, entry["cursor_season"],
-                    entry.get("cursor_episode"), entry.get("cursor_position_seconds"),
+                    user_id, entry_id, cursor["season"],
+                    cursor.get("episode"), cursor.get("position_seconds"),
                 )
             for season in entry.get("seasons") or []:
                 if season.get("watched") and season.get("season_no"):
