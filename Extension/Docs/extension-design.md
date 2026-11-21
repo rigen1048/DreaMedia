@@ -34,6 +34,12 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
   single "Enable DreaMedia on this site" button + media type. A DreaMedia
   page (Management/Settings section) lists domains with toggle/remove.
   Both write the same table.
+- HTTP/HTTPS host origins are optional, not install-time permissions. The
+  popup requests the backend origin when saving connection settings and a
+  site's origins when the user enables that site. Registration is limited to
+  enabled domains for which permission is currently granted. The one-shot
+  YouTube import uses the action's `activeTab` grant instead of persistent
+  access to YouTube.
 - We never prescribe which sites to use — the user teaches the extension
   their sites once, per site.
 
@@ -127,6 +133,24 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
      (a fresh release shows up there).
   3. No recorded site → fall back to the AniList link.
 
+## 9) User-triggered YouTube subscription import
+
+- On `youtube.com/feed/channels`, the popup can inject a one-shot scanner into
+  the active tab using `activeTab`. It reads rendered channel links locally,
+  scrolls to let lazy-loaded rows appear, deduplicates them, and returns a
+  count plus a short preview to the popup.
+- The popup keeps the list in memory until the user explicitly selects
+  **Import all**. It submits bounded batches to `/ext/graphql`; no YouTube
+  password, cookie, or OAuth token is requested or sent to DreaMedia.
+- The backend resolves each link with bounded concurrency. Each new channel,
+  mode, optional Withhold threshold, and optional category are committed in one
+  transaction. Existing channels are skipped so their current settings stay
+  unchanged. Individual resolution or write failures are reported in the
+  result rather than aborting successful channels.
+- Because the subscriptions page loads dynamically, the import button remains
+  disabled unless the scan observes a stable end. If the list is still growing
+  at the scan limit, the user must scroll/scan again.
+
 ## Merged architecture
 
 ```
@@ -152,7 +176,7 @@ Backend: mutations → stores → Postgres
 
 1. `ext_domains` table + store + GraphQL + DreaMedia domains page;
    dynamic registration gates script execution to the allowlist. The current
-   manifests still request broad `<all_urls>` host access for user-added sites.
+   manifests request optional HTTP/HTTPS origins only when a user enables a site.
 2. `/ext/graphql` schema + graphql-transport-ws live lane + `ext_live_sessions`
    + boot sweep.
 3. Anchor detection + server-side matching + auto-bind.

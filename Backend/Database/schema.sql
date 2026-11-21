@@ -395,6 +395,16 @@ CREATE TABLE IF NOT EXISTS ext_live_sessions (
     PRIMARY KEY (user_id, entry_id)
 );
 
+-- Retains the latest client event order after a live row is closed. A delayed
+-- progress packet cannot recreate an already-ended session; new progress has
+-- a later event timestamp and may open a fresh row.
+CREATE TABLE IF NOT EXISTS ext_live_watermarks (
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    entry_id      INTEGER NOT NULL REFERENCES ani_entries(id) ON DELETE CASCADE,
+    last_event_ms BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, entry_id)
+);
+
 -- Drift repair (found during review, 2026-11-20): databases created before
 -- the FK constraints existed never got them — CREATE TABLE IF NOT EXISTS is
 -- a no-op for existing tables, so inline REFERENCES clauses were skipped.

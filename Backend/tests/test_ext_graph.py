@@ -36,6 +36,10 @@ class FakeYtStore:
         self.calls.append(("assign_category", args, kwargs))
         return Success({"id": 41})
 
+    async def add_extension_subscription(self, *args, **kwargs):
+        self.calls.append(("add_extension_subscription", args, kwargs))
+        return Success({"channel_id": 41, "created": True})
+
 
 @pytest.fixture
 def extension_info():
@@ -85,13 +89,14 @@ async def test_extension_subscribe_creates_withhold_source_and_category(monkeypa
     )
 
     assert result.ok and result.channel_id == 41
-    assert store.calls[0][0] == "add_tracking"
-    assert store.calls[0][2]["kind"] == "tracking"
-    assert store.calls[1] == (
-        "switch_mode", (12, 41, "withhold"), {"words": None, "withhold": 3}
-    )
-    assert store.calls[2] == (
-        "assign_category", (12, 41, "Media", "Animation"), {}
+    assert len(store.calls) == 1
+    assert store.calls[0] == (
+        "add_extension_subscription", (12,), {
+            "rss_id": "UCextension", "channel_name": "Example channel",
+            "channel_url": "https://www.youtube.com/@example", "kind": "withhold",
+            "words": None, "withhold": 3, "domain": "Media",
+            "subdomain": "Animation", "logo": None,
+        }
     )
 
 
@@ -128,6 +133,42 @@ def test_extension_schema_exposes_category_and_withhold_contract():
     assert "withhold: Int" in schema
     assert "domain: String" in schema
     assert "subdomain: String" in schema
+    assert "eventTimeMs: String" in schema
+    assert "importYoutubeChannels" in schema
+
+
+@pytest.mark.asyncio
+async def test_extension_batch_import_validates_and_skips_duplicates(monkeypatch, extension_info):
+    store = FakeYtStore()
+    async def user_id(_info):
+        return 12
+
+    monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
+    monkeypatch.setattr(ext_graph, "_yt", store)
+    monkeypatch.setattr(
+        convert,
+        "resolve_channel",
+        lambda link: Success(SimpleNamespace(
+            rss_id="UC" + ("x" * 22), name="Example channel",
+            url=link, logo=None,
+        )),
+    )
+
+    result = await ext_graph.ExtMutation().import_youtube_channels(
+        extension_info,
+        links=[
+            "https://www.youtube.com/@example",
+            "https://www.youtube.com/@example/",
+            "https://not-youtube.example/channel/UC" + ("x" * 22),
+        ],
+    )
+
+    assert result.requested == 3
+    assert result.added == 1
+    assert result.skipped == 1
+    assert len(result.errors) == 1
+    assert len(store.calls) == 1
+    assert store.calls[0][2]["skip_existing"] is True
 
 
 @pytest.mark.asyncio

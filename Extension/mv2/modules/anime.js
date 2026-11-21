@@ -5,15 +5,18 @@
  * cursor. Requires core.js. */
 (() => {
   const LIVE_INTERVAL_MS = 5000;
+  let lastEventTimeMs = 0;
 
   function payload(video) {
     const binding = window.__dreamediaBinding;
     if (!binding || !binding.entryId) return null; // popup binds this tab first
+    lastEventTimeMs = Math.max(Date.now(), lastEventTimeMs + 1);
     return {
       entry_id: binding.entryId,
       season: binding.season,
       episode: binding.episode,
       position_seconds: Math.floor(video.currentTime || 0),
+      event_time_ms: String(lastEventTimeMs),
     };
   }
 

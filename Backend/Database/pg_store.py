@@ -797,6 +797,113 @@ class PgStore:
                 )
         return Success(channel_id)
 
+    async def add_extension_subscription(
+        self,
+        user_id: int,
+        *,
+        channel_name: str,
+        channel_url: str,
+        kind: str,
+        rss_id: Optional[str] = None,
+        words: Optional[List[str]] = None,
+        rank: Optional[str] = None,
+        withhold: Optional[int] = None,
+        playlist_id: Optional[str] = None,
+        domain: Optional[str] = None,
+        subdomain: Optional[str] = None,
+        logo: Optional[str] = None,
+        skip_existing: bool = False,
+    ) -> Result[Dict[str, Any], str]:
+        """Create/update an extension source and all its settings atomically.
+
+        The channel, mutually-exclusive subscription mode, withhold threshold,
+        and optional category either commit together or are all rolled back.
+        """
+        if kind not in ("tracking", "wordscan", "withhold", "random", "playlist"):
+            return Failure("kind must be tracking|wordscan|withhold|random|playlist")
+        if kind == "withhold" and (withhold is None or withhold < 1):
+            return Failure("withhold threshold must be >= 1")
+        if kind in ("tracking", "wordscan", "withhold") and not rss_id:
+            return Failure("RSS source is required for tracking subscriptions")
+        if kind == "playlist" and not playlist_id:
+            return Failure("playlist id is required for playlist subscriptions")
+        domain = domain.strip() if domain and domain.strip() else None
+        subdomain = subdomain.strip() if subdomain and subdomain.strip() else None
+        if bool(domain) != bool(subdomain):
+            return Failure("choose both a domain and subdomain, or leave both empty")
+
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            async with con.transaction():
+                channel_id = None
+                if skip_existing:
+                    channel_hash = index_hash(key, channel_url)
+                    channel_id = await con.fetchval(
+                        "INSERT INTO yt_channels (user_id, name_enc, url_enc, url_hash, logo_enc) "
+                        "VALUES ($1, $2, $3, $4, $5) "
+                        "ON CONFLICT (user_id, url_hash) DO NOTHING RETURNING id",
+                        user_id, encrypt(key, channel_name), encrypt(key, channel_url),
+                        channel_hash, encrypt(key, logo) if logo else None,
+                    )
+                    if channel_id is None:
+                        existing_id = await con.fetchval(
+                            "SELECT id FROM yt_channels WHERE user_id = $1 AND url_hash = $2",
+                            user_id, channel_hash,
+                        )
+                        if existing_id is not None:
+                            return Success({"channel_id": existing_id, "created": False})
+                if channel_id is None:
+                    channel_id = await self._get_or_create_channel(
+                        con, key, user_id, channel_name, channel_url, logo
+                    )
+                if domain and subdomain:
+                    subdomain_id = await self._get_or_create_category(
+                        con, key, user_id, domain, subdomain
+                    )
+                    await con.execute(
+                        "UPDATE yt_channels SET subdomain_id = $3 "
+                        "WHERE id = $1 AND user_id = $2",
+                        channel_id, user_id, subdomain_id,
+                    )
+
+                if kind in ("tracking", "wordscan", "withhold"):
+                    actual_kind = "wordscan" if kind == "wordscan" else "tracking"
+                    threshold = withhold if kind == "withhold" else None
+                    await con.execute("DELETE FROM yt_playlists WHERE channel_id = $1", channel_id)
+                    await con.execute("DELETE FROM yt_randomsubs WHERE channel_id = $1", channel_id)
+                    await con.execute(
+                        "INSERT INTO yt_tracking "
+                        "(channel_id, rss_id_enc, rss_hash, kind, word_enc, withhold_threshold) "
+                        "VALUES ($1, $2, $3, $4, $5, $6) "
+                        "ON CONFLICT (channel_id) DO UPDATE SET "
+                        "rss_id_enc = EXCLUDED.rss_id_enc, rss_hash = EXCLUDED.rss_hash, "
+                        "kind = EXCLUDED.kind, word_enc = EXCLUDED.word_enc, "
+                        "withhold_threshold = EXCLUDED.withhold_threshold",
+                        channel_id, encrypt(key, rss_id), index_hash(key, rss_id),
+                        actual_kind, encrypt(key, ",".join(words)) if words else None,
+                        threshold,
+                    )
+                elif kind == "playlist":
+                    await con.execute("DELETE FROM yt_tracking WHERE channel_id = $1", channel_id)
+                    await con.execute("DELETE FROM yt_randomsubs WHERE channel_id = $1", channel_id)
+                    await con.execute(
+                        "INSERT INTO yt_playlists (channel_id, playlist_id) VALUES ($1, $2) "
+                        "ON CONFLICT (channel_id) DO UPDATE SET playlist_id = EXCLUDED.playlist_id",
+                        channel_id, playlist_id,
+                    )
+                else:  # random
+                    await con.execute("DELETE FROM yt_tracking WHERE channel_id = $1", channel_id)
+                    await con.execute("DELETE FROM yt_playlists WHERE channel_id = $1", channel_id)
+                    await con.execute(
+                        "INSERT INTO yt_randomsubs (channel_id, rank) VALUES ($1, $2) "
+                        "ON CONFLICT (channel_id) DO UPDATE SET rank = EXCLUDED.rank",
+                        channel_id, rank or "week",
+                    )
+        return Success({"channel_id": channel_id, "created": True})
+
 
 
     # ---------------- seen writes + mode switch + active (frontend AI P1) ----------------

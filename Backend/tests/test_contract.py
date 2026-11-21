@@ -1,4 +1,5 @@
 """Frontend-contract tests (frontend AI P1/P2 acceptance, D44/D45)."""
+import asyncio
 import time
 
 import pytest
@@ -150,6 +151,71 @@ async def test_direct_subscription_upserts_keep_modes_exclusive():
         assert row["kind"] == "wordscan" and row["withhold_threshold"] is None
 
     await store.delete_channel(user_id, cid)
+
+
+async def test_extension_source_write_is_atomic_and_import_skips_existing(monkeypatch):
+    user_id = await _user_id()
+    store = PgStore()
+    url = f"https://www.youtube.com/@atomic-{time.time_ns()}"
+    domain = f"Import{time.time_ns()}"
+    subdomain = "Channels"
+    pool = await db.get_pool()
+    async with pool.acquire() as con:
+        before = await con.fetchval("SELECT COUNT(*) FROM yt_channels WHERE user_id = $1", user_id)
+
+    async def fail_category(*_args, **_kwargs):
+        raise RuntimeError("simulated category write failure")
+
+    monkeypatch.setattr(store, "_get_or_create_category", fail_category)
+    with pytest.raises(RuntimeError, match="simulated category write failure"):
+        await store.add_extension_subscription(
+            user_id, rss_id="UC" + ("a" * 22), channel_name="Atomic import",
+            channel_url=url, kind="withhold", withhold=4,
+            domain=domain, subdomain=subdomain,
+        )
+    async with pool.acquire() as con:
+        after_rollback = await con.fetchval("SELECT COUNT(*) FROM yt_channels WHERE user_id = $1", user_id)
+    assert after_rollback == before, "a category error must roll back the new channel too"
+
+    monkeypatch.undo()
+    added = await store.add_extension_subscription(
+        user_id, rss_id="UC" + ("a" * 22), channel_name="Atomic import",
+        channel_url=url, kind="withhold", withhold=4,
+        domain=domain, subdomain=subdomain,
+    )
+    assert isinstance(added, Success) and added.unwrap()["created"] is True
+    channel_id = added.unwrap()["channel_id"]
+    skipped = await store.add_extension_subscription(
+        user_id, rss_id="UC" + ("a" * 22), channel_name="Atomic import",
+        channel_url=url, kind="tracking", skip_existing=True,
+    )
+    assert isinstance(skipped, Success) and skipped.unwrap() == {
+        "channel_id": channel_id, "created": False,
+    }
+    async with pool.acquire() as con:
+        row = await con.fetchrow(
+            "SELECT t.kind, t.withhold_threshold, c.subdomain_id "
+            "FROM yt_channels c JOIN yt_tracking t ON t.channel_id = c.id "
+            "WHERE c.id = $1 AND c.user_id = $2",
+            channel_id, user_id,
+        )
+    assert row["kind"] == "tracking" and row["withhold_threshold"] == 4
+    assert row["subdomain_id"] is not None
+
+    race_url = f"https://www.youtube.com/@atomic-race-{time.time_ns()}"
+    raced = await asyncio.gather(*(
+        store.add_extension_subscription(
+            user_id, rss_id="UC" + ("b" * 22), channel_name="Atomic race",
+            channel_url=race_url, kind="tracking", skip_existing=True,
+        )
+        for _ in range(2)
+    ))
+    assert all(isinstance(result, Success) for result in raced)
+    assert sorted(result.unwrap()["created"] for result in raced) == [False, True]
+    race_channel_id = raced[0].unwrap()["channel_id"]
+
+    await store.delete_channel(user_id, channel_id)
+    await store.delete_channel(user_id, race_channel_id)
 
 
 # ---------- mode switch: random -> tracking/wordscan (P2) ----------
@@ -359,6 +425,21 @@ async def test_live_sessions_merge_and_crash_sweep():
     assert isinstance(await live.end_session(user_id, entry_id, 1, 4, 731), Success)
     assert await _live_row() is None
     assert await _cursor() == (1, 4, 731)
+
+    # A delayed progress packet from before the final event must not reopen
+    # the row or overwrite the cursor after the end transaction commits.
+    event_base = int(time.time() * 1000) + 1000
+    assert isinstance(await live.upsert_position(
+        user_id, entry_id, 1, 4, 750, event_base + 10
+    ), Success)
+    assert isinstance(await live.end_session(
+        user_id, entry_id, 1, 4, 800, event_base + 30
+    ), Success)
+    assert isinstance(await live.upsert_position(
+        user_id, entry_id, 1, 4, 760, event_base + 20
+    ), Success)
+    assert await _live_row() is None
+    assert await _cursor() == (1, 4, 800)
 
     # Power loss: a leftover row is merged by the boot sweep.
     assert isinstance(await live.upsert_position(user_id, entry_id, 1, 7, 120), Success)

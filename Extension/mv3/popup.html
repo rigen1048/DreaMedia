@@ -46,7 +46,7 @@
       </div>
       <div id="siteEnable" class="site-enable" hidden>
         <label class="sr-only" for="siteMedia">Site type</label>
-        <div class="select-wrap">
+        <div id="siteMediaWrap" class="select-wrap">
           <select id="siteMedia">
             <option value="ani">Anime</option>
             <option value="yt">YouTube</option>
@@ -67,6 +67,15 @@
     <section id="subscribePanel" class="panel" role="tabpanel" aria-labelledby="subscribeTab">
       <h1>Add YouTube source</h1>
       <p id="sourceHint" class="description">Follow a YouTube channel or playlist in your feed.</p>
+      <div id="ytImport" class="subscription-import" hidden>
+        <p class="field-note">Scan the channels on this page. Nothing is sent to DreaMedia until you choose Import all.</p>
+        <div class="import-actions">
+          <button id="scanSubscriptions" class="secondary" type="button">Scan subscriptions</button>
+          <button id="importSubscriptions" class="primary" type="button" hidden disabled>Import all</button>
+        </div>
+        <ul id="importPreview" class="import-preview" hidden></ul>
+        <p id="importStatus" class="status" role="status"></p>
+      </div>
       <div class="fields">
         <div class="field">
           <label for="kind">Notification type</label>

@@ -3,7 +3,8 @@
   "name": "DreaMedia",
   "description": "Subscribe from any YouTube page and track watch timestamps site-agnostically (D55).",
   "version": "1.0.0",
-  "permissions": ["storage", "tabs", "activeTab", "alarms", "<all_urls>"],
+  "permissions": ["storage", "tabs", "activeTab", "alarms"],
+  "optional_permissions": ["http://*/*", "https://*/*"],
   "browser_action": { "default_popup": "popup.html" },
   "background": { "scripts": ["background.js"], "persistent": true }
 }

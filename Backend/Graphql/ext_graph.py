@@ -183,6 +183,14 @@ class AddItemsResult:
 
 
 @strawberry.type
+class BatchImportResult:
+    added: int
+    skipped: int
+    requested: int
+    errors: List[str]
+
+
+@strawberry.type
 class ExtMutation:
     @strawberry.field
     async def anchor_match(
@@ -195,21 +203,23 @@ class ExtMutation:
 
     @strawberry.field
     async def live_progress(
-        self, info: Info, entry_id: int, season: int, episode: int, position_seconds: int
+        self, info: Info, entry_id: int, season: int, episode: int,
+        position_seconds: int, event_time_ms: Optional[str] = None,
     ) -> bool:
         """Live-session upsert — the heartbeat while watching."""
         _unwrap(await live.upsert_position(
-            await _ext_uid(info), entry_id, season, episode, position_seconds
+            await _ext_uid(info), entry_id, season, episode, position_seconds, event_time_ms
         ))
         return True
 
     @strawberry.field
     async def live_end(
-        self, info: Info, entry_id: int, season: int, episode: int, position_seconds: int
+        self, info: Info, entry_id: int, season: int, episode: int,
+        position_seconds: int, event_time_ms: Optional[str] = None,
     ) -> bool:
         """Pause/ended: merge the final position into the real cursor."""
         _unwrap(await live.end_session(
-            await _ext_uid(info), entry_id, season, episode, position_seconds
+            await _ext_uid(info), entry_id, season, episode, position_seconds, event_time_ms
         ))
         return True
 
@@ -244,41 +254,144 @@ class ExtMutation:
             else:
                 resolved = info_r.unwrap()
                 name, url, logo = resolved.name, resolved.url, resolved.logo
-            result = await _yt.add_playlist(user_id, playlist_id, name, url, logo=logo)
+            result = await _yt.add_extension_subscription(
+                user_id, channel_name=name, channel_url=url, kind=kind,
+                playlist_id=playlist_id, rank=rank, domain=category_domain,
+                subdomain=category_subdomain, logo=logo,
+            )
         elif kind in ("tracking", "wordscan", "withhold"):
             info_r = await asyncio.to_thread(resolve_channel, link)
             if isinstance(info_r, Failure):
                 raise ValueError(info_r.failure())
             resolved = info_r.unwrap()
-            result = await _yt.add_tracking(
-                user_id, resolved.rss_id, resolved.name, resolved.url,
-                kind="tracking" if kind == "withhold" else kind,
+            result = await _yt.add_extension_subscription(
+                user_id, rss_id=resolved.rss_id, channel_name=resolved.name,
+                channel_url=resolved.url, kind=kind,
                 words=words if kind == "wordscan" else None,
-                logo=resolved.logo,
+                withhold=withhold if kind == "withhold" else None,
+                domain=category_domain, subdomain=category_subdomain, logo=resolved.logo,
             )
         elif kind == "random":
             info_r = await asyncio.to_thread(resolve_channel, link)
             if isinstance(info_r, Failure):
                 raise ValueError(info_r.failure())
             resolved = info_r.unwrap()
-            result = await _yt.add_random(
-                user_id, resolved.name, resolved.url, rank or "week", logo=resolved.logo
+            result = await _yt.add_extension_subscription(
+                user_id, channel_name=resolved.name, channel_url=resolved.url,
+                kind=kind, rank=rank or "week", domain=category_domain,
+                subdomain=category_subdomain, logo=resolved.logo,
             )
         else:
             raise ValueError(f"unknown kind: {kind}")
-        channel_id = _unwrap(result)
-        if kind in ("tracking", "wordscan", "withhold"):
-            mode = "withhold" if kind == "withhold" else kind
-            _unwrap(await _yt.switch_mode(
-                user_id,
-                channel_id,
-                mode,
-                words=words if kind == "wordscan" else None,
-                withhold=withhold if kind == "withhold" else None,
-            ))
-        if category_domain and category_subdomain:
-            _unwrap(await _yt.assign_category(user_id, channel_id, category_domain, category_subdomain))
+        channel_id = _unwrap(result)["channel_id"]
         return SubscribeResult(ok=True, channel_id=channel_id)
+
+    @strawberry.field
+    async def import_youtube_channels(
+        self, info: Info, links: List[str], kind: str = "tracking",
+        words: Optional[List[str]] = None, rank: Optional[str] = None,
+        withhold: Optional[int] = None, domain: Optional[str] = None,
+        subdomain: Optional[str] = None,
+    ) -> BatchImportResult:
+        """Import a user-confirmed batch of YouTube channel links.
+
+        Each source write is atomic and existing channels are left untouched.
+        The extension sends small batches so progress and individual errors
+        remain visible rather than holding one large database transaction.
+        """
+        import asyncio
+        import re
+        from urllib.parse import urlsplit
+
+        from Orchestrator.Yt.Fetch.convert import resolve_channel
+
+        if len(links) > 50:
+            raise ValueError("batch size cannot exceed 50 channels")
+        if kind not in ("tracking", "wordscan", "random", "withhold"):
+            raise ValueError("batch import supports tracking, wordscan, random, or withhold")
+        if kind == "withhold" and (withhold is None or withhold < 1):
+            raise ValueError("withhold threshold must be >= 1")
+        category_domain = domain.strip() if domain and domain.strip() else None
+        category_subdomain = subdomain.strip() if subdomain and subdomain.strip() else None
+        if bool(category_domain) != bool(category_subdomain):
+            raise ValueError("choose both a domain and subdomain, or leave both empty")
+
+        channel_path = re.compile(r"^/(?:@[^/]+|channel/UC[A-Za-z0-9_-]{22})(?:/|$)")
+        unique_links: List[str] = []
+        seen_links = set()
+        errors: List[str] = []
+        duplicate_links = 0
+        for raw_link in links:
+            link = raw_link.strip()
+            try:
+                parsed = urlsplit(link)
+            except ValueError:
+                errors.append(f"{raw_link}: invalid URL")
+                continue
+            host = (parsed.hostname or "").lower()
+            if parsed.scheme not in ("http", "https") or not (
+                host == "youtube.com" or host.endswith(".youtube.com")
+            ) or not channel_path.match(parsed.path):
+                errors.append(f"{raw_link}: not a supported YouTube channel link")
+                continue
+            key = f"{host}{parsed.path.rstrip('/')}".casefold()
+            if key in seen_links:
+                duplicate_links += 1
+                continue
+            seen_links.add(key)
+            unique_links.append(link)
+
+        user_id = await _ext_uid(info)
+        semaphore = asyncio.Semaphore(4)
+
+        async def resolve_one(link: str):
+            async with semaphore:
+                try:
+                    resolved_result = await asyncio.to_thread(resolve_channel, link)
+                except Exception:
+                    return ("error", f"{link}: channel lookup failed")
+                if isinstance(resolved_result, Failure):
+                    return ("error", f"{link}: {resolved_result.failure()}")
+                return ("resolved", link, resolved_result.unwrap())
+
+        resolved_results = await asyncio.gather(*(resolve_one(link) for link in unique_links))
+        added = 0
+        skipped = duplicate_links
+        seen_channels = set()
+        for result in resolved_results:
+            if result[0] == "error":
+                errors.append(result[1])
+                continue
+            _status, link, resolved = result
+            canonical_url = resolved.url.rstrip("/").casefold()
+            if canonical_url in seen_channels:
+                skipped += 1
+                continue
+            seen_channels.add(canonical_url)
+            try:
+                stored = await _yt.add_extension_subscription(
+                    user_id, rss_id=resolved.rss_id,
+                    channel_name=resolved.name, channel_url=resolved.url,
+                    kind=kind, words=words if kind == "wordscan" else None,
+                    rank=rank or "week", withhold=withhold if kind == "withhold" else None,
+                    domain=category_domain, subdomain=category_subdomain,
+                    logo=resolved.logo, skip_existing=True,
+                )
+            except Exception:
+                seen_channels.discard(canonical_url)
+                errors.append(f"{link}: database write failed")
+                continue
+            if isinstance(stored, Failure):
+                seen_channels.discard(canonical_url)
+                errors.append(f"{link}: {stored.failure()}")
+                continue
+            if stored.unwrap()["created"]:
+                added += 1
+            else:
+                skipped += 1
+        return BatchImportResult(
+            added=added, skipped=skipped, requested=len(links), errors=errors
+        )
 
     @strawberry.field
     async def create_card(self, info: Info, name: str) -> ExtCard:

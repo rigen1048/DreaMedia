@@ -21,6 +21,29 @@ async function currentTab() {
   return tab;
 }
 
+function sitePermissionOrigins(raw) {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return [];
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    const isIp = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(":");
+    const matchHost = isIp || host === "localhost" ? host : `*.${host}`;
+    return [`http://${matchHost}/*`, `https://${matchHost}/*`];
+  } catch (_e) {
+    return [];
+  }
+}
+
+function backendPermissionOrigins(raw) {
+  try {
+    const url = new URL(raw.trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") return [];
+    return [`${url.protocol}//${url.hostname}/*`];
+  } catch (_e) {
+    return [];
+  }
+}
+
 function setConnection(state, text) {
   $("connection").dataset.state = state;
   $("connectionText").textContent = text;
@@ -62,13 +85,16 @@ function action(buttonId, statusId, run) {
 
 const tabs = [...document.querySelectorAll('[role="tab"]')];
 let chooseInitialTab = true;
-let page = { kind: "none", playlist: false };
+let page = { kind: "none", playlist: false, subscriptionChannels: false };
+let currentUrl = "";
+let currentSiteRecord = null;
 
 function describePage(raw) {
   try {
     const url = new URL(raw);
     const youtube = /(^|\.)youtube\.com$/i.test(url.hostname);
     const shortLink = url.hostname === "youtu.be";
+    const subscriptionChannels = youtube && url.pathname === "/feed/channels";
     const video = (shortLink && url.pathname.length > 1) || (youtube && (
       (url.pathname === "/watch" && url.searchParams.has("v")) ||
       /^\/(?:shorts|live|embed)\/[^/]+/.test(url.pathname)
@@ -77,9 +103,10 @@ function describePage(raw) {
     return {
       kind: video ? "video" : channel ? "channel" : youtube || shortLink ? "youtube" : "other",
       playlist: (youtube || shortLink) && Boolean(url.searchParams.get("list")),
+      subscriptionChannels,
     };
   } catch {
-    return { kind: "none", playlist: false };
+    return { kind: "none", playlist: false, subscriptionChannels: false };
   }
 }
 
@@ -139,7 +166,13 @@ async function loadConfiguration() {
 }
 
 action("saveConfig", "configStatus", async () => {
-  await chrome.storage.local.set({ backendUrl: $("backendUrl").value.trim(), token: $("token").value.trim() });
+  const backendUrl = $("backendUrl").value.trim();
+  const origins = backendPermissionOrigins(backendUrl);
+  if (!origins.length) throw new Error("Enter a valid HTTP or HTTPS backend URL.");
+  status("configStatus", "Requesting access to the backend…");
+  const granted = await chrome.permissions.request({ origins });
+  if (!granted) throw new Error("Backend access was not granted.");
+  await chrome.storage.local.set({ backendUrl, token: $("token").value.trim() });
   status("configStatus", "Checking connection…");
   const r = await send("dreamedia:ping");
   status("configStatus", r.ok ? "Backend verified over HTTP" : `Connection failed: ${r.error}`, r.ok ? "ok" : "err");
@@ -159,16 +192,22 @@ async function checkSite() {
   const tab = await currentTab();
   const badge = $("siteBadge");
   if (!tab?.url || !/^https?:/.test(tab.url)) {
+    currentUrl = "";
+    currentSiteRecord = null;
     $("siteHost").textContent = "No web page open";
     $("siteEnable").hidden = true;
+    $("ytImport").hidden = true;
     badge.hidden = true;
     showSubscriptionFields();
     return;
   }
+  currentUrl = tab.url;
   page = describePage(tab.url);
+  $("ytImport").hidden = !page.subscriptionChannels;
   const r = await send("dreamedia:domainStatus", { url: tab.url });
   const host = r.host || new URL(tab.url).hostname;
   $("siteHost").textContent = host;
+  currentSiteRecord = r.registered || null;
   const videoSite = r.registered?.media === "yt" || ["youtube", "video", "channel"].includes(page.kind);
   $("siteIcon").querySelector("use").setAttribute("href", videoSite ? "#video" : "#globe");
   if (chooseInitialTab) {
@@ -190,13 +229,17 @@ async function checkSite() {
   }
   const listed = Boolean(r.registered);
   const enabled = listed && r.registered.enabled !== false;
+  const grantNeeded = enabled && !r.permissionGranted;
   badge.hidden = false;
   badge.textContent = enabled ? "Enabled" : listed ? "Paused" : "Not enabled";
   badge.classList.toggle("enabled", enabled);
   const media = r.registered?.media === "ani" ? "Anime" : "YouTube";
   badge.title = listed ? `${media} · ${enabled ? "Enabled" : "Paused in DreaMedia"}` : "";
-  $("siteEnable").hidden = listed;
-  if (listed && !enabled) status("siteStatus", "Resume this site in DreaMedia → Ext → Sites.");
+  $("siteEnable").hidden = listed ? !grantNeeded : false;
+  $("siteMediaWrap").hidden = listed;
+  $("enableSite").textContent = grantNeeded ? "Grant access" : "Enable site";
+  if (grantNeeded) status("siteStatus", "This enabled site needs permission before DreaMedia can run on it.");
+  else if (listed && !enabled) status("siteStatus", "Resume this site in DreaMedia → Ext → Sites.");
   else if ($("siteStatus").classList.contains("err")) status("siteStatus", "");
   $("trackHint").textContent = enabled && r.registered.media === "ani"
     ? "Manually link this tab to an anime you already track."
@@ -204,11 +247,23 @@ async function checkSite() {
 }
 
 action("enableSite", "siteStatus", async () => {
-  const tab = await currentTab();
-  if (!tab?.url) return status("siteStatus", "Open a web page first", "err");
-  status("siteStatus", "Enabling…");
+  const pageUrl = currentUrl;
+  if (!pageUrl) return status("siteStatus", "Open a web page first", "err");
+  const origins = sitePermissionOrigins(pageUrl);
+  if (!origins.length) return status("siteStatus", "This page has no HTTP or HTTPS site permission pattern.", "err");
+  status("siteStatus", "Requesting access to this site…");
+  const granted = await chrome.permissions.request({ origins });
+  if (!granted) return status("siteStatus", "Site access was not granted.", "err");
+  if (currentSiteRecord?.enabled !== false && currentSiteRecord) {
+    const refreshed = await send("dreamedia:refreshDomains");
+    if (!refreshed.ok) throw new Error(refreshed.error || "Could not activate this site.");
+    status("siteStatus", "Access granted. Reload the tab to activate DreaMedia.", "ok");
+    await checkSite();
+    return;
+  }
+  status("siteStatus", "Adding site to DreaMedia…");
   const r = await send("dreamedia:addDomain", {
-    domain: tab.url,
+    domain: pageUrl,
     media: $("siteMedia").value,
   });
   status("siteStatus", r.ok ? "Site added. Reload the tab to activate tracking." : `Failed: ${r.error}`, r.ok ? "ok" : "err");
@@ -259,6 +314,91 @@ function updateCategorySuggestions() {
   fillDatalist("subdomainSuggestions", (domain?.subdomains || []).map((row) => row.name));
 }
 $("domain").addEventListener("input", updateCategorySuggestions);
+
+let scannedSubscriptions = [];
+let subscriptionScanComplete = false;
+
+function renderSubscriptionPreview() {
+  const list = $("importPreview");
+  list.replaceChildren();
+  for (const channel of scannedSubscriptions.slice(0, 8)) {
+    const item = document.createElement("li");
+    item.textContent = channel.name ? `${channel.name} — ${channel.url}` : channel.url;
+    list.append(item);
+  }
+  list.hidden = scannedSubscriptions.length === 0;
+}
+
+action("scanSubscriptions", "importStatus", async () => {
+  scannedSubscriptions = [];
+  subscriptionScanComplete = false;
+  $("importSubscriptions").hidden = true;
+  $("importSubscriptions").disabled = true;
+  $("importPreview").hidden = true;
+  const tab = await currentTab();
+  if (!tab?.id) throw new Error("Open YouTube's channel subscriptions page first.");
+  status("importStatus", "Scanning the page and loading more channels…");
+  const response = await send("dreamedia:scanYoutubeSubscriptions", { tabId: tab.id });
+  if (!response.ok) throw new Error(response.error || "Subscription scan failed.");
+  scannedSubscriptions = Array.isArray(response.data?.channels) ? response.data.channels : [];
+  subscriptionScanComplete = response.data?.complete === true;
+  renderSubscriptionPreview();
+  if (!scannedSubscriptions.length) {
+    status("importStatus", "No channel links found. Check that this is the channel subscriptions page and you are signed in.", "err");
+    return;
+  }
+  const importButton = $("importSubscriptions");
+  importButton.hidden = false;
+  importButton.disabled = !subscriptionScanComplete;
+  importButton.textContent = `Import all ${scannedSubscriptions.length}`;
+  if (subscriptionScanComplete) {
+    status("importStatus", `${scannedSubscriptions.length} unique channel(s) found. Review the preview, then choose Import all.`, "ok");
+  } else {
+    status("importStatus", `Found ${scannedSubscriptions.length}, but the page did not reach a stable end. Scroll through the page and scan again before importing.`, "err");
+  }
+});
+
+action("importSubscriptions", "importStatus", async () => {
+  if (!subscriptionScanComplete || !scannedSubscriptions.length) {
+    throw new Error("Scan the complete channel list before importing.");
+  }
+  const kind = $("kind").value;
+  if (kind === "playlist") throw new Error("Choose a channel mode, not Playlist, for this import.");
+  const domain = $("domain").value.trim();
+  const subdomain = $("subdomain").value.trim();
+  if (Boolean(domain) !== Boolean(subdomain)) {
+    throw new Error("Choose both a domain and subdomain, or leave both empty.");
+  }
+  const options = {
+    kind,
+    words: kind === "wordscan"
+      ? $("words").value.split(",").map((word) => word.trim()).filter(Boolean)
+      : null,
+    rank: kind === "random" ? $("rank").value : null,
+    withhold: kind === "withhold" ? Math.max(1, Math.round(Number($("withhold").value) || 2)) : null,
+    domain: domain || null,
+    subdomain: subdomain || null,
+  };
+  const links = scannedSubscriptions.map((channel) => channel.url);
+  const chunkSize = 25;
+  const totalBatches = Math.ceil(links.length / chunkSize);
+  let added = 0;
+  let skipped = 0;
+  const errors = [];
+  for (let offset = 0, batch = 1; offset < links.length; offset += chunkSize, batch += 1) {
+    status("importStatus", `Importing batch ${batch} of ${totalBatches}…`);
+    const response = await send("dreamedia:importYoutubeSubscriptions", {
+      links: links.slice(offset, offset + chunkSize),
+      ...options,
+    });
+    if (!response.ok) throw new Error(response.error || `Batch ${batch} failed.`);
+    added += Number(response.data?.added || 0);
+    skipped += Number(response.data?.skipped || 0);
+    errors.push(...(response.data?.errors || []));
+  }
+  const summary = `Import complete: ${added} added, ${skipped} already present, ${errors.length} failed.`;
+  status("importStatus", errors.length ? `${summary} ${errors[0]}` : summary, errors.length ? "err" : "ok");
+});
 
 // ---- subscribe ----
 action("subscribe", "subStatus", async () => {

@@ -40,6 +40,29 @@ function normalizeDomain(raw) {
   return d.startsWith("www.") ? d.slice(4) : d;
 }
 
+function domainHostPatterns(raw) {
+  const host = normalizeDomain(raw);
+  if (!host) return [];
+  const isIp = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(":");
+  const matchHost = isIp || host === "localhost" ? host : `*.${host}`;
+  return [`http://${matchHost}/*`, `https://${matchHost}/*`];
+}
+
+function exactOriginPattern(raw) {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return [];
+    return [`${url.protocol}//${url.hostname}/*`];
+  } catch (_e) {
+    return [];
+  }
+}
+
+async function originGranted(origins) {
+  if (!origins.length || !chrome.permissions?.contains) return false;
+  try { return await chrome.permissions.contains({ origins }); } catch (_e) { return false; }
+}
+
 // ---- domain allowlist: fetch, cache, register ----
 
 async function cachedDomains() {
@@ -57,6 +80,22 @@ async function fetchDomains() {
   return cachedDomains();
 }
 
+async function pruneUnusedHostPermissions(domains) {
+  if (!chrome.permissions?.getAll || !chrome.permissions?.remove) return;
+  const required = new Set();
+  const { url: activeBackend } = await backend();
+  for (const origin of exactOriginPattern(activeBackend)) required.add(origin);
+  for (const domain of domains) {
+    if (!domain.domain || !domain.enabled) continue;
+    for (const origin of domainHostPatterns(domain.domain)) required.add(origin);
+  }
+  const granted = await chrome.permissions.getAll();
+  const stale = (granted.origins || []).filter(
+    (origin) => /^(https?):\/\//i.test(origin) && !required.has(origin),
+  );
+  if (stale.length) await chrome.permissions.remove({ origins: stale });
+}
+
 // MV2 (Firefox) registration handles live in memory (persistent background).
 const mv2Handles = new Map();
 
@@ -66,10 +105,11 @@ async function registerDomains(domains) {
     if (!d.domain || !d.enabled) continue;
     const js = MEDIA_JS[d.media];
     if (!js) continue;
+    const matches = domainHostPatterns(d.domain);
+    if (!matches.length || !(await originGranted(matches))) continue;
     wanted.push({
       id: `${d.media}-${d.domain}`,
-      // Chrome match patterns: *.example.com also matches example.com itself.
-      matches: [`*://*.${d.domain}/*`],
+      matches,
       js,
     });
   }
@@ -104,7 +144,9 @@ async function registerDomains(domains) {
 
 async function refreshDomains() {
   try {
-    await registerDomains(await fetchDomains());
+    const domains = await fetchDomains();
+    await registerDomains(domains);
+    await pruneUnusedHostPermissions(domains);
   } catch (e) {
     console.debug("[DreaMedia] domain refresh failed", e);
   }
@@ -122,11 +164,11 @@ async function refreshAll() {
 // Green requires a token-authenticated extPing after the protocol ack. The
 // periodic transport ping keeps an idle MV3 service worker with a socket alive.
 
-const M_PROGRESS = `mutation LiveProgress($entryId: Int!, $season: Int!, $episode: Int!, $positionSeconds: Int!) {
-  liveProgress(entryId: $entryId, season: $season, episode: $episode, positionSeconds: $positionSeconds)
+const M_PROGRESS = `mutation LiveProgress($entryId: Int!, $season: Int!, $episode: Int!, $positionSeconds: Int!, $eventTimeMs: String) {
+  liveProgress(entryId: $entryId, season: $season, episode: $episode, positionSeconds: $positionSeconds, eventTimeMs: $eventTimeMs)
 }`;
-const M_END = `mutation LiveEnd($entryId: Int!, $season: Int!, $episode: Int!, $positionSeconds: Int!) {
-  liveEnd(entryId: $entryId, season: $season, episode: $episode, positionSeconds: $positionSeconds)
+const M_END = `mutation LiveEnd($entryId: Int!, $season: Int!, $episode: Int!, $positionSeconds: Int!, $eventTimeMs: String) {
+  liveEnd(entryId: $entryId, season: $season, episode: $episode, positionSeconds: $positionSeconds, eventTimeMs: $eventTimeMs)
 }`;
 const Q_WS_AUTH_PROBE = "query { extPing }";
 const WS_HANDSHAKE_TIMEOUT_MS = 15000;
@@ -404,6 +446,7 @@ async function connectWs() {
 async function liveGql(query, p) {
   const variables = {
     entryId: p.entry_id, season: p.season, episode: p.episode, positionSeconds: p.position_seconds,
+    eventTimeMs: p.event_time_ms == null ? null : String(p.event_time_ms),
   };
   await ensureWs();
   if (wsReady && ws?.readyState === WebSocket.OPEN) {
@@ -463,8 +506,10 @@ function reconnectAfterConfigurationChange() {
 chrome.storage.onChanged?.addListener((changes, area) => {
   if (area === "local" && (changes.backendUrl || changes.token)) {
     reconnectAfterConfigurationChange();
+    void refreshDomains();
   }
 });
+chrome.permissions?.onRemoved?.addListener(() => void refreshDomains());
 
 const M_ANCHOR = `mutation Anchor($candidates: [String!]!, $pageUrl: String!) {
   anchorMatch(candidates: $candidates, pageUrl: $pageUrl) {
@@ -513,6 +558,28 @@ async function fetchBlocked() {
 
 // ---- message lane ----
 
+async function scanYoutubeSubscriptions(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  let url;
+  try { url = new URL(tab.url || ""); } catch (_e) { throw new Error("Open YouTube's channel subscriptions page first."); }
+  if (!/(^|\.)youtube\.com$/i.test(url.hostname) || url.pathname !== "/feed/channels") {
+    throw new Error("Open YouTube's channel subscriptions page (/feed/channels) first.");
+  }
+  if (chrome.scripting?.executeScript) {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["modules/youtube-import.js"],
+    });
+  } else if (chrome.tabs?.executeScript) {
+    await chrome.tabs.executeScript(tabId, { file: "modules/youtube-import.js" });
+  } else {
+    throw new Error("This browser does not support active-tab import scanning.");
+  }
+  const result = await chrome.tabs.sendMessage(tabId, { type: "dreamedia:scanYoutubeSubscriptions" });
+  if (!result?.ok) throw new Error(result?.error || "Could not scan the subscriptions page.");
+  return result;
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
@@ -542,6 +609,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             },
           );
           sendResponse({ ok: true, data: { ok: data.subscribe.ok } });
+          break;
+        }
+        case "dreamedia:scanYoutubeSubscriptions": {
+          const result = await scanYoutubeSubscriptions(Number(msg.tabId));
+          sendResponse({ ok: true, data: result });
+          break;
+        }
+        case "dreamedia:importYoutubeSubscriptions": {
+          const data = await gqlHttp(
+            `mutation ImportYouTubeChannels($links: [String!]!, $kind: String!, $words: [String!], $rank: String, $withhold: Int, $domain: String, $subdomain: String) {
+              importYoutubeChannels(links: $links, kind: $kind, words: $words, rank: $rank, withhold: $withhold, domain: $domain, subdomain: $subdomain) { added skipped requested errors }
+            }`,
+            {
+              links: msg.links,
+              kind: msg.kind,
+              words: msg.words ?? null,
+              rank: msg.rank ?? null,
+              withhold: msg.withhold ?? null,
+              domain: msg.domain ?? null,
+              subdomain: msg.subdomain ?? null,
+            },
+          );
+          sendResponse({ ok: true, data: data.importYoutubeChannels });
           break;
         }
         case "dreamedia:cards":
@@ -592,7 +682,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const hit = (await cachedDomains()).find(
             (d) => host === d.domain || host.endsWith(`.${d.domain}`),
           );
-          sendResponse({ ok: true, host, registered: hit || null });
+          const permissionGranted = hit
+            ? await originGranted(domainHostPatterns(hit.domain))
+            : false;
+          sendResponse({ ok: true, host, registered: hit || null, permissionGranted });
           break;
         }
         case "dreamedia:addDomain": {

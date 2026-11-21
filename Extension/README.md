@@ -5,13 +5,19 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
 ## What it does
 
 1. **Watch tracking (SyncNwatch model)** — the content script finds the playing
-   `<video>` on enabled sites, and reports the timestamp to DreaMedia every 15s
+   `<video>` on enabled sites, and reports the timestamp to DreaMedia every 5s
    (and on pause/ended). Bind the tab to a tracked anime from the popup; an
    ended video advances the episode.
 2. **Subscribe from the page (HydraTracker model)** — add a YouTube channel or
    playlist to your feed without opening DreaMedia. The backend resolves the
    active tab’s URL.
-3. **Add the current video to a playlist card.**
+3. **Import YouTube subscriptions** — open `youtube.com/feed/channels`, choose
+   **Scan subscriptions**, review the channel count and preview, then explicitly
+   choose **Import all**. The scan reads channel links from the active page and
+   scrolls to load more; nothing is sent to DreaMedia before the import click.
+   Existing DreaMedia sources are skipped without changing their mode or
+   category. If the page does not reach a stable end, importing stays disabled.
+4. **Add the current video to a playlist card.**
 
 ## Setup
 
@@ -24,6 +30,8 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
      "Load Temporary Add-on" → pick `mv2/manifest.json`.
 3. Open the popup’s **Connection settings** (gear icon). Enter your backend
    URL (`http://127.0.0.1:8123` by default) and token, then select **Save & ping**.
+   The extension asks for access to only that backend host. **Enable site** asks
+   separately for the selected site’s HTTP/HTTPS host access.
 
 ## Popup
 
@@ -36,6 +44,9 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
 - **Categories** are optional. Existing YouTube domains and their own
   subdomains are suggested from DreaMedia; choose both names or neither.
   Entering a new domain/subdomain pair creates it when the source is added.
+- **Import subscriptions** is available on YouTube’s channel subscriptions
+  page. Choose a notification mode and optional category first; the batch
+  applies them only to channels not already in DreaMedia.
 - **Save video** adds the active YouTube video to a custom playlist in Todo.
 - **Bind anime** lets you manually link the tab to a tracked anime and set the
   season and episode. It does not replace automatic matching on enabled sites.
