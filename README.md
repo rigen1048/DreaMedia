@@ -1,273 +1,156 @@
 # DreaMedia
 
-A self-hosted console for everything you follow: YouTube sources and anime
-releases, with notification control that reaches all the way down to a single
-channel and a todo lane that keeps up with your watch cursors.
+## Own your media relationship
+
+DreaMedia is a self-hosted media command center for everything you follow, watch, and intend to watch.
+
+It brings YouTube sources, anime releases, notifications, watch progress, personal playlists, browser-based tracking, and backups into one private workspace — without requiring a Google account to remember your subscriptions or watch history.
+
+> **Escape the algorithm without abandoning the creator.**
+>
+> Follow the sources you deliberately choose, decide what deserves your attention, and keep your media memory under your control.
+
+![DreaMedia notifications](docs/screenshots/notifications.png)
+
+## Why DreaMedia exists
+
+Modern media platforms are very good at making content convenient. They are also very good at making the platform itself the owner of your attention:
+
+- subscriptions belong to an account on the platform;
+- recommendations decide what appears next;
+- watch history becomes behavioral data;
+- notifications are optimized for engagement;
+- progress is fragmented across websites and devices;
+- leaving the platform often means losing continuity.
+
+DreaMedia takes a different approach. It does not try to become another video platform, proxy creator content, or replace the original source. DreaMedia keeps the relationship between you and the sources you follow in your own system. When you choose to watch, you can still open the canonical creator or platform link.
+
+This gives you the convenience of a personal media account without requiring your media life to belong to a platform.
+
+## From HydraWatch to DreaMedia
+
+DreaMedia is the successor to [HydraWatch](https://github.com/rigen1048/HydraWatch), which began with a focused question:
+
+> Can you escape YouTube's algorithm and account dependency without abandoning the creators you actually want to follow?
+
+HydraWatch answered with a chronological, channel-based feed built around official YouTube RSS sources, free-form categories, conservative polling, CSV migration, and a local-first privacy model. DreaMedia carries that foundation forward and expands it into a broader personal media system:
 
 ```text
-DreaMedia/
-├── Backend/            FastAPI · Strawberry GraphQL · Postgres · workers
-├── Frontend/           React 19 · TypeScript · Vite · the notification receiver
-│   └── server/         notify-bridge.mjs (frontend-owned REST + SSE inbox)
-├── compose.yaml        db · backend · bridge · frontend
-├── start.py            one-command launcher (docker stack, or --dev local)
-└── README.md
+HydraWatch:
+  Follow channels → organize them → receive a clean chronological feed
+
+DreaMedia:
+  Follow sources → define attention rules → track releases
+  → remember progress → maintain personal queues → continue anywhere
 ```
 
-## Architecture in one screen
+The philosophy remains creator-respecting. DreaMedia does not try to become an unofficial copy of YouTube or replace the original platform with another opaque intermediary. It fetches source information through supported mechanisms and opens canonical links when you choose to watch.
 
-**One API for data, one receiver for messages.**
+HydraWatch users can bring existing subscriptions into DreaMedia through CSV migration. See the [HydraWatch feature overview](https://github.com/rigen1048/HydraWatch/blob/main/FEATURES.md) for the predecessor’s original category-first and algorithm-free design.
 
-- The frontend talks to the backend through **a single GraphQL endpoint**
-  (`POST /graphql`) for every read and write: auth, YouTube feed and channels,
-  domain/subdomain CRUD, notification switches, anime metadata and cursors,
-  playlists and backend message history.
-- The backend pushes bell messages to a **REST receiver the frontend owns**
-  (`Frontend/server/notify-bridge.mjs`, reached through the frontend's `/bridge`
-  proxy). The bell reads list + SSE only from that receiver, so feed rows can
-  never appear in the bell.
-- The receiver is deliberately narrow: its push endpoint is valid only with the
-  shared token on the internal compose network, the browser-facing proxy
-  refuses pushes, and reads require the caller's real session (the bridge asks
-  `/auth/session` who owns the cookie), so a guessed `userId` reads nothing.
-- Notification delivery is gated by `domain.notify AND subdomain.notify AND
-  channel/entry.notify AND label = 'none'`. Muting a domain silences every
-  channel beneath it without touching their individual flags.
-- Everything is encrypted at rest; per-user keys derive from the password at
-  login and live only in the process vault. Sessions are cookies, so the
-  backend keeps them in memory — a restart asks you to sign in again.
+## More than a successor: a fault-tolerant media platform
+
+DreaMedia is not only a larger HydraWatch. It formalizes the backend around media-source boundaries so new source types can be added without rewriting the whole application.
+
+Each media pipeline has explicit seams for access, feed modeling, fetching, filtering, orchestration, persistence, and notifications. YouTube and anime are different implementations of a broader media-handling architecture rather than two unrelated features glued into one UI.
+
+That structure makes the system more extensible for contributors and more fault-tolerant for users. Source workers claim work safely, recover stale work, preserve last-seen state, separate backend notification production from browser delivery, and keep restore operations behind a shared gate. Metadata enrichment can fail without losing the user’s original link or intent, and extension progress uses a live-session path so frequent heartbeats do not corrupt the durable cursor.
+
+The result is a system designed to grow:
 
 ```text
-browser ──GraphQL /graphql──────────────▶ FastAPI ──▶ Postgres
-   ▲                                        │
-   └──REST + SSE /bridge ◀── POST push ─────┘  (notify() history lane + push lane)
+Media source
+├── Access        resolve and communicate with the source
+├── Feed          represent source events
+├── Fetch         retrieve new source data
+├── Filter        apply user and source policy
+├── Pipeline      coordinate one refresh
+├── Manager       schedule and recover work
+└── Notify        deliver durable user-facing events
 ```
 
-## A look
+This is the architectural difference between a focused application and an extensible personal media platform.
 
-| Notifications | Management · channels |
-| --- | --- |
-| ![Feed](docs/screenshots/notifications.png) | ![Channels](docs/screenshots/channels.png) |
-| **Management · anime** | **Todo** |
-| ![Anime](docs/screenshots/anime.png) | ![Todo](docs/screenshots/todo.png) |
-| **Todo · playlist drawer** | **Management · anime detail** |
-| ![Drawer](docs/screenshots/todo-drawer.png) | ![Detail](docs/screenshots/anime-detail.png) |
-| **Admin · backups** | **Admin · restore** |
-| ![Admin](docs/screenshots/admin.png) | ![Restore](docs/screenshots/admin-restore.png) |
+### Fault-tolerant local appliance, not just a Docker deployment
 
-Categories and the bell: [`docs/screenshots`](docs/screenshots).
+DreaMedia’s reliability model is aimed at the conditions of a real local appliance: a small server or desktop that may be restarted, lose connectivity, run for weeks, or be interrupted while background work is in progress. Docker makes the system convenient to package; it is not the whole fault-tolerance story.
+
+If a process is killed during a fetch, the database claim is not treated as permanent ownership. On the next cycle, stale work can be released and claimed again. If the host restarts after an unclean shutdown, durable last-seen anchors let source pipelines resume without assuming that the previous process finished. PostgreSQL advisory locks also release with a dead connection, so another backend process can become the active manager instead of waiting for a vanished leader.
+
+The same model covers less dramatic but common conditions: when the internet is unavailable for hours or days, pipelines wait and retry rather than interpreting the outage as an empty source; when a provider is rate-limited or temporarily unavailable, backoff prevents a tight retry storm and preserves existing user state; when multiple backend processes are present, atomic claims prevent duplicate work; and while a restore is active, the shared restore gate keeps workers from writing into a database being replaced.
+
+The browser side follows the same principle. Extension playback heartbeats use a live-session path and are merged into the durable cursor at meaningful transitions, so a browser or extension crash does not turn every heartbeat into a fragile permanent write. This is why DreaMedia’s fault tolerance is part of the product experience: a local installation can lose a process, a network, or a browser session without losing the user’s media relationship.
+
+## What DreaMedia brings together
+
+- A chronological, source-driven media feed.
+- Track, WordScan, Playlist, and Random notification modes.
+- Domain → subdomain → channel/anime attention scopes.
+- Anime release, sequel, season, and airing-state tracking.
+- S/E/time watch cursors and a unified anime queue.
+- Personal video playlists with background metadata enrichment.
+- Browser-extension watch tracking and subscribe-from-page workflows.
+- Learned watch sites and release deep links.
+- Trash-and-restore for opened notifications.
+- Portable exports, CSV migration, encrypted storage, and database backups.
+- Admin restore, user management, and operational controls.
+
+Read the detailed breakdown in [FEATURES.md](FEATURES.md).
+
+## Privacy and independence
+
+DreaMedia is built for users who want a hardened browser, VPN, cookie resistance, and platform independence without giving up everyday UX.
+
+Your DreaMedia instance can remember subscriptions, categories, notification rules, queues, and progress while the browser remains signed out of Google and external platforms. User content is encrypted at rest, extension access uses a separate revocable token, and the personal media graph stays in the user-controlled instance.
+
+Self-hosting does not remove the need for security. It gives the user a clearer boundary and control over where that responsibility lives. Read [PRIVACY.md](PRIVACY.md) for the threat model and deployment guidance.
 
 ## Quick start
 
-Requirements: Docker Compose v2 for the default stack. For `--dev` you also
-need `uv`, `bun` and Node 20+.
+See [INSTALL.md](INSTALL.md) for the full guide.
 
 ```bash
-cp .env.example .env      # set DREAMEDIA_PG_PASSWORD
-python3 start.py          # docker stack: db, backend, bridge, frontend
-# or run the pieces locally (uv + bun + node):
-python3 start.py --dev
+cp .env.example .env
+# Set DREAMEDIA_PG_PASSWORD in .env
+python3 setup.py
 ```
 
-`start.py` backs up Postgres (and validates the dump), tears the stack down,
-rebuilds it against a **clean** database and waits until `:8124` actually
-answers before printing the URLs — it exits non-zero instead of leaving you
-with a half-started stack. Nothing is ever loaded back automatically: the
-safety dump sits in `backups/` until *you* restore it from **Admin → Restore**
-(backup list → restore, or upload a file). Bell history lives in `./.bridge`
-and survives the wipe.
+Open `http://localhost:8124`. The first registered account becomes an administrator.
 
-Open <http://localhost:8124>. Health: app `:8124/health`, bridge
-`:8124/bridge/health` (the receiver has no published port by design).
-On a fresh database the first screen is **Sign up** — that account becomes
-admin. Signed-in sessions are in memory, so a backend restart asks you to log
-in again.
+> **Data lifecycle:** the current launcher performs a backup and clean rebuild before starting the application. Keep backups available and review the launcher behavior before using it on valuable data. A future safe-start workflow should preserve an existing database volume by default.
 
-### Demo data
+## Architecture at a glance
 
-```bash
-# docker stack
-docker compose exec backend python scripts/seed_demo.py
+![DreaMedia runtime architecture](docs/diagrams/dreamedia-runtime.png)
 
-# local dev
-cd Backend && DREAMEDIA_PG_PASSWORD=... .venv/bin/python scripts/seed_demo.py
+The diagram is generated from the current backend, bridge, database, manager, and extension boundaries. The extension-specific lanes are shown in [ARCHITECTURE.md](ARCHITECTURE.md#browser-extension).
+
+
+```text
+Browser ── GraphQL /graphql ──▶ FastAPI ──▶ PostgreSQL
+   ▲                              │
+   └──── REST + SSE /bridge ◀─────┘
+                    notification bridge
 ```
 
-The seed creates `demo / demo1234` and pushes three bell messages through the
-real receiver, so the bell is exercised end to end.
+- **Backend:** FastAPI, Strawberry GraphQL, PostgreSQL, background workers.
+- **Frontend:** React 19, TypeScript, Vite, Radix UI primitives.
+- **Bridge:** small Node.js REST + SSE receiver for backend-originated bell messages.
+- **Extension:** Chrome MV3 and Firefox MV2 with a stable extension GraphQL lane.
+- **Deployment:** Docker Compose or local development mode.
 
-Eleven YouTube channels across five domains (one muted domain, one muted
-subdomain, one muted channel, one blocked channel), three playlists, twelve
-anime entries with seasons, events and metadata.
+See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Configuration (root `.env`)
+## Documentation
 
-| Variable | Purpose |
-| --- | --- |
-| `DREAMEDIA_PG_PASSWORD` | required, shared by Compose and the app |
-| `DREAMEDIA_PG_DSN` | optional full DSN override |
-| `DREAMEDIA_PG_HOST` / `_PORT` | database address (compose sets `db`; defaults to `127.0.0.1:5433`) |
-| `ACCESS` | `computer` (localhost) or `wifi` (LAN bind) |
-| `FRONTEND_NOTIFY_URL` | backend → receiver URL (launcher sets it) |
-| `FRONTEND_NOTIFY_TOKEN` | optional shared secret, sent as `X-Dreamedia-Token` |
-| `BRIDGE_PORT` / `BRIDGE_STORE` | receiver port (3100, internal) and inbox file |
-| `BRIDGE_BACKEND_URL` | where the receiver validates sessions (`http://backend:8000`) |
-| `BACKUP_DIR`, `BACKUP_KEEP_LATEST` | backup policy seeds |
+- [FEATURES.md](FEATURES.md) — complete feature inventory and user workflows.
+- [INSTALL.md](INSTALL.md) — installation, configuration, extension setup, demo data, upgrades, and troubleshooting.
+- [PRIVACY.md](PRIVACY.md) — privacy model, trust boundaries, and hardening guidance.
+- [ARCHITECTURE.md](ARCHITECTURE.md) — system design, data flow, and major components.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — contribution philosophy, development setup, and testing.
+- [Extension README](Extension/README.md) — browser-extension setup.
+- [Frontend UX specification](docs/frontend_ux.md) — detailed interface behavior.
 
-Policy values (ranks, floors, cooldowns) stay hardcoded in
-`Backend/Config/Hardcoded/`.
+## License
 
-## What the app does
-
-**Notifications** — one dense feed with YouTube (Track, WordScan, Random,
-Playlist) and Anime (release & change: today, sequel, new) events, scope rail,
-type counters and seen-state. The bell covers backend messages only and opens
-`/bridge` messages with a live delivery indicator.
-
-**Management** — channels table with inline editors (type, WordScan terms,
-random frequency, category attach, notify switch, pause/block, delete) and a
-**Fetch now** button that makes every active source due immediately and wakes
-the manager, so a freshly added channel shows its videos without waiting for
-the next poll. Category cards for domains and subdomains (create, rename,
-delete, mute at any level), anime cards with metadata (type, seasons, episodes,
-release, `S`/`E`, progress, airing countdown) plus list buckets, watchlist
-certainty, notify switches and per-season state (with each season's date), and
-a blocked/cleanup lane.
-
-Tracking an anime has three clear entry modes: **Watching**, **UpToDate**, and
-**Watchlist**. UpToDate tracks a show from its current AniList state and turns
-on release notifications automatically.
-Watching records a **Watch till** cursor (season, episode and time in seconds).
-Watchlist entries use one of **Not yet**, **Confirmed**, **Completed** (with an
-optional completed-through season), or **Blocked**. The backend still decides
-whether a completed season's sequel is already out — it jumps there and puts
-the entry back in Watching — or is still scheduled, in which case the entry
-waits in Next sequel with the announced date and a bell message when it airs.
-The same **Next season** button on any card (Management or Todo) does that bump
-later. Every expanded anime card (and each Todo queue card) carries a small
-**S/E** editor that sets the cursor anywhere and re-derives watched seasons.
-
-Notifications expose a visible animated progress bar while Refresh is fetching.
-Mutation helpers await the active workspace refetch, so mute/unmute, block, and
-tracking controls reflect their backend state immediately without a browser
-reload. YouTube management also provides an explicit **Block** action beside
-the notification switch; **Fetch now** queues all active source types,
-including Random, and reports the backend-driven result in the UI.
-
-**Todo** — standalone playlists built from pasted video links (multiple named
-cards; links are stored instantly and metadata is enriched in the background).
-The grid holds compact tiles (name, progress, three thumbnails); clicking one
-slides the full list in from the right in a drawer — thumbnail + title per row,
-each row the link to the video, check-off, delete and the add box. Nothing
-grows with playlist length, and the drawer closes on Escape or a click
-outside. Creating a playlist opens its drawer straight away so you can paste
-links, and the create button says what is missing instead of ignoring the
-click when the name is empty. The anime queue below is driven by the same cursors as Management
-(`+1 episode`, `Next season`, finish) with next-airing and next-season dates.
-
-**Admin** (admin role only, fourth rail item) — backups with sizes and ages
-(take one now, download, pick one to restore), a restore panel that accepts an
-uploaded `.dump` from any machine, runtime settings with their hardcoded
-floors, and user management (promote/demote, reset password, delete). Restore
-is a tracked background job with progress, a pre-restore snapshot, and a
-forced sign-out for everyone when it finishes.
-
-Keyboard: `1` `2` `3` switch modes (`4` opens Admin for admins), `/` searches,
-`Esc` closes panels.
-
-## Repository map
-
-| Path | Notes |
-| --- | --- |
-| `Backend/App` | FastAPI app, routers, cookie middleware |
-| `Backend/Graphql` | the single schema (`children.py`, `supergraph.py`) |
-| `Backend/Database` | schema.sql (idempotent migrations), stores, vault/crypto |
-| `Backend/Orchestrator` | YouTube and Ani pipelines, filters, schedulers |
-| `Backend/Utility/notify.py` | history lane + receiver push + scope gates |
-| `Backend/Admin` | settings, backup, restore (tracked), users/roles |
-| `Backend/Graphql/admin.py` | admin queries/mutations on the same schema |
-| `Frontend/src/app` | shell, GraphQL client, provider, UI primitives |
-| `Frontend/src/features` | notifications, management, todo, bell, auth, admin |
-| `Frontend/server/notify-bridge.mjs` | REST receiver, SSE, JSON inbox |
-| `qa/` | browser checks (`e2e.py`) and screenshot capture (`shots.py`) |
-
-## Admin and recovery
-
-The first account to sign up becomes admin; the rail grows a fourth item for
-that role. The page is a normal part of the app and speaks the same GraphQL
-schema as everything else — with three deliberate REST exceptions:
-
-| Operation | Why it is not GraphQL |
-| --- | --- |
-| `POST /admin/restore/upload` | multipart file upload |
-| `GET /admin/backups/{file}` | binary download of a dump |
-| `GET /admin/restore/status` | must answer *while* a restore runs, and the middleware 503s every mutation during one |
-
-Everything else (settings, backup list, run backup, start restore, users,
-roles, password resets) is GraphQL under `admin*` fields, and each resolver
-re-checks the role against the database — the hidden nav item is convenience,
-not authorisation.
-
-**Restoring replaces the database for every user.** The flow is deliberately
-boring: the dump is validated with `pg_restore -l` before it is accepted, the
-restore writes a rollback snapshot first, workers pause for the whole window,
-the API refuses mutations with 503, and on success every session is dropped
-(including the admin who started it) so nobody keeps a cookie minted against
-the old data. Only when *your* restore fails does the pre-restore snapshot get
-loaded back, so a bad dump can never leave the database half-empty.
-You must type `RESTORE` to arm the button.
-
-Locked out with no admin account (restored old dump, deleted the account,
-forgot which signup was first)? The page cannot help — that is the one case
-that needs the shell:
-
-```bash
-docker compose exec backend python -m scripts.admin list
-docker compose exec backend python -m scripts.admin promote <username>
-```
-
-`scripts/seed_demo.py` promotes the demo account to admin so the demo box can
-show the page.
-
-## Checks
-
-```bash
-# 50 browser checks against the running stack (real UI, real GraphQL),
-# including a real backup → upload → destructive restore round-trip
-python3 qa/e2e.py
-python3 qa/shots.py        # regenerate the screenshots in docs/screenshots
-
-# 76 backend tests: units, API/GraphQL integration, black-box scenarios, admin
-cd Backend && DREAMEDIA_PG_PASSWORD=... .venv/bin/python -m pytest -q
-cd ../Frontend && npm run check && npm run build
-```
-
-`Backend/tests/test_scenarios.py` is the black-box lane: it drives the real
-app over HTTP/GraphQL (cookies, Postgres, scheduler tick) and fakes only the
-two upstreams it cannot own — the YouTube RSS feed and AniList — so the
-pipeline itself runs unmodified. It covers, among others:
-
-| Case | What it proves |
-| --- | --- |
-| YT last-seen anchor | A channel whose last-seen video is the 3rd newest yields exactly two messages; the next upload produces only the new one |
-| WordScan | Keyword filtering fires on matching titles only, and the anchor still advances past non-matching uploads |
-| Mute scope | A muted channel stores the video but sends no message; a muted domain silences it without rewriting the channel flag |
-| Anime release day | Same release date + same episode count on Friday morning ⇒ `release_confirmed`, filed under **Today**, no duplicate |
-| Anime date moved | Release date changed ⇒ `release_changed` carrying old and new dates |
-| Anime already aired | Episode count increased ⇒ `episode_released` ("Episode released") in **Today** |
-
-`Backend/tests/test_progress.py` covers the two shortcuts: finishing a season
-decides by itself between *watching the next one*, *waiting in Next sequel with
-the announced date* (its schedule row is due immediately so the bell fires) and
-*completed*, using a hand-built season chain so no AniList state can make it
-flaky; "fetch now" queues only the caller's rows and wakes the manager instead
-of starting a second worker.
-
-`Backend/tests/test_admin.py` covers the admin surface: anonymous and normal
-users are refused on every admin field, settings floors are enforced, a real
-`pg_dump` uploads and stages, junk uploads are rejected by `pg_restore -l`,
-restore guards reject traversal and concurrent runs, and the last admin can be
-neither demoted nor deleted. The destructive restore itself runs in
-`qa/e2e.py`, where the database is disposable: the browser takes a backup,
-downloads it, deletes a domain, uploads the dump, types `RESTORE`, waits to be
-signed out, signs back in, and finds the deleted domain restored.
+DreaMedia is licensed under the [GNU Affero General Public License v3.0](LICENSE).

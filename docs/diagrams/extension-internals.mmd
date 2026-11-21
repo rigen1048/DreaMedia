@@ -1,0 +1,25 @@
+flowchart TD
+    P[Popup\naccessible tabs + settings] -->|runtime messages| BG[Background worker / page\nonly network lane]
+    C[Registered content script\nallowlisted domain only] -->|runtime messages| BG
+    BG -->|X-DreaMedia-Token| GQL[/ext/graphql/]
+    GQL --> S[Extension GraphQL schema]
+    S --> D[(PostgreSQL)]
+    D --> DOM[ext_domains\nper-user allowlist]
+    D --> LIVE[ext_live_sessions\ncrash-safe progress]
+    D --> SITE[ani_watch_sites\nlearned deep links]
+    D --> BLOCK[blocked source cache]
+    BG -->|storage.local| CACHE[Cached domains + blocked list]
+    CACHE -. local match .-> C
+    C --> V[Video detector\nMutationObserver + URL reattach]
+    V --> HB[15s heartbeat\npause / ended merge]
+    HB --> LIVE
+    BOOT[Backend startup] --> SWEEP[Live-session sweep]
+    SWEEP --> LIVE
+    SWEEP --> CURSOR[Durable anime cursor]
+
+    classDef core fill:#18181b,stroke:#a1a1aa,color:#fafafa;
+    classDef data fill:#27272a,stroke:#34d399,color:#fafafa;
+    classDef privacy fill:#3f3f46,stroke:#d4d4d8,color:#fafafa;
+    class P,C,BG,GQL,S,V,HB,BOOT,SWEEP,CURSOR core;
+    class D,DOM,LIVE,SITE,BLOCK data;
+    class CACHE privacy;

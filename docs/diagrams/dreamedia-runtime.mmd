@@ -1,0 +1,23 @@
+flowchart LR
+    B[Browser SPA\nReact + TypeScript] -->|GraphQL /graphql| API[FastAPI + Strawberry]
+    E[Browser extension\nMV2 / MV3] -->|token GraphQL\n/ext/graphql| API
+    API --> DB[(PostgreSQL\nencrypted user state)]
+    API --> YTM[YouTube manager]
+    API --> ANIM[Ani manager]
+    YTM --> YTP[YouTube pipeline\nAccess · Feed · Fetch · Filter]
+    ANIM --> ANIP[Anime pipeline\nAccess · Feed · Fetch · Filter]
+    YTP --> DB
+    ANIP --> DB
+    API -->|history + push| BR[Node notification bridge\nREST + SSE]
+    BR -->|session-owned bell reads| B
+    R[Admin restore] -. shared restore gate .-> API
+    L[Leader advisory lock\nclaim / stale recovery] -. coordinates .-> YTM
+    L -. coordinates .-> ANIM
+    X[Extension live session\nheartbeat + boot sweep] -. durable cursor .-> DB
+
+    classDef core fill:#18181b,stroke:#a1a1aa,color:#fafafa;
+    classDef data fill:#27272a,stroke:#34d399,color:#fafafa;
+    classDef edge fill:#3f3f46,stroke:#d4d4d8,color:#fafafa;
+    class B,E,API,YTM,ANIM,YTP,ANIP,BR,R,L,X core;
+    class DB data;
+    class R edge;

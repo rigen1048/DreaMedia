@@ -4,6 +4,8 @@ Recorded 2026-11-20. This is the agreed design for the extension rework.
 It supersedes the v1 shape (`<all_urls>` content script, REST `/ext` router,
 manual popup binding) as each phase lands. Build order is at the bottom.
 
+The current production lanes are pictured in [`docs/diagrams/extension-internals.png`](../../docs/diagrams/extension-internals.png): the popup and allowlisted content scripts message one background network lane, while live progress is persisted through the extension GraphQL boundary.
+
 ## Problems with v1 this design solves
 
 - The content script is registered on `<all_urls>`: it wakes up (observer,
