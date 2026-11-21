@@ -1,7 +1,7 @@
 # DreaMedia backend (D6 docker app)
-FROM postgres:17-bookworm AS pgclient
-FROM python:3.12-slim AS base
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+FROM postgres:17-bookworm@sha256:837bed18782820fe967067cb5328b02b0d9992c1be9a37ee0c9c492cfc03af3b AS pgclient
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS base
+COPY --from=ghcr.io/astral-sh/uv:latest@sha256:d3b601f0c7b118bc1753febf7c41cc80981df678445e0254284eecf84db79a7d /uv /usr/local/bin/uv
 
 # pg_dump/pg_restore 17 — backups and restores run INSIDE this container,
 # and the client major must match the pg17 server. Instead of the PGDG apt
