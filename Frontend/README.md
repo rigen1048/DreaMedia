@@ -29,15 +29,15 @@ Frontend/
 ## Scripts
 
 ```bash
-npm run dev       # vite on :3000 (proxies API to :8000, bridge to :3100)
-npm run bridge    # notification receiver on :3100
+npm run dev       # vite on :8124 (proxies API to :8123, bridge to :3123)
+npm run bridge    # notification receiver on :3123
 npm run check     # tsc --noEmit
 npm run build     # production bundle
 ```
 
 Vite proxies `/graphql`, `/auth`, `/admin`, `/yt`, `/ani`, `/notifications`,
-`/health` to `DREAMEDIA_API_TARGET` (default `http://127.0.0.1:8000`) and
-`/bridge` to `DREAMEDIA_BRIDGE_TARGET` (default `http://127.0.0.1:3100`).
+`/health` to `DREAMEDIA_API_TARGET` (default `http://127.0.0.1:8123`) and
+`/bridge` to `DREAMEDIA_BRIDGE_TARGET` (default `http://127.0.0.1:3123`).
 In production nginx does the same, with buffering disabled for SSE.
 
 ## Receiver API

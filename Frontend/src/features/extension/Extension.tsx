@@ -100,7 +100,7 @@ export default function Extension() {
           </div>
           <p className="text-xs text-muted-foreground">
             Issuing a new token replaces the old one immediately. Point the extension at this
-            backend&apos;s URL (default http://127.0.0.1:8000).
+            backend&apos;s URL (default http://127.0.0.1:8123).
           </p>
         </CardContent>
       </Card>

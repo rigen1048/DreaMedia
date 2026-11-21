@@ -221,12 +221,12 @@ def main() -> None:
     ip = lan_ip()
     print("=" * 50)
     print("🐴 DreaMedia is starting...")
-    print(f"   On this machine : http://localhost:3000")
+    print(f"   On this machine : http://localhost:8124")
     if access == "wifi":
-        print(f"   From your WiFi  : http://{ip}:3000")
+        print(f"   From your WiFi  : http://{ip}:8124")
     else:
         print("   Access mode     : computer (localhost only, D54)")
-    print(f"   GraphQL         : http://localhost:8000/graphql")
+    print(f"   GraphQL         : http://localhost:8123/graphql")
     print("=" * 50)
 
     if not shutil.which("docker"):
@@ -274,20 +274,20 @@ def main() -> None:
             compose_ps(env)
             sys.exit("✗ docker compose up failed (details above)")
 
-        print("→ Waiting for the app to answer on :3000...")
-        if not wait_for("http://127.0.0.1:3000/health", seconds=180):
+        print("→ Waiting for the app to answer on :8124...")
+        if not wait_for("http://127.0.0.1:8124/health", seconds=180):
             compose_ps(env)
             compose_logs(env)
             sys.exit("✗ The stack started but never became healthy (see logs above)")
 
-        bridge_ok = wait_for("http://127.0.0.1:3100/health", seconds=30)
+        bridge_ok = wait_for("http://127.0.0.1:3123/health", seconds=30)
         print("→ Empty database: open the app, sign up, then Admin → Restore if you")
         print("  want an old dump back (it is never loaded automatically).")
         print()
         print("=" * 50)
-        print(f"🐴 DreaMedia is up: http://localhost:3000"
-              + (f"  (LAN: http://{lan_ip()}:3000)" if bind == "0.0.0.0" else ""))
-        print(f"   bell bridge    : http://127.0.0.1:3100/health "
+        print(f"🐴 DreaMedia is up: http://localhost:8124"
+              + (f"  (LAN: http://{lan_ip()}:8124)" if bind == "0.0.0.0" else ""))
+        print(f"   bell bridge    : http://127.0.0.1:3123/health "
               + ("✓" if bridge_ok else "✗ not answering"))
         print("   logs   : docker compose logs -f")
         print("   stop   : docker compose down")
@@ -296,11 +296,11 @@ def main() -> None:
 
     # --dev: local processes instead of containers
     # The frontend owns the notification receiver; the backend pushes into it.
-    env.setdefault("FRONTEND_NOTIFY_URL", "http://127.0.0.1:3100/api/notifications")
+    env.setdefault("FRONTEND_NOTIFY_URL", "http://127.0.0.1:3123/api/notifications")
     bridge_env = dict(env)
-    bridge_env.setdefault("BRIDGE_PORT", "3100")
+    bridge_env.setdefault("BRIDGE_PORT", "3123")
     bridge_env.setdefault("BRIDGE_STORE", str(FRONTEND / ".bridge" / "inbox.json"))
-    print("→ Starting notification bridge on :3100...")
+    print("→ Starting notification bridge on :3123...")
     bridge_log = (ROOT / ".bridge.log").open("w")
     bridge = subprocess.Popen(
         ["node", "server/notify-bridge.mjs"],
@@ -310,10 +310,10 @@ def main() -> None:
 
     print("→ Syncing backend deps (uv)...")
     run(["uv", "sync", "-q"], cwd=BACKEND)
-    print(f"→ Starting backend on {bind}:8000...")
+    print(f"→ Starting backend on {bind}:8123...")
     backend_log = BACKEND_LOG.open("w")
     backend = subprocess.Popen(
-        ["uv", "run", "uvicorn", "App.main:app", "--host", bind, "--port", "8000"],
+        ["uv", "run", "uvicorn", "App.main:app", "--host", bind, "--port", "8123"],
         cwd=BACKEND, stdout=backend_log, stderr=subprocess.STDOUT, env=env,
     )
     (ROOT / ".backend.pid").write_text(str(backend.pid))
@@ -341,7 +341,7 @@ def main() -> None:
     # 6. frontend
     print("→ Installing frontend deps (bun)...")
     run(["bun", "install", "--silent"], cwd=FRONTEND)
-    print("→ Starting frontend on :3000...")
+    print("→ Starting frontend on :8124...")
     time.sleep(2)
     try:
         subprocess.run(["bun", "run", "dev"], cwd=FRONTEND, env=env)

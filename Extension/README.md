@@ -22,7 +22,7 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
      "Load unpacked" → pick `mv3/`.
    - **Firefox**: `about:debugging#/runtime/this-firefox` →
      "Load Temporary Add-on" → pick `mv2/manifest.json`.
-3. In the popup: backend URL (`http://127.0.0.1:8000`) + token → Save & ping.
+3. In the popup: backend URL (`http://127.0.0.1:8123`) + token → Save & ping.
 
 ## Files
 

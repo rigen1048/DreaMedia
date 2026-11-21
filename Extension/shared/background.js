@@ -2,7 +2,7 @@
  * extension — content/popup scripts never fetch directly. It also owns
  * dynamic content-script registration: modules load ONLY on domains from
  * the user's allowlist (ext_domains), never on arbitrary pages. */
-const DEFAULT_BACKEND = "http://127.0.0.1:8000";
+const DEFAULT_BACKEND = "http://127.0.0.1:8123";
 const MEDIA_JS = {
   ani: ["core.js", "modules/anime.js"],
   yt: ["core.js", "modules/youtube.js"],

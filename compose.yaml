@@ -17,7 +17,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "${ACCESS_HOST:-127.0.0.1}:${DREAMEDIA_PG_PORT:-5432}:5432"
+      - "${ACCESS_HOST:-127.0.0.1}:${DREAMEDIA_PG_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dreamedia -d dreamedia"]
       interval: 5s
@@ -32,7 +32,7 @@ services:
     restart: unless-stopped
     environment:
       BRIDGE_HOST: 0.0.0.0
-      BRIDGE_PORT: "3100"
+      BRIDGE_PORT: "3123"
       BRIDGE_STORE: /data/inbox.json
       BRIDGE_BACKEND_URL: http://backend:8000
       FRONTEND_NOTIFY_TOKEN: ${FRONTEND_NOTIFY_TOKEN:-}
@@ -55,19 +55,19 @@ services:
       DREAMEDIA_PG_PORT: "5432"
       DREAMEDIA_PG_PASSWORD: ${DREAMEDIA_PG_PASSWORD:?Set DREAMEDIA_PG_PASSWORD in the root .env}
       BACKUP_DIR: /backups
-      FRONTEND_NOTIFY_URL: http://bridge:3100/api/notifications
+      FRONTEND_NOTIFY_URL: http://bridge:3123/api/notifications
       FRONTEND_NOTIFY_TOKEN: ${FRONTEND_NOTIFY_TOKEN:-}
     volumes:
       - ./backups:/backups
     ports:
-      - "${ACCESS_HOST:-127.0.0.1}:8000:8000"
+      - "${ACCESS_HOST:-127.0.0.1}:8123:8000"
     depends_on:
       db:
         condition: service_healthy
       bridge:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8123/health',timeout=3)\""]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -77,7 +77,7 @@ services:
     build: ./Frontend
     restart: unless-stopped
     ports:
-      - "${ACCESS_HOST:-127.0.0.1}:3000:3000"
+      - "${ACCESS_HOST:-127.0.0.1}:8124:3000"
     depends_on:
       backend:
         condition: service_started
