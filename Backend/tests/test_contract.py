@@ -523,6 +523,28 @@ async def test_watch_sites_learn_and_resolve():
     await store.delete_entry(user_id, entry_id)
 
 
+async def test_watch_sites_list_and_delete():
+    """Extension page: the learned map lists with entry titles and deletes
+    by id, user-scoped."""
+    user_id = await _user_id()
+    store, entry_id, _ = await _ani_entry(user_id)
+
+    await sites.learn_watch_site(user_id, entry_id, "https://animesite.example/watch/naruto-5", 1, 5)
+    rows = (await sites.list_watch_sites(user_id)).unwrap()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["entry_title"] == "Naruto"
+    assert row["domain"] == "animesite.example"
+    assert row["url"] == "https://animesite.example/watch/naruto-5"
+    assert row["use_count"] == 1 and row["season"] == 1 and row["episode"] == 5
+
+    assert isinstance(await sites.delete_watch_site(user_id, 999999), Failure)
+    assert isinstance(await sites.delete_watch_site(user_id, row["id"]), Success)
+    assert (await sites.list_watch_sites(user_id)).unwrap() == []
+
+    await store.delete_entry(user_id, entry_id)
+
+
 # ---------- CSV backup (export/import) ----------
 
 async def test_csv_youtube_roundtrip():

@@ -9,7 +9,7 @@ there — and the frontend falls back to AniList when we return None.
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from returns.result import Failure, Result, Success
 
@@ -111,3 +111,46 @@ async def resolve_watch_link(
     if targeted:
         return Success(targeted)
     return Success(f"https://{domain}" if domain else None)
+
+
+async def list_watch_sites(user_id: int) -> Result[List[Dict[str, Any]], str]:
+    """The learned map for the Extension page: which site serves which
+    anime, with the stored page URL and how often it won."""
+    key = await vault.get(user_id)
+    if key is None:
+        return Failure("vault locked (D9)")
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        rows = await con.fetch(
+            "SELECT s.id, s.domain_enc, s.url_enc, s.season, s.episode, "
+            "s.use_count, s.last_used_at, e.id AS entry_id, e.title_enc "
+            "FROM ani_watch_sites s JOIN ani_entries e ON e.id = s.entry_id "
+            "WHERE s.user_id = $1 ORDER BY s.last_used_at DESC",
+            user_id,
+        )
+    return Success([
+        {
+            "id": r["id"],
+            "entry_id": r["entry_id"],
+            "entry_title": decrypt(key, r["title_enc"]),
+            "domain": decrypt(key, r["domain_enc"]),
+            "url": decrypt(key, r["url_enc"]),
+            "season": r["season"],
+            "episode": r["episode"],
+            "use_count": r["use_count"],
+            "last_used_at": r["last_used_at"].isoformat() if r["last_used_at"] else None,
+        }
+        for r in rows
+    ])
+
+
+async def delete_watch_site(user_id: int, site_id: int) -> Result[bool, str]:
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        result = await con.execute(
+            "DELETE FROM ani_watch_sites WHERE id = $1 AND user_id = $2",
+            site_id, user_id,
+        )
+    if not result.endswith("1"):
+        return Failure("learned site not found")
+    return Success(True)

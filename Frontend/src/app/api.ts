@@ -1,5 +1,5 @@
 import { API_BASE, gql } from "../lib/gql";
-import type { ExtDomain, Workspace } from "../lib/types";
+import type { ExtDomain, ExtLearnedSite, Workspace } from "../lib/types";
 
 const WORKSPACE_QUERY = `
   query Workspace {
@@ -617,6 +617,19 @@ export const extRemoveDomain = (domainId: number) =>
   gql<{ extRemoveDomain: boolean }>(
     `mutation ExtRemoveDomain($id: Int!) { extRemoveDomain(domainId: $id) }`,
     { id: domainId },
+  );
+
+export const extLearnedSites = () =>
+  gql<{ extLearnedSites: ExtLearnedSite[] }>(
+    `query ExtLearnedSites {
+      extLearnedSites { id entryId entryTitle domain url season episode useCount lastUsedAt }
+    }`,
+  );
+
+export const extDeleteLearnedSite = (siteId: number) =>
+  gql<{ extDeleteLearnedSite: boolean }>(
+    `mutation ExtDeleteLearnedSite($id: Int!) { extDeleteLearnedSite(siteId: $id) }`,
+    { id: siteId },
   );
 
 export const exportData = () =>
