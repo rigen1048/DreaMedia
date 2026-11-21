@@ -13,19 +13,16 @@ async function backend() {
   return { url: (r.backendUrl || DEFAULT_BACKEND).replace(/\/$/, ""), token: r.token || "" };
 }
 
-async function call(path, options = {}) {
+async function gqlHttp(query, variables) {
   const { url, token } = await backend();
-  const resp = await fetch(`${url}${path}`, {
-    method: options.method || "GET",
-    headers: {
-      "Content-Type": "application/json",
-      "X-DreaMedia-Token": token,
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
+  const resp = await fetch(`${url}/ext/graphql`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-DreaMedia-Token": token },
+    body: JSON.stringify({ query, variables }),
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.detail || data.error || `HTTP ${resp.status}`);
-  return data;
+  if (!resp.ok || data.errors) throw new Error(data.errors?.[0]?.message || `HTTP ${resp.status}`);
+  return data.data;
 }
 
 function normalizeDomain(raw) {
@@ -42,11 +39,11 @@ async function cachedDomains() {
 
 async function fetchDomains() {
   try {
-    const data = await call("/ext/domains");
+    const data = await gqlHttp("query { domains { id domain media enabled } }", {});
     await chrome.storage.local.set({ domains: data.domains || [] });
   } catch (_e) {
-    // 423 (vault locked), 401 (no token yet) or backend offline: keep the
-    // last cached copy — registration keeps working, possibly stale.
+    // vault locked, no token yet, or backend offline: keep the last cached
+    // copy — registration keeps working, possibly stale.
   }
   return cachedDomains();
 }
@@ -182,18 +179,6 @@ async function ensureWs() {
   ws.onerror = () => ws.close();
 }
 
-async function gqlHttp(query, variables) {
-  const { url, token } = await backend();
-  const resp = await fetch(`${url}/ext/graphql`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-DreaMedia-Token": token },
-    body: JSON.stringify({ query, variables }),
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok || data.errors) throw new Error(data.errors?.[0]?.message || `HTTP ${resp.status}`);
-  return data.data;
-}
-
 async function liveGql(query, p) {
   const variables = {
     entryId: p.entry_id, season: p.season, episode: p.episode, positionSeconds: p.position_seconds,
@@ -273,19 +258,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       switch (msg.type) {
         case "dreamedia:ping":
-          sendResponse({ ok: true, data: await call("/ext/ping") });
+          sendResponse({ ok: true, data: await gqlHttp("query { extPing }", {}) });
           break;
-        case "dreamedia:subscribe":
-          sendResponse({ ok: true, data: await call("/ext/subscribe", { method: "POST", body: msg.body }) });
+        case "dreamedia:subscribe": {
+          const body = msg.body;
+          const data = await gqlHttp(
+            `mutation Subscribe($link: String!, $kind: String!, $words: [String!], $rank: String) {
+              subscribe(link: $link, kind: $kind, words: $words, rank: $rank) { ok channelId }
+            }`,
+            { link: body.link, kind: body.kind, words: body.words ?? null, rank: body.rank ?? null },
+          );
+          sendResponse({ ok: true, data: { ok: data.subscribe.ok } });
           break;
+        }
         case "dreamedia:cards":
-          sendResponse({ ok: true, data: await call("/ext/cards") });
+          sendResponse({ ok: true, data: { cards: (await gqlHttp("query { cards { id name done total } }", {})).cards } });
           break;
         case "dreamedia:addItem":
-          sendResponse({ ok: true, data: await call(`/ext/cards/${msg.cardId}/items`, { method: "POST", body: { links: msg.links } }) });
+          sendResponse({
+            ok: true,
+            data: (await gqlHttp(
+              `mutation AddItems($cardId: Int!, $links: [String!]!) {
+                addCardItems(cardId: $cardId, links: $links) { added requested errors }
+              }`,
+              { cardId: Number(msg.cardId), links: msg.links },
+            )).addCardItems,
+          });
           break;
         case "dreamedia:aniEntries":
-          sendResponse({ ok: true, data: await call("/ext/ani/entries") });
+          sendResponse({
+            ok: true,
+            data: {
+              entries: (await gqlHttp(
+                "query { aniEntries { id title seasons cursorSeason cursorEpisode } }", {},
+              )).aniEntries,
+            },
+          });
           break;
         case "dreamedia:progress":
           sendResponse({ ok: true, data: await liveGql(M_PROGRESS, msg.payload) });
@@ -305,10 +313,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case "dreamedia:addDomain": {
-          const data = await call("/ext/domains", {
-            method: "POST",
-            body: { domain: msg.domain, media: msg.media },
-          });
+          const data = await gqlHttp(
+            `mutation AddDomain($domain: String!, $media: String!) {
+              addDomain(domain: $domain, media: $media) { id domain media enabled }
+            }`,
+            { domain: msg.domain, media: msg.media },
+          );
           await refreshDomains();
           sendResponse({ ok: true, data });
           break;
