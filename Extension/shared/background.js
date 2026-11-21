@@ -170,10 +170,15 @@ const Q_WS_AUTH_PROBE = "query { extPing }";
 const WS_HANDSHAKE_TIMEOUT_MS = 15000;
 const WS_PONG_TIMEOUT_MS = 10000;
 const WS_OPERATION_TIMEOUT_MS = 120000;
+const WS_RETRY_BASE_MS = 1000;
+const WS_RETRY_MAX_MS = 30000;
 
 let ws = null;
 let wsReady = false;
 let wsRetry = null;
+let wsRetryAttempt = 0;
+let wsAuthRejected = false;
+let wsAuthFailureReason = "";
 let wsKeepalive = null;
 let wsPongTimer = null;
 let wsPendingPong = null;
@@ -199,6 +204,7 @@ async function waitForWsReady(timeoutMs = 30000) {
     stopWsForNoEnabledSite();
     throw new Error("Open an enabled site to connect");
   }
+  if (wsAuthRejected) throw new Error(wsAuthFailureReason || "Extension token was rejected");
   if (wsTransportResponsive()) return Promise.resolve();
   if (wsReady) wsDead("WebSocket is not responsive");
   if (!(await backend()).token) throw new Error("Extension token is not configured");
@@ -363,14 +369,23 @@ function startWsKeepalive(socket) {
   wsKeepalive = setInterval(sendPing, WS_KEEPALIVE_INTERVAL_MS);
 }
 
-function wsDead(reason = "Connection closed") {
+function wsDead(reason = "Connection closed", { authRejected = false, retry = true } = {}) {
   const deadSocket = ws;
   wsReady = false;
   ws = null;
   wsAuthProbeId = null;
   clearWsHandshakeTimer();
   stopWsKeepalive();
-  void publishConnectionState("disconnected", reason);
+  if (authRejected) {
+    wsAuthRejected = true;
+    wsAuthFailureReason = reason || "Extension token was rejected; update it in DreaMedia settings";
+    if (connectionFailureTimer) clearTimeout(connectionFailureTimer);
+    connectionFailureTimer = null;
+    pendingConnectionFailureReason = "";
+    void commitConnectionState("disconnected", wsAuthFailureReason);
+  } else {
+    void publishConnectionState("disconnected", reason);
+  }
   for (const operation of pendingOps.values()) {
     clearTimeout(operation.timer);
     operation.reject(new Error(reason));
@@ -380,7 +395,7 @@ function wsDead(reason = "Connection closed") {
   try {
     if (deadSocket && deadSocket.readyState < WebSocket.CLOSING) deadSocket.close();
   } catch (_e) { /* retry below replaces the transport */ }
-  scheduleWsRetry();
+  if (retry && !authRejected) scheduleWsRetry();
 }
 
 function stopWsForNoEnabledSite() {
@@ -390,6 +405,7 @@ function stopWsForNoEnabledSite() {
       connectionState.reason === "No enabled site open") return;
   wsGeneration += 1;
   wsReady = false;
+  wsRetryAttempt = 0;
   ws = null;
   wsAuthProbeId = null;
   wsConnectPromise = null;
@@ -414,16 +430,25 @@ function stopWsForNoEnabledSite() {
 }
 
 function scheduleWsRetry() {
-  if (wsRetry) return;
+  if (wsRetry || wsAuthRejected) return;
+  const delay = Math.min(WS_RETRY_BASE_MS * (2 ** Math.min(wsRetryAttempt, 5)), WS_RETRY_MAX_MS);
+  wsRetryAttempt += 1;
   wsRetry = setTimeout(() => {
     wsRetry = null;
     void ensureWs();
-  }, 1000);
+  }, delay);
 }
 
 async function ensureWs() {
   if (!(await hasEnabledSiteTab())) {
     stopWsForNoEnabledSite();
+    return false;
+  }
+  if (wsAuthRejected) {
+    await commitConnectionState(
+      "disconnected",
+      wsAuthFailureReason || "Extension token was rejected; update it in DreaMedia settings",
+    );
     return false;
   }
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
@@ -525,15 +550,17 @@ async function connectWs() {
         if (msg.type !== "next" || msg.payload?.data?.extPing !== true || msg.payload?.errors?.length) {
           const detail = msg.payload?.errors?.[0]?.message;
           const failureReason = detail || "WebSocket authentication probe failed";
+          const authRejected = /invalid|revoked|missing connection token|requires websocket authentication/i.test(failureReason);
           for (const onReady of [...wsReadyWaiters]) onReady(new Error(failureReason));
           try {
             if (socket.readyState < WebSocket.CLOSING) socket.close(4401, "Authentication probe failed");
           } catch (_e) { /* force local cleanup below */ }
-          wsDead(failureReason);
+          wsDead(failureReason, { authRejected, retry: !authRejected });
           return;
         }
         wsAuthProbeId = null;
         wsReady = true;
+        wsRetryAttempt = 0;
         wsLastPongAt = Date.now();
         for (const onReady of [...wsReadyWaiters]) onReady();
         clearWsHandshakeTimer();
@@ -563,6 +590,11 @@ async function connectWs() {
   };
   socket.onclose = (event) => {
     if (ws !== socket) return;
+    const authRejected = event?.code === 4401 || event?.code === 4403;
+    if (authRejected) {
+      wsDead("Extension token rejected; update it in DreaMedia settings", { authRejected, retry: false });
+      return;
+    }
     const closeDetails = [`WebSocket closed (${event?.code || "unknown"})`];
     if (event?.reason) closeDetails.push(event.reason);
     wsDead(closeDetails.join(": "));
@@ -588,6 +620,9 @@ async function liveGql(query, p) {
 }
 
 function reconnectAfterConfigurationChange() {
+  wsAuthRejected = false;
+  wsAuthFailureReason = "";
+  wsRetryAttempt = 0;
   void (async () => {
     try { await chrome.storage.local.set({ domains: null }); } catch (_e) { /* next wake retries */ }
     stopWsForNoEnabledSite();

@@ -26,6 +26,8 @@ from Orchestrator.Ani import manager as ani_manager
 from Orchestrator.Ani.Access.router import router as ani_access_router
 from Orchestrator.Ani.Feed.router import router as ani_feed_router
 from Extension import live as ext_live
+from Extension.tokens import user_for_token
+from Extension.ws_router import ExtensionGraphQLRouter
 from Graphql.ext_graph import ext_context, ext_schema
 from Orchestrator.Yt import manager as yt_manager
 from Orchestrator.Yt.Access.cards_router import router as yt_cards_router
@@ -164,7 +166,10 @@ app.include_router(
 # Ext v2: the extension's own stable schema, authenticated through
 # graphql-transport-ws connection_init on this path.
 app.include_router(
-    GraphQLRouter(ext_schema, context_getter=ext_context), prefix="/ext/graphql"
+    ExtensionGraphQLRouter(
+        ext_schema, context_getter=ext_context, token_validator=user_for_token
+    ),
+    prefix="/ext/graphql",
 )
 
 

@@ -313,26 +313,34 @@ async def test_extension_identity_is_validated_once_per_socket_context(monkeypat
 def test_websocket_route_authenticates_once_and_answers_client_ping(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from strawberry.fastapi import GraphQLRouter
+    from starlette.websockets import WebSocketDisconnect
+
+    from Extension.ws_router import ExtensionGraphQLRouter
 
     calls = []
 
     async def user_for_token(token):
         calls.append(token)
-        return 23 if token == "probe-token" else None
+        return 23 if token == "dm_probe-token" else None
 
     monkeypatch.setattr(ext_graph, "user_for_token", user_for_token)
     app = FastAPI()
     app.include_router(
-        GraphQLRouter(ext_graph.ext_schema, context_getter=ext_graph.ext_context),
+        ExtensionGraphQLRouter(
+            ext_graph.ext_schema,
+            context_getter=ext_graph.ext_context,
+            token_validator=user_for_token,
+        ),
         prefix="/ext/graphql",
     )
 
     with TestClient(app) as client:
         with client.websocket_connect(
-            "/ext/graphql", subprotocols=["graphql-transport-ws"]
+            "/ext/graphql",
+            subprotocols=["graphql-transport-ws"],
+            headers={"Origin": "chrome-extension://iemcebbhpkagkchbdcfbbomcnjiodlhe"},
         ) as websocket:
-            websocket.send_json({"type": "connection_init", "payload": {"token": "probe-token"}})
+            websocket.send_json({"type": "connection_init", "payload": {"token": "dm_probe-token"}})
             assert websocket.receive_json() == {"type": "connection_ack"}
 
             websocket.send_json({"type": "ping"})
@@ -350,7 +358,37 @@ def test_websocket_route_authenticates_once_and_answers_client_ping(monkeypatch)
                 assert result["payload"]["data"] == {"extPing": True}
                 assert websocket.receive_json() == {"id": operation_id, "type": "complete"}
 
-    assert calls == ["probe-token"]
+        with client.websocket_connect(
+            "/ext/graphql",
+            subprotocols=["graphql-transport-ws"],
+            headers={"Origin": "chrome-extension://iemcebbhpkagkchbdcfbbomcnjiodlhe"},
+        ) as websocket:
+            websocket.send_json({"type": "connection_init", "payload": {"token": "dm_bad-token"}})
+            with pytest.raises(WebSocketDisconnect) as rejected:
+                websocket.receive_json()
+            assert rejected.value.code == 4403
+
+        with pytest.raises(WebSocketDisconnect) as rejected_origin:
+            with client.websocket_connect(
+                "/ext/graphql",
+                subprotocols=["graphql-transport-ws"],
+                headers={"Origin": "https://attacker.example"},
+            ):
+                pytest.fail("unrelated Origin must be rejected before WebSocket acceptance")
+        assert rejected_origin.value.code == 1008
+
+    assert calls == ["dm_probe-token", "dm_bad-token"]
+
+
+def test_extension_websocket_origin_policy_is_narrow():
+    from Extension.ws_router import is_browser_extension_origin
+
+    assert is_browser_extension_origin(
+        "chrome-extension://iemcebbhpkagkchbdcfbbomcnjiodlhe"
+    )
+    assert is_browser_extension_origin("moz-extension://test-addon-id")
+    assert not is_browser_extension_origin("https://example.com")
+    assert not is_browser_extension_origin("chrome-extension://test-addon-id/path")
 
 
 @pytest.mark.asyncio
