@@ -26,6 +26,25 @@ function setConnection(state, text) {
   $("connectionText").textContent = text;
 }
 
+function applyConnectionState(data) {
+  const labels = {
+    connected: ["ok", "Connected"],
+    connecting: ["loading", "Connecting…"],
+    disconnected: ["err", data.reason ? `Disconnected: ${data.reason}` : "Disconnected"],
+  };
+  const [state, text] = labels[data.status] || labels.disconnected;
+  setConnection(state, text);
+}
+
+async function syncConnectionStatus() {
+  const response = await send("dreamedia:connectionStatus");
+  if (response.ok && response.data) applyConnectionState(response.data);
+}
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === "dreamedia:connectionStatus") applyConnectionState(message);
+});
+
 function action(buttonId, statusId, run) {
   const button = $(buttonId);
   button.addEventListener("click", async () => {
@@ -112,6 +131,8 @@ async function loadConfiguration() {
   if (!configured) {
     setConnection("idle", "Not connected");
     showSettings(true, false);
+  } else {
+    await syncConnectionStatus();
   }
   return configured;
 }
@@ -124,9 +145,12 @@ action("saveConfig", "configStatus", async () => {
   status("configStatus", r.ok ? "Connection verified" : `Connection failed: ${r.error}`, r.ok ? "ok" : "err");
   setConnection(r.ok ? "ok" : "err", r.ok ? "Connected" : "Connection failed");
   if (r.ok) {
-    await send("dreamedia:refreshDomains");
-    loadLists(true, false);
-    checkSite();
+    const refreshed = await send("dreamedia:refreshDomains");
+    if (!refreshed.ok) throw new Error(refreshed.error || "Background refresh failed");
+    await loadLists(true, false);
+    await checkSite();
+    await syncConnectionStatus();
+    showSettings(false);
   }
 });
 
@@ -292,10 +316,6 @@ async function loadLists(configured, updateConnection = true) {
     );
   } else {
     fillOptions($("entry"), [], configured ? "Couldn’t load anime" : "Connect DreaMedia to load anime");
-  }
-  if (configured && updateConnection && $("connection").dataset.state === "loading") {
-    if (cards.ok || entries.ok) setConnection("ok", "Connected");
-    else setConnection("err", "Library unavailable");
   }
 }
 loadConfiguration()
