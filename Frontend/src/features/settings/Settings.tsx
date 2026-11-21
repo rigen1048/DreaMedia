@@ -2,6 +2,7 @@ import { Download, Upload } from "lucide-react";
 import * as api from "../../app/api";
 import { useApp } from "../../app/state";
 import { Button } from "@/components/ui/button";
+import { FileButton } from "@/components/ui/file-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 /** Per-user settings: the portable txt backup (D56). Extension management
@@ -53,21 +54,9 @@ export default function Settings() {
             <Button size="sm" onClick={() => void downloadExport()}>
               <Download size={13} /> Download backup
             </Button>
-            <label>
-              <input
-                type="file"
-                accept=".txt,.json"
-                className="hidden"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  event.target.value = "";
-                  if (file) void importFile(file);
-                }}
-              />
-              <Button size="sm" variant="secondary" asChild>
-                <span><Upload size={13} /> Import backup</span>
-              </Button>
-            </label>
+            <FileButton size="sm" variant="secondary" accept=".txt,.json" onFile={(file) => void importFile(file)}>
+              <Upload size={13} /> Import backup
+            </FileButton>
           </div>
           <p className="text-xs text-muted-foreground">
             Import re-tracks channels and anime from their links — the backend re-resolves

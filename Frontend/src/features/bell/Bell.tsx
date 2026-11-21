@@ -103,14 +103,15 @@ export default function Bell() {
 
   return (
     <div className="relative" ref={panel}>
-      <button
+      <Button
+        variant="ghost"
         aria-label={`Backend messages${unread.length ? `, ${unread.length} unread` : ""}`}
         aria-expanded={open}
         onClick={() => {
           setOpen((value) => !value);
           void pull();
         }}
-        className="relative flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
+        className="relative flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
       >
         <BellIcon size={17} strokeWidth={1.9} />
         {unread.length > 0 && (
@@ -118,7 +119,7 @@ export default function Bell() {
             {unread.length > 9 ? "9+" : unread.length}
           </span>
         )}
-      </button>
+      </Button>
 
       {open && (
         <div
@@ -130,13 +131,15 @@ export default function Bell() {
             <strong className="text-sm">Backend messages</strong>
             <span className="text-xs text-muted-foreground">{unread.length} new</span>
             <span className="grow" />
-            <button
-              className="text-xs text-sky-500 hover:underline disabled:opacity-40 cursor-pointer"
+            <Button
+              variant="link"
+              size="sm"
+              className="h-auto p-0 text-xs text-sky-500"
               disabled={!unread.length}
               onClick={() => void acknowledgeAll()}
             >
               Mark all read
-            </button>
+            </Button>
             <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Close" onClick={() => setOpen(false)}>
               <X size={14} />
             </Button>
@@ -155,12 +158,13 @@ export default function Bell() {
               </div>
             )}
             {messages.slice(0, 40).map((message) => (
-              <button
+              <Button
                 key={message.id}
+                variant="ghost"
                 onClick={() => void acknowledge(message)}
                 title={message.seen ? "Mark unread" : "Mark read"}
                 className={cn(
-                  "flex w-full items-start gap-2.5 border-b px-4 py-2.5 text-left transition-colors hover:bg-accent/50 cursor-pointer",
+                  "flex h-auto w-full items-start justify-start gap-2.5 rounded-none border-b px-4 py-2.5 text-left whitespace-normal",
                   !message.seen && "bg-accent/30",
                 )}
               >
@@ -176,7 +180,7 @@ export default function Bell() {
                     {timeAgo(message.createdAt)} · {message.media === "yt" ? "YouTube" : "Anime"}
                   </span>
                 </span>
-              </button>
+              </Button>
             ))}
           </div>
 

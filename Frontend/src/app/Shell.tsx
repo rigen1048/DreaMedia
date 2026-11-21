@@ -77,18 +77,19 @@ export default function Shell({ children }: { children: ReactNode }) {
             const Icon = mode.icon;
             const isActive = mode === active;
             return (
-              <button
+              <Button
                 key={mode.href}
+                variant="ghost"
                 aria-current={isActive ? "page" : undefined}
                 onClick={() => navigate(mode.href)}
                 className={cn(
-                  "flex w-12 flex-col items-center gap-0.5 rounded-lg px-1 py-2 text-[10px] font-medium transition-colors cursor-pointer",
-                  isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                  "flex h-auto w-12 flex-col items-center gap-0.5 rounded-lg px-1 py-2 text-[10px] font-medium",
+                  isActive ? "bg-accent text-foreground hover:bg-accent" : "text-muted-foreground",
                 )}
               >
                 <Icon size={19} strokeWidth={1.8} />
                 <span>{mode.label}</span>
-              </button>
+              </Button>
             );
           })}
         </nav>
@@ -99,14 +100,15 @@ export default function Shell({ children }: { children: ReactNode }) {
         >
           {initials(viewer?.username)}
         </span>
-        <button
+        <Button
+          variant="ghost"
           onClick={() => void logout()}
           title="Sign out"
-          className="mt-1 flex w-12 flex-col items-center gap-0.5 rounded-lg px-1 py-2 text-[10px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground cursor-pointer"
+          className="mt-1 flex h-auto w-12 flex-col items-center gap-0.5 rounded-lg px-1 py-2 text-[10px] text-muted-foreground"
         >
           <LogOut size={16} strokeWidth={1.8} />
           <span>Exit</span>
-        </button>
+        </Button>
       </aside>
 
       {/* Workspace */}
@@ -122,13 +124,15 @@ export default function Shell({ children }: { children: ReactNode }) {
               graphql live
             </span>
             <BellPanel />
-            <button
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={() => navigate("/settings")}
               title="Settings"
-              className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
+              className="h-9 w-9 text-muted-foreground"
             >
               <SettingsIcon size={16} strokeWidth={1.8} />
-            </button>
+            </Button>
             <span
               className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-xs font-semibold"
               title={viewer?.username}

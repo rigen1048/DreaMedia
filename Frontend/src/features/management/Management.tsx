@@ -72,16 +72,18 @@ export default function Management() {
       <div className="flex flex-wrap items-center gap-2">
         <div className="inline-flex rounded-lg bg-muted p-1">
           {TABS.map((item) => (
-            <button
+            <Button
               key={item.key}
+              variant="ghost"
+              size="sm"
               onClick={() => setTab(item.key)}
               className={cn(
-                "rounded-md px-3 py-1 text-sm font-medium transition-colors cursor-pointer",
-                tab === item.key ? "bg-background shadow" : "text-muted-foreground hover:text-foreground",
+                "h-auto rounded-md px-3 py-1 text-sm font-medium",
+                tab === item.key ? "bg-background text-foreground shadow hover:bg-background" : "text-muted-foreground",
               )}
             >
               {item.label}
-            </button>
+            </Button>
           ))}
         </div>
 
