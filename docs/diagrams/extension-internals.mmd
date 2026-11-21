@@ -1,17 +1,19 @@
 flowchart TD
     P[Popup\naccessible tabs + settings] -->|runtime messages| BG[Background worker / page\nonly backend lane]
     C[Registered content script\nallowlisted domain only] -->|runtime messages| BG
-    BG -->|graphql-transport-ws\nall queries + mutations; token in connection_init| GQL[/ext/graphql/]
+    BG --> GATE{Open tab matches\nenabled site?}
+    GATE -->|yes; explicit enable action may bootstrap| WS[Authenticated WebSocket]
+    WS -->|all queries + mutations; token in connection_init| GQL[/ext/graphql/]
     GQL --> S[Extension GraphQL schema]
     S --> D[(PostgreSQL)]
-    D --> DOM[ext_domains\nper-user allowlist]
+    D --> DOM[ext_domains\nper-user allowlist; YouTube default]
     D --> LIVE[ext_live_sessions\ncrash-safe progress]
     D --> SITE[ani_watch_sites\nlearned deep links]
     D --> BLOCK[blocked source cache]
     BG -->|storage.local| CACHE[Cached domains + blocked list]
     CACHE -. local match .-> C
     HOST[HTTP/HTTPS host permission\none-time install grant] -. browser capability .-> BG
-    DOM -. enabled domain list over WS .-> BG
+    DOM -. full list including paused entries over WS .-> BG
     BG -. register only enabled domains .-> C
     BG -->|authenticated extPing + ping/pong health| P
     C --> V[Video detector\nMutationObserver + URL reattach]
@@ -24,6 +26,6 @@ flowchart TD
     classDef core fill:#18181b,stroke:#a1a1aa,color:#fafafa;
     classDef data fill:#27272a,stroke:#34d399,color:#fafafa;
     classDef privacy fill:#3f3f46,stroke:#d4d4d8,color:#fafafa;
-    class P,C,BG,GQL,S,V,HB,BOOT,SWEEP,CURSOR,HOST core;
+    class P,C,BG,GATE,WS,GQL,S,V,HB,BOOT,SWEEP,CURSOR,HOST core;
     class D,DOM,LIVE,SITE,BLOCK data;
     class CACHE privacy;

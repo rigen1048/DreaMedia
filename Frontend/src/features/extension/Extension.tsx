@@ -109,9 +109,9 @@ export default function Extension() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm"><Globe size={14} /> Sites</CardTitle>
           <CardDescription>
-            The extension runs ONLY on these domains — never on arbitrary pages. Add each site
-            you watch on once, as anime or YouTube; the matching module activates there.
-            You can also add the current site from the extension popup.
+            YouTube.com is enabled by default. The extension runs only on sites in this shared
+            allowlist; add sites here or from the extension popup. Changes sync when the
+            extension connects and every five minutes while an enabled site is open.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">

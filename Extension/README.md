@@ -32,13 +32,16 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
    URL (`http://127.0.0.1:8123` by default) and token, then select **Save & connect**.
    The footer reports the authenticated WebSocket connection state.
    The browser asks once for HTTP/HTTPS access to all sites at installation;
-   the extension registers tracking scripts only on domains enabled in DreaMedia.
+   the extension registers tracking scripts only on enabled domains. YouTube.com
+   is enabled by default; DreaMedia and the extension share the same site list.
 
 ## Popup
 
 - **Current site** shows whether the site is enabled, paused, or not enabled.
   Add a new site as Anime or YouTube, then reload its tab. Manage paused
-  sites in **Ext → Sites** in DreaMedia.
+  sites in **Ext → Sites** in DreaMedia. Changes sync on connection and every
+  five minutes while an enabled site is open; open an enabled site (YouTube by
+  default) to sync when no allowed tab is currently open.
 - **Source** follows a YouTube channel (Track, WordScan, Random, or Withhold)
   or a page with a playlist link (Playlist). Withhold batches uploads until
   the chosen threshold is reached.
@@ -74,4 +77,6 @@ token once in `connection_init`; the backend validates it for the socket and
 reuses that identity until the connection closes. The worker sends a ping every
 20 seconds and requires the server's pong within 10 seconds. The popup shows green
 only for an authenticated, responsive socket; it shows yellow while reconnecting
-and red only after a 30-second outage.
+and red only after a 30-second outage. The socket starts only while at least one
+open tab matches an enabled site, and closes when no enabled tabs remain. The
+popup's explicit **Enable site** action is the only bootstrap exception.

@@ -92,8 +92,10 @@ class ExtQuery:
 
     @strawberry.field
     async def domains(self, info: Info) -> List[ExtDomainInfo]:
-        """Enabled allowlist for content-script registration (phase 1)."""
-        rows = await _domains.list_domains(await _ext_uid(info), enabled_only=True)
+        """Complete site allowlist; enabled flags drive extension registration."""
+        user_id = await _ext_uid(info)
+        _unwrap(await _domains.ensure_default_youtube(user_id))
+        rows = await _domains.list_domains(user_id)
         if any(r["domain"] is None for r in rows):
             raise ValueError("vault locked (D9)")
         return [ExtDomainInfo(**r) for r in rows]

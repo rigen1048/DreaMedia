@@ -24,16 +24,25 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
 
 - New table `ext_domains`: `id, user_id, domain_enc, domain_hash,
   media ('yt'|'ani'), enabled, added_at`. Domains are encrypted like
-  everything else (index_hash for lookup).
+  everything else (index_hash for lookup). `youtube.com` is seeded once as
+  enabled by default; a separate per-user marker prevents deliberate removal
+  from restoring it on later syncs.
 - The extension ships **no static content script**. The background worker
   fetches the allowlist, caches it, and calls
   `chrome.scripting.registerContentScripts()` (MV3) /
   `browser.contentScripts.register()` (Firefox MV2) with match patterns
   built from it. Code never loads on non-registered domains — zero compute.
+- The database is the shared source of truth: the extension reads the complete
+  list (including paused entries) over its authenticated WebSocket, while
+  DreaMedia's Extension page and popup write the same table. Enabled flags
+  determine content-script registration; paused and removed sites are removed
+  locally at the next sync. The worker syncs on connection and every five
+  minutes while an enabled site is open.
 - Minimal way to add a domain: on a non-registered site the popup shows a
-  single "Enable DreaMedia on this site" button + media type. A DreaMedia
-  page (Management/Settings section) lists domains with toggle/remove.
-  Both write the same table.
+  single "Enable DreaMedia on this site" button + media type. That explicit
+  action temporarily authorizes the current host for the setup request, then
+  the extension syncs the persisted allowlist. DreaMedia's Extension page
+  lists domains with toggle/remove.
 - HTTP/HTTPS host access is declared once at installation so adding a domain
   does not trigger another Chrome prompt. This is a broad browser permission;
   the browser may warn that the extension can access all sites. The background
@@ -108,6 +117,9 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
   token-authenticated `extPing`; only success marks the connection ready.
 - The token is sent once in `connection_init`; the backend validates it and
   reuses the authenticated user identity for operations on that connection.
+- The socket starts only while an open tab matches an enabled local site (or
+  while an explicit enable-site action is in progress), and closes when no
+  enabled tab remains.
 - A client `ping` is sent every 20 seconds to keep an idle MV3 service worker
   active; the server's `pong` is required within 10 seconds.
   Socket loss switches the UI to reconnecting immediately; red is delayed for
@@ -157,10 +169,10 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
 ## Merged architecture
 
 ```
-ext_domains (DB) ──► popup "enable this site" / DreaMedia domains page
-        │ (fetched by background, cached locally over WebSocket)
+ext_domains (DB; youtube.com default) ──► popup / DreaMedia domains page
+        │ (complete allowlist fetched and cached over WebSocket)
         ▼
-background: registerContentScripts per domain, per media type
+background: enabled-tab gate ──► registerContentScripts per enabled domain
         │
         ├── youtube module: subscribe-from-page, playlist add, block disclaimer
         └── anime module: anchor detect → server match → auto-bind

@@ -49,7 +49,9 @@ class AccountQuery:
     async def ext_domains(self, info: Info) -> List[ExtDomain]:
         """Extension v2: the website allowlist (only these domains run the
         extension's content scripts)."""
-        rows = await _domains.list_domains(await _uid(info))
+        user_id = await _uid(info)
+        _unwrap(await _domains.ensure_default_youtube(user_id))
+        rows = await _domains.list_domains(user_id)
         return [ExtDomain(**r) for r in rows]
 
     @strawberry.field

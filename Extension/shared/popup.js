@@ -28,7 +28,7 @@ function setConnection(state, text) {
 
 function applyConnectionState(data) {
   const labels = {
-    idle: ["idle", "Not connected"],
+    idle: ["idle", data.reason === "No enabled site open" ? "Open an enabled site" : "Not connected"],
     connected: ["ok", "Connected (WebSocket)"],
     connecting: ["loading", data.reason === "Reconnecting" ? "Reconnecting…" : "Connecting…"],
     disconnected: ["err", "Disconnected"],
@@ -144,16 +144,23 @@ async function loadConfiguration() {
 
 action("saveConfig", "configStatus", async () => {
   const backendUrl = $("backendUrl").value.trim();
+  const token = $("token").value.trim();
   let parsedBackendUrl;
   try { parsedBackendUrl = new URL(backendUrl); } catch (_e) { throw new Error("Enter a valid HTTP or HTTPS backend URL."); }
   if (parsedBackendUrl.protocol !== "http:" && parsedBackendUrl.protocol !== "https:") {
     throw new Error("Enter a valid HTTP or HTTPS backend URL.");
   }
-  await chrome.storage.local.set({ backendUrl, token: $("token").value.trim() });
+  if (!token) throw new Error("Enter the extension token.");
+  await chrome.storage.local.set({ backendUrl, token, domains: null });
   status("configStatus", "Connecting by WebSocket…");
   const connection = await send("dreamedia:connect");
   if (!connection.ok) throw new Error(connection.error || "WebSocket authentication failed.");
   applyConnectionState(connection.data);
+  if (connection.data?.status === "idle" && connection.data?.reason === "No enabled site open") {
+    status("configStatus", "Saved. Open YouTube or another enabled site to connect.", "ok");
+    showSettings(false);
+    return;
+  }
   status("configStatus", "WebSocket connected.", "ok");
   const refreshed = await send("dreamedia:refreshDomains");
   if (!refreshed.ok) throw new Error(refreshed.error || "Background refresh failed");
@@ -224,11 +231,6 @@ action("enableSite", "siteStatus", async () => {
     $("siteHost").focus();
   }
 });
-checkSite().catch((error) => {
-  $("siteHost").textContent = "Site unavailable";
-  status("siteStatus", error.message, "err");
-});
-
 // ---- conditional fields ----
 function showSubscriptionFields() {
   const kind = $("kind").value;
@@ -450,10 +452,22 @@ async function loadLists(configured, updateConnection = true) {
   }
   updateCategorySuggestions();
 }
-loadConfiguration()
-  .catch((error) => {
+async function initializePopup() {
+  let configured = false;
+  try {
+    configured = await loadConfiguration();
+    if (configured) await send("dreamedia:refreshDomains");
+  } catch (error) {
     status("configStatus", `Couldn’t read settings: ${error.message}`, "err");
     setConnection("err", "Settings unavailable");
-    return false;
-  })
-  .then((configured) => loadLists(configured));
+    configured = false;
+  }
+  try {
+    await checkSite();
+  } catch (error) {
+    $("siteHost").textContent = "Site unavailable";
+    status("siteStatus", error.message, "err");
+  }
+  await loadLists(configured);
+}
+void initializePopup();

@@ -316,6 +316,16 @@ async def test_ext_domains_allowlist_crud():
     user_id = await _user_id()
     store = ExtDomainStore()
 
+    default = await store.ensure_default_youtube(user_id)
+    assert isinstance(default, Success) and default.unwrap() is True
+    youtube = next(row for row in await store.list_domains(user_id) if row["media"] == "yt")
+    assert youtube["domain"] == "youtube.com" and youtube["enabled"] is True
+    assert isinstance(await store.set_enabled(user_id, youtube["id"], False), Success)
+    assert isinstance(await store.ensure_default_youtube(user_id), Success)
+    youtube = next(row for row in await store.list_domains(user_id) if row["media"] == "yt")
+    assert youtube["enabled"] is False
+    assert isinstance(await store.set_enabled(user_id, youtube["id"], True), Success)
+
     added = await store.add_domain(user_id, "HTTPS://WWW.Example.com/watch?v=1", "ani")
     assert isinstance(added, Success)
     row = added.unwrap()
@@ -342,7 +352,7 @@ async def test_ext_domains_allowlist_crud():
 
     rows = await store.list_domains(user_id)
     assert {(r["domain"], r["media"]) for r in rows} == {
-        ("example.com", "ani"), ("example.com", "yt"),
+        ("youtube.com", "yt"), ("example.com", "ani"), ("example.com", "yt"),
     }
 
     # Toggle off -> excluded from enabled_only; on -> back
@@ -357,6 +367,8 @@ async def test_ext_domains_allowlist_crud():
 
     assert isinstance(await store.remove_domain(user_id, row["id"]), Success)
     assert isinstance(await store.remove_domain(user_id, added_yt.unwrap()["id"]), Success)
+    assert isinstance(await store.remove_domain(user_id, youtube["id"]), Success)
+    assert isinstance(await store.ensure_default_youtube(user_id), Success)
     assert await store.list_domains(user_id) == []
 
 

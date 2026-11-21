@@ -1,9 +1,11 @@
 """Token-lane GraphQL contracts used by the browser extension."""
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
 from returns.result import Success
 
+from Extension import store as ext_store
 from Graphql import ext_graph
 from Orchestrator.Yt.Fetch import convert
 
@@ -60,6 +62,93 @@ async def test_extension_category_query_returns_parent_child_combinations(monkey
     assert [(row.id, row.name) for row in rows] == [(7, "Media")]
     assert [(row.id, row.name) for row in rows[0].subdomains] == [(9, "Animation")]
     assert store.calls == [("domains_tree", 12)]
+
+
+@pytest.mark.asyncio
+async def test_extension_domains_syncs_enabled_and_paused_sites(monkeypatch, extension_info):
+    class FakeDomains:
+        def __init__(self):
+            self.calls = []
+
+        async def ensure_default_youtube(self, user_id):
+            self.calls.append(("ensure_default_youtube", user_id))
+            return Success(True)
+
+        async def list_domains(self, user_id, enabled_only=False):
+            self.calls.append(("list_domains", user_id, enabled_only))
+            return [
+                {"id": 1, "domain": "youtube.com", "media": "yt", "enabled": True},
+                {"id": 2, "domain": "example.com", "media": "ani", "enabled": False},
+            ]
+
+    domains = FakeDomains()
+
+    async def user_id(_info):
+        return 12
+
+    monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
+    monkeypatch.setattr(ext_graph, "_domains", domains)
+
+    rows = await ext_graph.ExtQuery().domains(extension_info)
+
+    assert [(row.domain, row.media, row.enabled) for row in rows] == [
+        ("youtube.com", "yt", True), ("example.com", "ani", False),
+    ]
+    assert domains.calls == [
+        ("ensure_default_youtube", 12), ("list_domains", 12, False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_default_youtube_seed_is_applied_only_once(monkeypatch):
+    class FakeConnection:
+        def __init__(self):
+            self.seeded = False
+            self.inserts = []
+
+        @asynccontextmanager
+        async def transaction(self):
+            yield
+
+        async def fetchval(self, _query, user_id):
+            if self.seeded:
+                return None
+            self.seeded = True
+            return user_id
+
+        async def execute(self, query, *args):
+            self.inserts.append((query, args))
+
+    class FakePool:
+        def __init__(self, connection):
+            self.connection = connection
+
+        @asynccontextmanager
+        async def acquire(self):
+            yield self.connection
+
+    connection = FakeConnection()
+
+    async def vault_key(_user_id):
+        return b"vault-key"
+
+    async def get_pool():
+        return FakePool(connection)
+
+    monkeypatch.setattr(ext_store.vault, "get", vault_key)
+    monkeypatch.setattr(ext_store, "get_pool", get_pool)
+    monkeypatch.setattr(ext_store, "encrypt", lambda _key, value: f"enc:{value}".encode())
+    monkeypatch.setattr(ext_store, "index_hash", lambda _key, value: f"hash:{value}".encode())
+
+    store = ext_store.ExtDomainStore()
+    first = await store.ensure_default_youtube(12)
+    second = await store.ensure_default_youtube(12)
+
+    assert isinstance(first, Success) and first.unwrap() is True
+    assert isinstance(second, Success) and second.unwrap() is False
+    assert len(connection.inserts) == 1
+    query, args = connection.inserts[0]
+    assert "'yt'" in query and args == (12, b"enc:youtube.com", b"hash:youtube.com")
 
 
 @pytest.mark.asyncio

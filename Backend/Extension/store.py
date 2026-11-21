@@ -59,6 +59,30 @@ class ExtDomainStore:
             for r in rows
         ]
 
+    async def ensure_default_youtube(self, user_id: int) -> Result[bool, str]:
+        """Seed youtube.com once, without restoring it after the user removes it."""
+        key = await vault.get(user_id)
+        if key is None:
+            return Failure("vault locked (D9)")
+        domain = "youtube.com"
+        pool = await get_pool()
+        async with pool.acquire() as con:
+            async with con.transaction():
+                seeded_user = await con.fetchval(
+                    "INSERT INTO ext_domain_defaults (user_id) VALUES ($1) "
+                    "ON CONFLICT (user_id) DO NOTHING RETURNING user_id",
+                    user_id,
+                )
+                if seeded_user is None:
+                    return Success(False)
+                await con.execute(
+                    "INSERT INTO ext_domains (user_id, domain_enc, domain_hash, media) "
+                    "VALUES ($1, $2, $3, 'yt') "
+                    "ON CONFLICT (user_id, domain_hash, media) DO NOTHING",
+                    user_id, encrypt(key, domain), index_hash(key, domain),
+                )
+        return Success(True)
+
     async def add_domain(self, user_id: int, domain: str, media: str) -> Result[Dict[str, Any], str]:
         if media not in ("yt", "ani"):
             return Failure("media must be yt|ani")

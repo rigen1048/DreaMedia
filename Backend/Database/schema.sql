@@ -362,6 +362,12 @@ CREATE TABLE IF NOT EXISTS ext_domains (
     UNIQUE (user_id, domain_hash, media)
 );
 
+-- One-time defaults marker: a removed default site must not reappear on sync.
+CREATE TABLE IF NOT EXISTS ext_domain_defaults (
+    user_id       INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    applied_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Extension v2 phase 5: which site the user watches which anime on.
 -- Learned passively from anchor reports; notification clicks resolve the
 -- next episode URL by pattern-matching the stored page URL, falling back

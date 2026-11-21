@@ -7,6 +7,8 @@ const MEDIA_JS = {
   ani: ["core.js", "modules/anime.js"],
   yt: ["core.js", "modules/youtube.js"],
 };
+const DEFAULT_DOMAINS = [{ id: 0, domain: "youtube.com", media: "yt", enabled: true }];
+const pendingSiteDomains = new Set();
 
 async function backend() {
   const r = await chrome.storage.local.get(["backendUrl", "token"]);
@@ -39,7 +41,32 @@ function domainHostPatterns(raw) {
 // ---- domain allowlist: fetch, cache, register ----
 
 async function cachedDomains() {
-  return (await chrome.storage.local.get("domains")).domains || [];
+  const stored = await chrome.storage.local.get("domains");
+  if (Array.isArray(stored.domains)) return stored.domains;
+  return DEFAULT_DOMAINS;
+}
+
+function urlMatchesDomain(url, domain) {
+  const host = normalizeDomain(url);
+  const allowed = normalizeDomain(domain);
+  return Boolean(host && allowed && (host === allowed || host.endsWith(`.${allowed}`)));
+}
+
+function urlMatchesEnabledDomains(url, domains) {
+  return domains.some((row) => row?.enabled && urlMatchesDomain(url, row.domain));
+}
+
+async function hasEnabledSiteTab() {
+  const domains = (await cachedDomains()).filter((row) => row?.enabled);
+  for (const domain of pendingSiteDomains) domains.push({ domain, enabled: true });
+  if (!domains.length) return false;
+  let tabs;
+  try {
+    tabs = await chrome.tabs.query({});
+  } catch (_e) {
+    return false;
+  }
+  return (tabs || []).some((tab) => urlMatchesEnabledDomains(tab.url || "", domains));
 }
 
 async function fetchDomains() {
@@ -109,10 +136,24 @@ async function refreshDomains() {
 }
 
 async function refreshAll() {
-  // Start the shared GraphQL socket before refreshing its cached data.
+  // Reapply the last synchronized set without opening a socket on a disallowed site.
+  try {
+    await registerDomains(await cachedDomains());
+  } catch (e) {
+    console.debug("[DreaMedia] cached domain registration failed", e);
+  }
+  if (!(await hasEnabledSiteTab())) {
+    stopWsForNoEnabledSite();
+    return;
+  }
+  // Start the single socket only while an enabled site is open.
   void ensureWs();
   await refreshDomains();
-  await fetchBlocked();
+  if (await hasEnabledSiteTab()) {
+    if (wsTransportResponsive()) await fetchBlocked();
+  } else {
+    stopWsForNoEnabledSite();
+  }
 }
 
 // ---- single backend lane: authenticated graphql-transport-ws ----
@@ -154,6 +195,10 @@ function wsTransportResponsive() {
 }
 
 async function waitForWsReady(timeoutMs = 30000) {
+  if (!(await hasEnabledSiteTab())) {
+    stopWsForNoEnabledSite();
+    throw new Error("Open an enabled site to connect");
+  }
   if (wsTransportResponsive()) return Promise.resolve();
   if (wsReady) wsDead("WebSocket is not responsive");
   if (!(await backend()).token) throw new Error("Extension token is not configured");
@@ -331,10 +376,41 @@ function wsDead(reason = "Connection closed") {
     operation.reject(new Error(reason));
   }
   pendingOps.clear();
+  for (const onReady of [...wsReadyWaiters]) onReady(new Error(reason));
   try {
     if (deadSocket && deadSocket.readyState < WebSocket.CLOSING) deadSocket.close();
   } catch (_e) { /* retry below replaces the transport */ }
   scheduleWsRetry();
+}
+
+function stopWsForNoEnabledSite() {
+  const oldSocket = ws;
+  if (!oldSocket && !wsReady && !wsRetry && !wsConnectPromise && !pendingOps.size &&
+      !wsReadyWaiters.size && connectionState.status === "idle" &&
+      connectionState.reason === "No enabled site open") return;
+  wsGeneration += 1;
+  wsReady = false;
+  ws = null;
+  wsAuthProbeId = null;
+  wsConnectPromise = null;
+  clearWsHandshakeTimer();
+  stopWsKeepalive();
+  if (wsRetry) {
+    clearTimeout(wsRetry);
+    wsRetry = null;
+  }
+  for (const operation of pendingOps.values()) {
+    clearTimeout(operation.timer);
+    operation.reject(new Error("No enabled site is open"));
+  }
+  pendingOps.clear();
+  for (const onReady of [...wsReadyWaiters]) onReady(new Error("No enabled site is open"));
+  try {
+    if (oldSocket && oldSocket.readyState < WebSocket.CLOSING) {
+      oldSocket.close(1000, "No enabled site open");
+    }
+  } catch (_e) { /* socket is already closing */ }
+  void publishConnectionState("idle", "No enabled site open");
 }
 
 function scheduleWsRetry() {
@@ -346,15 +422,23 @@ function scheduleWsRetry() {
 }
 
 async function ensureWs() {
+  if (!(await hasEnabledSiteTab())) {
+    stopWsForNoEnabledSite();
+    return false;
+  }
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   if (wsConnectPromise) return wsConnectPromise;
+  const generation = wsGeneration;
   const attempt = connectWs();
   wsConnectPromise = attempt;
   try {
     await attempt;
+    return wsReady;
   } catch (error) {
+    if (generation !== wsGeneration) return false;
     await publishConnectionState("disconnected", error.message || "WebSocket setup failed");
     scheduleWsRetry();
+    return false;
   } finally {
     if (wsConnectPromise === attempt) wsConnectPromise = null;
   }
@@ -370,19 +454,13 @@ async function connectWs() {
     ws = null;
   }
   const { url, token } = await backend();
-  if (generation !== wsGeneration) {
-    scheduleWsRetry();
-    return;
-  }
+  if (generation !== wsGeneration) return;
   if (!token) {
     await publishConnectionState("idle", "Not configured");
     return;
   }
   await publishConnectionState("connecting");
-  if (generation !== wsGeneration) {
-    scheduleWsRetry();
-    return;
-  }
+  if (generation !== wsGeneration) return;
   try {
     ws = new WebSocket(`${url.replace(/^http/, "ws")}/ext/graphql`, "graphql-transport-ws");
   } catch (error) {
@@ -510,37 +588,16 @@ async function liveGql(query, p) {
 }
 
 function reconnectAfterConfigurationChange() {
-  const oldSocket = ws;
-  wsGeneration += 1;
-  wsReady = false;
-  ws = null;
-  wsAuthProbeId = null;
-  clearWsHandshakeTimer();
-  stopWsKeepalive();
-  for (const operation of pendingOps.values()) {
-    clearTimeout(operation.timer);
-    operation.reject(new Error("WebSocket configuration changed"));
-  }
-  pendingOps.clear();
-  try {
-    if (oldSocket && oldSocket.readyState < WebSocket.CLOSING) {
-      oldSocket.close(4000, "Configuration changed");
-    }
-  } catch (_e) { /* the next connection attempt replaces it */ }
-  if (connectionFailureTimer) clearTimeout(connectionFailureTimer);
-  pendingConnectionFailureReason = "WebSocket reconfiguration timed out";
-  connectionFailureTimer = setTimeout(() => {
-    connectionFailureTimer = null;
-    void commitConnectionState("disconnected", pendingConnectionFailureReason);
-  }, CONNECTION_FAILURE_GRACE_MS);
-  void commitConnectionState("connecting");
-  void ensureWs();
+  void (async () => {
+    try { await chrome.storage.local.set({ domains: null }); } catch (_e) { /* next wake retries */ }
+    stopWsForNoEnabledSite();
+    void refreshAll();
+  })();
 }
 
 chrome.storage.onChanged?.addListener((changes, area) => {
   if (area === "local" && (changes.backendUrl || changes.token)) {
     reconnectAfterConfigurationChange();
-    void refreshDomains();
   }
 });
 const M_ANCHOR = `mutation Anchor($candidates: [String!]!, $pageUrl: String!) {
@@ -617,7 +674,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       switch (msg.type) {
         case "dreamedia:connectionStatus":
-          if (connectionState.status === "connected") {
+          if (!(await hasEnabledSiteTab())) {
+            stopWsForNoEnabledSite();
+          } else if (connectionState.status === "connected") {
             if (!wsTransportResponsive()) {
               wsDead("WebSocket is not responsive");
               sendResponse({ ok: true, data: { status: "connecting", reason: "Reconnecting" } });
@@ -625,9 +684,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }
           }
           sendResponse({ ok: true, data: connectionState });
-          void ensureWs();
+          if (await hasEnabledSiteTab()) void ensureWs();
           break;
         case "dreamedia:connect":
+          if (!(await hasEnabledSiteTab())) {
+            stopWsForNoEnabledSite();
+            sendResponse({ ok: true, data: connectionState });
+            break;
+          }
           await waitForWsReady();
           sendResponse({ ok: true, data: connectionState });
           break;
@@ -725,14 +789,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case "dreamedia:addDomain": {
-          const data = await gqlWs(
-            `mutation AddDomain($domain: String!, $media: String!) {
-              addDomain(domain: $domain, media: $media) { id domain media enabled }
-            }`,
-            { domain: msg.domain, media: msg.media },
-          );
-          await refreshDomains();
-          sendResponse({ ok: true, data });
+          const domain = normalizeDomain(msg.domain);
+          const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (!domain || !urlMatchesDomain(activeTab?.url || "", domain)) {
+            throw new Error("Open the site in the active tab to enable it.");
+          }
+          pendingSiteDomains.add(domain);
+          try {
+            const data = await gqlWs(
+              `mutation AddDomain($domain: String!, $media: String!) {
+                addDomain(domain: $domain, media: $media) { id domain media enabled }
+              }`,
+              { domain: msg.domain, media: msg.media },
+            );
+            await refreshDomains();
+            sendResponse({ ok: true, data });
+          } finally {
+            pendingSiteDomains.delete(domain);
+            if (await hasEnabledSiteTab()) void ensureWs();
+            else stopWsForNoEnabledSite();
+          }
           break;
         }
         case "dreamedia:refreshDomains":
@@ -753,13 +829,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // Register and start background work only after connection state has been
-// initialized; refreshAll invokes ensureWs synchronously up to its first await.
+// initialized. No socket is opened unless an enabled site tab is present.
 chrome.runtime.onStartup?.addListener(() => void refreshAll());
 chrome.runtime.onInstalled?.addListener(() => void refreshAll());
-chrome.alarms?.create("dreamedia:domains", { periodInMinutes: 30 });
+chrome.tabs?.onUpdated?.addListener((_tabId, changeInfo) => {
+  if (changeInfo.url || changeInfo.status === "complete") void refreshAll();
+});
+chrome.tabs?.onActivated?.addListener(() => void refreshAll());
+chrome.tabs?.onRemoved?.addListener(() => void refreshAll());
+chrome.alarms?.create("dreamedia:domains", { periodInMinutes: 5 });
 chrome.alarms?.create("dreamedia:ws-watchdog", { periodInMinutes: 1 });
 chrome.alarms?.onAlarm.addListener((alarm) => {
   if (alarm.name === "dreamedia:domains") void refreshAll();
   if (alarm.name === "dreamedia:ws-watchdog") void ensureWs();
 });
-void refreshAll(); // service-worker wake / persistent background load
+void refreshAll(); // service-worker wake / persistent background load; still site-gated
