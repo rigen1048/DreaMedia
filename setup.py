@@ -2,8 +2,9 @@
 """DreaMedia launcher (D52) — replaces start.sh.
 
 Default run : backup → full wipe → clean rebuild → empty database
-Restoring is deliberately manual: Admin → Restore → upload a dump from backups/
-Nothing is ever pushed back into Postgres behind your back.
+`update`     : verified backup → fast-forward-only Git pull → restore → rebuild
+The default command leaves restore manual: Admin → Restore → upload a dump.
+No command pushes Git changes or restores data without an explicit request.
 
 Ctrl+C stops the backend + frontend; Postgres stays up (docker compose down).
 """
@@ -200,8 +201,122 @@ def backup(backup_dir: Path, keep: int, env) -> Path | None:
     return out
 
 
+def require_clean_git_worktree() -> None:
+    result = run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=ROOT, check=False,
+    )
+    if result.returncode != 0:
+        sys.exit("✗ 'update' requires this directory to be a Git checkout.")
+    if result.stdout.strip():
+        sys.exit(
+            "✗ 'update' requires a clean Git worktree. Commit or stash local changes, "
+            "then retry; no changes were pulled."
+        )
+
+
+def pull_git_changes() -> None:
+    """Fast-forward only: never rebase, reset, or overwrite local commits."""
+    result = run(["git", "pull", "--ff-only"], cwd=ROOT, check=False)
+    if result.stdout.strip():
+        print(result.stdout.rstrip())
+    if result.stderr.strip():
+        print(result.stderr.rstrip(), file=sys.stderr)
+    if result.returncode != 0:
+        sys.exit(
+            "✗ git pull --ff-only failed. The local branch was not rewritten; "
+            "resolve the Git state and retry."
+        )
+
+
+def running_compose_services(env) -> set[str]:
+    result = subprocess.run(
+        ["docker", "compose", "ps", "--status", "running", "--services"],
+        cwd=ROOT, capture_output=True, text=True, env=env,
+    )
+    if result.returncode != 0:
+        sys.exit(f"✗ Could not inspect Docker Compose services: {result.stderr[-1000:]}")
+    return set(result.stdout.split())
+
+
+def restore_database_backup(dump: Path, env) -> None:
+    """Restore a previously validated custom-format dump from the host file."""
+    command = [
+        "docker", "compose", "exec", "-T", "db", "pg_restore",
+        "-U", "dreamedia", "-d", "dreamedia",
+        "--clean", "--if-exists", "--exit-on-error",
+        "--no-owner", "--no-privileges",
+    ]
+    print(f"→ Restoring verified Postgres backup: {dump}")
+    try:
+        source = dump.open("rb")
+    except OSError as exc:
+        sys.exit(f"✗ Could not read backup {dump}: {exc}")
+    try:
+        with source:
+            result = subprocess.run(
+                command, cwd=ROOT, stdin=source, capture_output=True, env=env,
+            )
+    except OSError as exc:
+        sys.exit(
+            f"✗ Could not start the Docker restore command: {exc}. "
+            f"The verified backup remains at {dump}."
+        )
+    if result.returncode != 0:
+        detail = result.stderr.decode(errors="replace")[-2000:].strip()
+        sys.exit(
+            "✗ Automatic restore failed. The PostgreSQL volume was kept and app "
+            f"services remain stopped. The verified backup is still at {dump}.\n{detail}"
+        )
+    print("  ✓ pre-update backup restored")
+
+
+def update_database(backup_dir: Path, keep: int, env) -> Path | None:
+    """Pull code and restore a validated snapshot without deleting pgdata."""
+    require_clean_git_worktree()
+    running = running_compose_services(env)
+    app_services = [name for name in ("bridge", "backend", "frontend") if name in running]
+    database_restarted = False
+    try:
+        if app_services:
+            print("→ Stopping app services for a consistent backup...")
+            run(["docker", "compose", "stop", *app_services], cwd=ROOT)
+
+        dump = backup(backup_dir, keep, env)
+        pull_git_changes()
+        build_extensions()
+
+        print("→ Stopping the stack while preserving the PostgreSQL volume...")
+        run(["docker", "compose", "down", "--remove-orphans"], cwd=ROOT)
+        database_restarted = True
+        print("→ Starting PostgreSQL...")
+        run(["docker", "compose", "up", "-d", "db"], cwd=ROOT)
+        for _ in range(30):
+            if db_running(env):
+                break
+            time.sleep(1)
+        if not db_running(env):
+            sys.exit(
+                "✗ PostgreSQL did not become ready. The pgdata volume was preserved; "
+                f"backup: {dump or '(no prior database)'}"
+            )
+
+        if dump is not None:
+            restore_database_backup(dump, env)
+        else:
+            print("→ No existing database data; skipping restore on first run.")
+        return dump
+    except BaseException:
+        if not database_restarted and app_services:
+            print("→ Update stopped before database restart; restarting prior app services...")
+            run(["docker", "compose", "start", *app_services], cwd=ROOT, check=False)
+        raise
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="DreaMedia launcher (D52)")
+    parser.add_argument("command", nargs="?", choices=("update",),
+                        help="pull Git changes and restore a verified pre-update database backup")
     parser.add_argument("--dev", action="store_true",
                         help="dev mode: local uvicorn + bun dev in the foreground "
                              "(default: full docker stack — db, backend, frontend)")
@@ -209,12 +324,19 @@ def main() -> None:
                         help="synchronize Extension/shared into the mv2 and mv3 packages, then exit")
     args = parser.parse_args()
 
+    updating = args.command == "update"
+    if args.build_extensions_only and updating:
+        parser.error("'update' cannot be combined with --build-extensions-only")
+    if updating and args.dev:
+        parser.error("'update' is Docker-mode only; stop local --dev services and update them manually")
+
     if args.build_extensions_only:
         build_extensions()
         return
 
+    if not updating:
+        build_extensions()
     env = load_env()
-    build_extensions()
     access = env.get("ACCESS", "computer").lower()
     if access not in ("wifi", "computer"):
         sys.exit("✗ ACCESS must be 'wifi' or 'computer' (see .env.example)")
@@ -237,7 +359,7 @@ def main() -> None:
 
     ip = lan_ip()
     print("=" * 50)
-    print("🐴 DreaMedia is starting...")
+    print("🐴 DreaMedia is updating..." if updating else "🐴 DreaMedia is starting...")
     print(f"   On this machine : http://localhost:8124")
     if access == "wifi":
         print(f"   From your WiFi  : http://{ip}:8124")
@@ -256,26 +378,28 @@ def main() -> None:
     backup_dir = Path(env.get("BACKUP_DIR", str(ROOT / "backups")))
     keep = int(env.get("BACKUP_KEEP_LATEST", "5"))
 
-    # 1. backup (refuse to wipe without one, unless there is no db at all)
-    backup(backup_dir, keep, env)
+    restored_backup = None
+    if updating:
+        restored_backup = update_database(backup_dir, keep, env)
+    else:
+        # Default setup behavior is intentionally unchanged: backup, wipe the
+        # volumes, and leave restoration to the Admin UI.
+        backup(backup_dir, keep, env)
 
-    # 2. full teardown
-    print("→ Full teardown: containers, volumes, builder cache...")
-    run(["docker", "compose", "down", "-v", "--remove-orphans"], cwd=ROOT, check=False)
-    run(["docker", "builder", "prune", "--all", "--force"], check=False, quiet=True)
+        print("→ Full teardown: containers, volumes, builder cache...")
+        run(["docker", "compose", "down", "-v", "--remove-orphans"], cwd=ROOT, check=False)
+        run(["docker", "builder", "prune", "--all", "--force"], check=False, quiet=True)
 
-    # 3. fresh db
-    print("→ Starting fresh Postgres...")
-    run(["docker", "compose", "up", "-d", "db"], cwd=ROOT)
-    for _ in range(30):
-        if db_running(env):
-            break
-        time.sleep(1)
+        print("→ Starting fresh Postgres...")
+        run(["docker", "compose", "up", "-d", "db"], cwd=ROOT)
+        for _ in range(30):
+            if db_running(env):
+                break
+            time.sleep(1)
 
-    # 4. no automatic restore on purpose — loading data back is a manual,
-    # deliberate action (Admin → Restore → upload a dump from backups/).
-    print("→ Empty database. Your safety dump stays in "
-          f"{backup_dir}; restore it from Admin → Restore when you want it.")
+        # Loading data back remains a manual action for the default command.
+        print("→ Empty database. Your safety dump stays in "
+              f"{backup_dir}; restore it from Admin → Restore when you want it.")
 
     # 5. app services
     if not args.dev:
@@ -298,8 +422,13 @@ def main() -> None:
             sys.exit("✗ The stack started but never became healthy (see logs above)")
 
         bridge_ok = wait_for("http://127.0.0.1:3123/health", seconds=30)
-        print("→ Empty database: open the app, sign up, then Admin → Restore if you")
-        print("  want an old dump back (it is never loaded automatically).")
+        if updating and restored_backup is not None:
+            print(f"→ Pre-update backup restored: {restored_backup}")
+        elif updating:
+            print("→ No previous database existed; first-run database initialized.")
+        else:
+            print("→ Empty database: open the app, sign up, then Admin → Restore if you")
+            print("  want an old dump back (it is never loaded automatically).")
         print()
         print("=" * 50)
         print(f"🐴 DreaMedia is up: http://localhost:8124"

@@ -132,17 +132,17 @@ Keep more than one backup and store at least one copy outside the application di
 
 ## Update procedure
 
-Before updating:
+For an existing Git checkout, run:
 
-1. Create and verify a database backup.
-2. Copy `.env` and record deployment settings.
-3. Read the release notes or commit history for schema and migration changes.
-4. Stop the application using your chosen deployment method.
-5. Pull the update.
-6. Rebuild the stack.
-7. Check `/health`, sign in, and verify the feed and Admin pages.
+```bash
+python3 setup.py update
+```
 
-Do not delete the PostgreSQL volume as part of a normal update.
+The update command requires a clean Git worktree and Docker mode. It stops running Docker app services, creates and validates a PostgreSQL dump, runs `git pull --ff-only`, rebuilds the extension files, restarts the database without deleting the `pgdata` volume, restores the verified dump, then rebuilds and starts the app. It never pushes or rebases local commits. A divergent branch or local work makes the command stop rather than overwrite anything.
+
+If backup creation or the Git pull fails before the database restart, the previously running app services are restarted when possible. If automatic restore fails, the app services remain stopped, the PostgreSQL volume is preserved, and the verified dump remains in `backups/` for recovery. Check `/health`, sign in, and verify the feed and Admin pages after a successful update.
+
+The plain `python3 setup.py` command remains the existing reset workflow: it removes volumes and leaves the database empty for manual restoration. Use `python3 setup.py update` for normal updates; do not delete the PostgreSQL volume as part of a normal update.
 
 ## Stop the stack
 

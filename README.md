@@ -117,7 +117,13 @@ python3 setup.py
 
 Open `http://localhost:8124`. The first registered account becomes an administrator.
 
-> **Data lifecycle:** the current launcher performs a backup and clean rebuild before starting the application. Keep backups available and review the launcher behavior before using it on valuable data. A future safe-start workflow should preserve an existing database volume by default.
+For an existing Git checkout, update the code and restore a verified pre-update database backup with:
+
+```bash
+python3 setup.py update
+```
+
+> **Data lifecycle:** plain `python3 setup.py` still performs a clean rebuild and leaves the database empty for manual restoration. `python3 setup.py update` uses a fast-forward-only Git pull, keeps the PostgreSQL volume, and restores the verified backup automatically.
 
 ## Architecture at a glance
 
