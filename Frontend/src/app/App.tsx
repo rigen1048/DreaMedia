@@ -5,6 +5,7 @@ import Todo from "../features/todo/Todo";
 import Admin from "../features/admin/Admin";
 import Trash from "../features/trash/Trash";
 import Settings from "../features/settings/Settings";
+import Extension from "../features/extension/Extension";
 import Login from "../features/auth/Login";
 import { AppProvider, useApp } from "./state";
 import Shell from "./Shell";
@@ -57,6 +58,7 @@ function Gate() {
         <Route path="/management" component={Management} />
         <Route path="/todo" component={Todo} />
         <Route path="/track" component={Todo} />
+        <Route path="/extension" component={Extension} />
         <Route path="/admin" component={AdminGate} />
         <Route path="/trash" component={Trash} />
         <Route path="/settings" component={Settings} />

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, type ReactNode } from "react";
 import { useLocation } from "wouter";
-import { Bell, ListChecks, LogOut, Settings as SettingsIcon, ShieldCheck, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Bell, ListChecks, LogOut, Puzzle, Settings as SettingsIcon, ShieldCheck, SlidersHorizontal, Trash2 } from "lucide-react";
 import BellPanel from "../features/bell/Bell";
 import { initials } from "../lib/format";
 import { cn } from "@/lib/utils";
@@ -14,9 +14,10 @@ const MODES = [
   { href: "/sources", match: ["/sources", "/management"], label: "Manage", title: "Management", icon: SlidersHorizontal, key: "2" },
   { href: "/todo", match: ["/todo", "/track"], label: "Todo", title: "Todo", icon: ListChecks, key: "3" },
   { href: "/trash", match: ["/trash"], label: "Trash", title: "Trashbin", icon: Trash2, key: "4" },
+  { href: "/extension", match: ["/extension"], label: "Ext", title: "Extension", icon: Puzzle, key: "5" },
 ] as const;
 
-const ADMIN_MODE = { href: "/admin", match: ["/admin"], label: "Admin", title: "Admin", icon: ShieldCheck, key: "5" } as const;
+const ADMIN_MODE = { href: "/admin", match: ["/admin"], label: "Admin", title: "Admin", icon: ShieldCheck, key: "6" } as const;
 
 export default function Shell({ children }: { children: ReactNode }) {
   const [location, navigate] = useLocation();
@@ -58,9 +59,11 @@ export default function Shell({ children }: { children: ReactNode }) {
       ? `${workspace.ytFeed.length} videos · ${workspace.aniEvents.length} anime events`
       : active.label === "Manage"
         ? `${workspace.ytChannels.length} sources · ${workspace.ytDomains.length + workspace.aniDomains.length} categories`
-        : active.label === "Admin"
-          ? "backups · restore · settings · users"
-          : `${workspace.ytCards.length} playlists · ${workspace.aniEntries.length} anime`;
+        : active.label === "Ext"
+          ? "token · sites · live lane"
+          : active.label === "Admin"
+            ? "backups · restore · settings · users"
+            : `${workspace.ytCards.length} playlists · ${workspace.aniEntries.length} anime`;
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
