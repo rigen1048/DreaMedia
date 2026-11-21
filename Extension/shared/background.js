@@ -104,6 +104,7 @@ async function refreshDomains() {
 async function refreshAll() {
   await refreshDomains();
   await fetchBlocked();
+  await ensureWs();
 }
 
 chrome.runtime.onStartup?.addListener(() => void refreshAll());
@@ -116,8 +117,9 @@ chrome.alarms?.onAlarm.addListener((alarm) => {
 });
 
 // ---- live lane (ext v2 phase 2): graphql-transport-ws, HTTP fallback ----
-// One socket carries watch progress; while it streams, MV3 keeps the
-// service worker alive. If the socket is down we POST to /ext/graphql.
+// One socket carries watch progress and owns the extension connection state.
+// The popup is only a view of this background-owned connection. The periodic
+// GraphQL ping also keeps an MV3 service worker with an active socket alive.
 
 const M_PROGRESS = `mutation LiveProgress($entryId: Int!, $season: Int!, $episode: Int!, $positionSeconds: Int!) {
   liveProgress(entryId: $entryId, season: $season, episode: $episode, positionSeconds: $positionSeconds)
@@ -129,12 +131,65 @@ const M_END = `mutation LiveEnd($entryId: Int!, $season: Int!, $episode: Int!, $
 let ws = null;
 let wsReady = false;
 let wsRetry = null;
+let wsKeepalive = null;
 let gqlSeq = 0;
 const pendingOps = new Map();
 
-function wsDead() {
+let connectionState = { status: "disconnected", reason: "Not configured" };
+
+function extensionAction() {
+  return chrome.action || chrome.browserAction;
+}
+
+async function publishConnectionState(status, reason = "") {
+  connectionState = { status, reason };
+  const action = extensionAction();
+  const indicator = {
+    connected: { text: "●", color: "#22c55e", title: "DreaMedia: connected" },
+    connecting: { text: "●", color: "#eab308", title: "DreaMedia: connecting…" },
+    disconnected: {
+      text: "●",
+      color: "#ef4444",
+      title: reason ? `DreaMedia: disconnected — ${reason}` : "DreaMedia: disconnected",
+    },
+  }[status];
+  try {
+    await action?.setBadgeText?.({ text: indicator?.text || "" });
+    if (indicator) {
+      await action?.setBadgeBackgroundColor?.({ color: indicator.color });
+      await action?.setTitle?.({ title: indicator.title });
+    }
+  } catch (_e) {
+    // Older Firefox builds may not implement every action API.
+  }
+  try {
+    await chrome.runtime.sendMessage({ type: "dreamedia:connectionStatus", ...connectionState });
+  } catch (_e) {
+    // The popup is normally the only receiver and may be closed.
+  }
+}
+
+function stopWsKeepalive() {
+  if (wsKeepalive) {
+    clearInterval(wsKeepalive);
+    wsKeepalive = null;
+  }
+}
+
+function startWsKeepalive() {
+  stopWsKeepalive();
+  wsKeepalive = setInterval(() => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "ping" }));
+    }
+  }, 20000);
+}
+
+function wsDead(reason = "Connection closed") {
   wsReady = false;
   ws = null;
+  stopWsKeepalive();
+  void publishConnectionState("disconnected", reason);
   for (const resolve of pendingOps.values()) resolve(false);
   pendingOps.clear();
   if (!wsRetry) {
@@ -148,11 +203,16 @@ function wsDead() {
 async function ensureWs() {
   if (ws) return;
   const { url, token } = await backend();
-  if (!token) return;
+  if (!token) {
+    await publishConnectionState("disconnected", "No extension token");
+    return;
+  }
+  await publishConnectionState("connecting");
   try {
     ws = new WebSocket(`${url.replace(/^http/, "ws")}/ext/graphql`, "graphql-transport-ws");
-  } catch (_e) {
+  } catch (error) {
     ws = null;
+    await publishConnectionState("disconnected", error.message || "WebSocket unavailable");
     return;
   }
   ws.onopen = () => ws.send(JSON.stringify({ type: "connection_init", payload: { token } }));
@@ -165,6 +225,8 @@ async function ensureWs() {
     }
     if (msg.type === "connection_ack") {
       wsReady = true;
+      startWsKeepalive();
+      void publishConnectionState("connected");
     } else if (msg.type === "ping") {
       ws.send(JSON.stringify({ type: "pong" }));
     } else if (msg.type === "next" || msg.type === "complete" || msg.type === "error") {
@@ -175,8 +237,11 @@ async function ensureWs() {
       }
     }
   };
-  ws.onclose = wsDead;
-  ws.onerror = () => ws.close();
+  ws.onclose = () => wsDead();
+  ws.onerror = () => {
+    void publishConnectionState("disconnected", "WebSocket error");
+    ws?.close();
+  };
 }
 
 async function liveGql(query, p) {
@@ -259,6 +324,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       switch (msg.type) {
         case "dreamedia:ping":
           sendResponse({ ok: true, data: await gqlHttp("query { extPing }", {}) });
+          break;
+        case "dreamedia:connectionStatus":
+          sendResponse({ ok: true, data: connectionState });
           break;
         case "dreamedia:subscribe": {
           const body = msg.body;
