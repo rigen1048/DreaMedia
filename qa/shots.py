@@ -1,7 +1,7 @@
 """Capture the docs screenshots from a running stack.
 
     python3 qa/shots.py            # writes into qa/shots/
-    DREAMEDIA_URL=http://host:3000 python3 qa/shots.py
+    DREAMEDIA_URL=http://host:8124 python3 qa/shots.py
 
 The stack must already be seeded (`python -m scripts.seed_demo` in the backend
 container) so the demo login `demo` / `demo1234` has data to show.
@@ -13,7 +13,7 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 
-BASE = os.environ.get("DREAMEDIA_URL", "http://127.0.0.1:3000").rstrip("/")
+BASE = os.environ.get("DREAMEDIA_URL", "http://127.0.0.1:8124").rstrip("/")
 OUT = Path(__file__).resolve().parent / "shots"
 
 

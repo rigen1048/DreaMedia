@@ -10,8 +10,8 @@ bell renders it and can mark it read.
 
 Usage (stack already running via start.py):
 
-    python3 qa/e2e.py                 # http://127.0.0.1:3000
-    DREAMEDIA_URL=http://host:3000 python3 qa/e2e.py
+    python3 qa/e2e.py                 # http://127.0.0.1:8124
+    DREAMEDIA_URL=http://host:8124 python3 qa/e2e.py
 
 Needs `pip install playwright` and a Chromium build (`playwright install
 chromium`, or a system chromium at /usr/bin/chromium).
@@ -28,9 +28,9 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 
-BASE = os.environ.get("DREAMEDIA_URL", "http://127.0.0.1:3000").rstrip("/")
+BASE = os.environ.get("DREAMEDIA_URL", "http://127.0.0.1:8124").rstrip("/")
 # The bridge listens on an internal-only port: only the backend may push.
-BRIDGE = os.environ.get("DREAMEDIA_BRIDGE_URL", "http://127.0.0.1:3100").rstrip("/")
+BRIDGE = os.environ.get("DREAMEDIA_BRIDGE_URL", "http://127.0.0.1:3123").rstrip("/")
 OUT = Path(__file__).resolve().parent / "shots"
 CHECK: list[tuple[str, bool]] = []
 

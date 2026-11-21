@@ -70,15 +70,15 @@ python3 start.py --dev
 ```
 
 `start.py` backs up Postgres (and validates the dump), tears the stack down,
-rebuilds it against a **clean** database and waits until `:3000` actually
+rebuilds it against a **clean** database and waits until `:8124` actually
 answers before printing the URLs — it exits non-zero instead of leaving you
 with a half-started stack. Nothing is ever loaded back automatically: the
 safety dump sits in `backups/` until *you* restore it from **Admin → Restore**
 (backup list → restore, or upload a file). Bell history lives in `./.bridge`
 and survives the wipe.
 
-Open <http://localhost:3000>. Health: app `:3000/health`, bridge
-`:3000/bridge/health` (the receiver has no published port by design).
+Open <http://localhost:8124>. Health: app `:8124/health`, bridge
+`:8124/bridge/health` (the receiver has no published port by design).
 On a fresh database the first screen is **Sign up** — that account becomes
 admin. Signed-in sessions are in memory, so a backend restart asks you to log
 in again.
@@ -106,7 +106,7 @@ anime entries with seasons, events and metadata.
 | --- | --- |
 | `DREAMEDIA_PG_PASSWORD` | required, shared by Compose and the app |
 | `DREAMEDIA_PG_DSN` | optional full DSN override |
-| `DREAMEDIA_PG_HOST` / `_PORT` | database address (compose sets `db`; defaults to `127.0.0.1:5432`) |
+| `DREAMEDIA_PG_HOST` / `_PORT` | database address (compose sets `db`; defaults to `127.0.0.1:5433`) |
 | `ACCESS` | `computer` (localhost) or `wifi` (LAN bind) |
 | `FRONTEND_NOTIFY_URL` | backend → receiver URL (launcher sets it) |
 | `FRONTEND_NOTIFY_TOKEN` | optional shared secret, sent as `X-Dreamedia-Token` |

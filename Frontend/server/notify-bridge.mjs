@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.BRIDGE_PORT || process.env.PORT || 3100);
+const PORT = Number(process.env.BRIDGE_PORT || process.env.PORT || 3123);
 const HOST = process.env.BRIDGE_HOST || "127.0.0.1";
 const TOKEN = process.env.FRONTEND_NOTIFY_TOKEN || "";
 // Fail closed (2026 review): an empty token used to disable auth on the push
@@ -37,7 +37,7 @@ const STORE = resolve(process.env.BRIDGE_STORE || `${HERE}/../.bridge/inbox.json
 const ORIGIN = process.env.BRIDGE_ALLOW_ORIGIN || "*";
 // Reads are authenticated by asking the backend who owns the browser cookie.
 // A guessed ?userId therefore cannot read somebody else's bell.
-const BACKEND_URL = (process.env.BRIDGE_BACKEND_URL || "http://127.0.0.1:8000").replace(/\/+$/, "");
+const BACKEND_URL = (process.env.BRIDGE_BACKEND_URL || "http://127.0.0.1:8123").replace(/\/+$/, "");
 const MAX = Number(process.env.BRIDGE_MAX_MESSAGES || 800);
 
 /** @type {{ messages: any[] }} */

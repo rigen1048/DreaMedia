@@ -21,10 +21,10 @@ function createBackendProxy(target: string): ProxyOptions {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, projectRoot, "");
   const backendTarget =
-    process.env.DREAMEDIA_API_TARGET ?? env.DREAMEDIA_API_TARGET ?? "http://127.0.0.1:8000";
+    process.env.DREAMEDIA_API_TARGET ?? env.DREAMEDIA_API_TARGET ?? "http://127.0.0.1:8123";
   const proxy = createBackendProxy(backendTarget);
   const bridgeTarget =
-    process.env.DREAMEDIA_BRIDGE_TARGET ?? env.DREAMEDIA_BRIDGE_TARGET ?? "http://127.0.0.1:3100";
+    process.env.DREAMEDIA_BRIDGE_TARGET ?? env.DREAMEDIA_BRIDGE_TARGET ?? "http://127.0.0.1:3123";
 
   return {
     plugins: [react(), tailwindcss()],
