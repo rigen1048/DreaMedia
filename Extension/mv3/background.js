@@ -102,9 +102,10 @@ async function refreshDomains() {
 }
 
 async function refreshAll() {
+  // Reassert the live lane first; HTTP refreshes must not delay the socket.
+  void ensureWs();
   await refreshDomains();
   await fetchBlocked();
-  await ensureWs();
 }
 
 chrome.runtime.onStartup?.addListener(() => void refreshAll());
@@ -112,8 +113,10 @@ chrome.runtime.onInstalled?.addListener(() => void refreshAll());
 void refreshAll(); // service-worker wake / persistent background load
 
 chrome.alarms?.create("dreamedia:domains", { periodInMinutes: 30 });
+chrome.alarms?.create("dreamedia:ws-watchdog", { periodInMinutes: 1 });
 chrome.alarms?.onAlarm.addListener((alarm) => {
   if (alarm.name === "dreamedia:domains") void refreshAll();
+  if (alarm.name === "dreamedia:ws-watchdog") void ensureWs();
 });
 
 // ---- live lane (ext v2 phase 2): graphql-transport-ws, HTTP fallback ----
@@ -192,16 +195,23 @@ function wsDead(reason = "Connection closed") {
   void publishConnectionState("disconnected", reason);
   for (const resolve of pendingOps.values()) resolve(false);
   pendingOps.clear();
-  if (!wsRetry) {
-    wsRetry = setTimeout(() => {
-      wsRetry = null;
-      void ensureWs();
-    }, 5000);
-  }
+  scheduleWsRetry();
+}
+
+function scheduleWsRetry() {
+  if (wsRetry) return;
+  wsRetry = setTimeout(() => {
+    wsRetry = null;
+    void ensureWs();
+  }, 1000);
 }
 
 async function ensureWs() {
-  if (ws) return;
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  if (ws) {
+    try { ws.close(); } catch (_e) { /* stale socket */ }
+    ws = null;
+  }
   const { url, token } = await backend();
   if (!token) {
     await publishConnectionState("disconnected", "No extension token");
@@ -213,10 +223,18 @@ async function ensureWs() {
   } catch (error) {
     ws = null;
     await publishConnectionState("disconnected", error.message || "WebSocket unavailable");
+    scheduleWsRetry();
     return;
   }
-  ws.onopen = () => ws.send(JSON.stringify({ type: "connection_init", payload: { token } }));
-  ws.onmessage = (event) => {
+  const socket = ws;
+  socket.onopen = () => {
+    try {
+      socket.send(JSON.stringify({ type: "connection_init", payload: { token } }));
+    } catch (error) {
+      if (ws === socket) wsDead(error.message || "WebSocket initialization failed");
+    }
+  };
+  socket.onmessage = (event) => {
     let msg;
     try {
       msg = JSON.parse(event.data);
@@ -224,11 +242,12 @@ async function ensureWs() {
       return;
     }
     if (msg.type === "connection_ack") {
+      if (ws !== socket) return;
       wsReady = true;
       startWsKeepalive();
       void publishConnectionState("connected");
     } else if (msg.type === "ping") {
-      ws.send(JSON.stringify({ type: "pong" }));
+      try { socket.send(JSON.stringify({ type: "pong" })); } catch (_e) { /* close handler retries */ }
     } else if (msg.type === "next" || msg.type === "complete" || msg.type === "error") {
       const resolve = pendingOps.get(msg.id);
       if (resolve) {
@@ -237,10 +256,14 @@ async function ensureWs() {
       }
     }
   };
-  ws.onclose = () => wsDead();
-  ws.onerror = () => {
+  socket.onclose = () => {
+    if (ws === socket) wsDead();
+  };
+  socket.onerror = () => {
+    if (ws !== socket) return;
     void publishConnectionState("disconnected", "WebSocket error");
-    ws?.close();
+    wsDead("WebSocket error");
+    try { socket.close(); } catch (_e) { /* already closed */ }
   };
 }
 
@@ -324,6 +347,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       switch (msg.type) {
         case "dreamedia:ping":
           sendResponse({ ok: true, data: await gqlHttp("query { extPing }", {}) });
+          void ensureWs();
           break;
         case "dreamedia:connectionStatus":
           sendResponse({ ok: true, data: connectionState });
