@@ -108,17 +108,6 @@ async function refreshAll() {
   await fetchBlocked();
 }
 
-chrome.runtime.onStartup?.addListener(() => void refreshAll());
-chrome.runtime.onInstalled?.addListener(() => void refreshAll());
-void refreshAll(); // service-worker wake / persistent background load
-
-chrome.alarms?.create("dreamedia:domains", { periodInMinutes: 30 });
-chrome.alarms?.create("dreamedia:ws-watchdog", { periodInMinutes: 1 });
-chrome.alarms?.onAlarm.addListener((alarm) => {
-  if (alarm.name === "dreamedia:domains") void refreshAll();
-  if (alarm.name === "dreamedia:ws-watchdog") void ensureWs();
-});
-
 // ---- live lane (ext v2 phase 2): graphql-transport-ws, HTTP fallback ----
 // One socket carries watch progress and owns the extension connection state.
 // The popup is only a view of this background-owned connection. The periodic
@@ -135,6 +124,7 @@ let ws = null;
 let wsReady = false;
 let wsRetry = null;
 let wsKeepalive = null;
+let wsConnectPromise = null;
 let gqlSeq = 0;
 const pendingOps = new Map();
 
@@ -142,7 +132,8 @@ function extensionAction() {
   return chrome.action || chrome.browserAction;
 }
 
-const CONNECTION_FAILURE_GRACE_MS = 2500;
+const CONNECTION_FAILURE_GRACE_MS = 30000;
+const WS_KEEPALIVE_INTERVAL_MS = 20000;
 let connectionFailureTimer = null;
 let pendingConnectionFailureReason = "";
 let connectionState = { status: "idle", reason: "Not configured" };
@@ -188,12 +179,22 @@ async function publishConnectionState(status, reason = "") {
     return;
   }
   if (status === "connecting") {
-    // Keep an established failure visible during retries; don't flash yellow
-    // and red for every short-lived socket attempt.
+    // Keep a previously acknowledged connection green while it transparently
+    // reconnects. A first handshake remains yellow until it is acknowledged.
     if (connectionState.status === "disconnected") return;
+    if (connectionState.status === "connected") {
+      if (!connectionFailureTimer) {
+        pendingConnectionFailureReason = "WebSocket reconnect timed out";
+        connectionFailureTimer = setTimeout(() => {
+          connectionFailureTimer = null;
+          void commitConnectionState("disconnected", pendingConnectionFailureReason);
+        }, CONNECTION_FAILURE_GRACE_MS);
+      }
+      return;
+    }
     await commitConnectionState("connecting");
     if (!connectionFailureTimer) {
-      pendingConnectionFailureReason = "Connection timed out";
+      pendingConnectionFailureReason = "WebSocket handshake timed out";
       connectionFailureTimer = setTimeout(() => {
         connectionFailureTimer = null;
         void commitConnectionState("disconnected", pendingConnectionFailureReason);
@@ -216,13 +217,17 @@ function stopWsKeepalive() {
   }
 }
 
-function startWsKeepalive() {
+function startWsKeepalive(socket) {
   stopWsKeepalive();
   wsKeepalive = setInterval(() => {
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "ping" }));
+    if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+    try {
+      // graphql-transport-ws ping traffic also keeps an MV3 service worker alive.
+      socket.send(JSON.stringify({ type: "ping" }));
+    } catch (error) {
+      if (ws === socket) wsDead(error.message || "WebSocket keepalive failed");
     }
-  }, 20000);
+  }, WS_KEEPALIVE_INTERVAL_MS);
 }
 
 function wsDead(reason = "Connection closed") {
@@ -244,6 +249,21 @@ function scheduleWsRetry() {
 }
 
 async function ensureWs() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  if (wsConnectPromise) return wsConnectPromise;
+  const attempt = connectWs();
+  wsConnectPromise = attempt;
+  try {
+    await attempt;
+  } catch (error) {
+    await publishConnectionState("disconnected", error.message || "WebSocket setup failed");
+    scheduleWsRetry();
+  } finally {
+    if (wsConnectPromise === attempt) wsConnectPromise = null;
+  }
+}
+
+async function connectWs() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   if (ws) {
     try { ws.close(); } catch (_e) { /* stale socket */ }
@@ -280,8 +300,12 @@ async function ensureWs() {
     }
     if (msg.type === "connection_ack") {
       if (ws !== socket) return;
+      if (wsRetry) {
+        clearTimeout(wsRetry);
+        wsRetry = null;
+      }
       wsReady = true;
-      startWsKeepalive();
+      startWsKeepalive(socket);
       void publishConnectionState("connected");
     } else if (msg.type === "ping") {
       try { socket.send(JSON.stringify({ type: "pong" })); } catch (_e) { /* close handler retries */ }
@@ -293,14 +317,16 @@ async function ensureWs() {
       }
     }
   };
-  socket.onclose = () => {
-    if (ws === socket) wsDead();
+  socket.onclose = (event) => {
+    if (ws !== socket) return;
+    const closeDetails = [`WebSocket closed (${event?.code || "unknown"})`];
+    if (event?.reason) closeDetails.push(event.reason);
+    wsDead(closeDetails.join(": "));
   };
   socket.onerror = () => {
     if (ws !== socket) return;
-    void publishConnectionState("disconnected", "WebSocket error");
-    wsDead("WebSocket error");
-    try { socket.close(); } catch (_e) { /* already closed */ }
+    // Let the close event perform one cleanup/retry and retain its close code.
+    try { socket.close(); } catch (_e) { wsDead("WebSocket transport error"); }
   };
 }
 
@@ -487,3 +513,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })();
   return true; // async response
 });
+
+// Register and start background work only after connection state has been
+// initialized; refreshAll invokes ensureWs synchronously up to its first await.
+chrome.runtime.onStartup?.addListener(() => void refreshAll());
+chrome.runtime.onInstalled?.addListener(() => void refreshAll());
+chrome.alarms?.create("dreamedia:domains", { periodInMinutes: 30 });
+chrome.alarms?.create("dreamedia:ws-watchdog", { periodInMinutes: 1 });
+chrome.alarms?.onAlarm.addListener((alarm) => {
+  if (alarm.name === "dreamedia:domains") void refreshAll();
+  if (alarm.name === "dreamedia:ws-watchdog") void ensureWs();
+});
+void refreshAll(); // service-worker wake / persistent background load
