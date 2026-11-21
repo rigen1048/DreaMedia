@@ -9,6 +9,18 @@ export interface ExtDomain {
   enabled: boolean;
 }
 
+export interface ExtLearnedSite {
+  id: number;
+  entryId: number;
+  entryTitle: string | null;
+  domain: string | null;
+  url: string | null;
+  season: number | null;
+  episode: number | null;
+  useCount: number;
+  lastUsedAt: string | null;
+}
+
 export type YtVideo = {
   id: number;
   channelId: number;

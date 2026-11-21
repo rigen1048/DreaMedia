@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Copy, Globe, KeyRound, Trash2 } from "lucide-react";
+import { Copy, Globe, History, KeyRound, Trash2 } from "lucide-react";
 import * as api from "../../app/api";
 import { useApp } from "../../app/state";
-import type { ExtDomain } from "../../lib/types";
+import type { ExtDomain, ExtLearnedSite } from "../../lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,12 +10,14 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-/** Extension management: personal token (D55) + the sites allowlist that
- * scopes where the extension runs at all (ext v2 phase 1). */
+/** Extension management: personal token (D55), the sites allowlist that
+ * scopes where the extension runs at all (ext v2 phase 1), and the learned
+ * watch-site map (phase 5). */
 export default function Extension() {
   const { notify, act } = useApp();
   const [token, setToken] = useState<string | null>(null);
   const [domains, setDomains] = useState<ExtDomain[]>([]);
+  const [learned, setLearned] = useState<ExtLearnedSite[]>([]);
   const [newDomain, setNewDomain] = useState("");
   const [newMedia, setNewMedia] = useState<"ani" | "yt">("ani");
 
@@ -26,8 +28,16 @@ export default function Extension() {
       // vault locked or offline — leave the list empty; actions will surface errors
     }
   };
+  const loadLearned = async () => {
+    try {
+      setLearned((await api.extLearnedSites()).extLearnedSites);
+    } catch {
+      // same vault story as the allowlist
+    }
+  };
   useEffect(() => {
     void loadDomains();
+    void loadLearned();
   }, []);
 
   const issueToken = async () => {
@@ -132,30 +142,87 @@ export default function Extension() {
               No sites yet — the extension does nothing until you add one.
             </p>
           ) : (
+            <div className="space-y-4">
+              {([["ani", "Anime sites"], ["yt", "YouTube sites"]] as const).map(([media, title]) => {
+                const items = domains.filter((d) => d.media === media);
+                if (items.length === 0) return null;
+                return (
+                  <div key={media} className="space-y-2">
+                    <span className="text-xs font-medium text-muted-foreground">{title}</span>
+                    <ul className="space-y-2">
+                      {items.map((d) => (
+                        <li key={d.id} className="flex items-center gap-2 text-sm">
+                          <Switch
+                            checked={d.enabled}
+                            aria-label={`Enable ${d.domain ?? "site"}`}
+                            onCheckedChange={(checked) =>
+                              void act(async () => {
+                                await api.extSetDomainEnabled(d.id, checked);
+                                await loadDomains();
+                              }, checked ? "Site enabled" : "Site disabled")
+                            }
+                          />
+                          <span className="flex-1 truncate font-mono text-xs">{d.domain ?? "…"}</span>
+                          <Badge variant="secondary">{d.media === "ani" ? "Anime" : "YouTube"}</Badge>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label={`Remove ${d.domain ?? "site"}`}
+                            onClick={() =>
+                              void act(async () => {
+                                await api.extRemoveDomain(d.id);
+                                await loadDomains();
+                              }, "Site removed")
+                            }
+                          >
+                            <Trash2 size={13} />
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm"><History size={14} /> Learned watch sites</CardTitle>
+          <CardDescription>
+            Built passively: when the extension recognizes an anime on a page, it remembers the
+            site, so an episode-released notification can open the right place directly.
+            Delete rows you do not want used — they relearn on your next visit.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {learned.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Nothing learned yet — bind or let the extension recognize an anime page first.
+            </p>
+          ) : (
             <ul className="space-y-2">
-              {domains.map((d) => (
-                <li key={d.id} className="flex items-center gap-2 text-sm">
-                  <Switch
-                    checked={d.enabled}
-                    aria-label={`Enable ${d.domain ?? "site"}`}
-                    onCheckedChange={(checked) =>
-                      void act(async () => {
-                        await api.extSetDomainEnabled(d.id, checked);
-                        await loadDomains();
-                      }, checked ? "Site enabled" : "Site disabled")
-                    }
-                  />
-                  <span className="flex-1 truncate font-mono text-xs">{d.domain ?? "…"}</span>
-                  <Badge variant="secondary">{d.media === "ani" ? "Anime" : "YouTube"}</Badge>
+              {learned.map((site) => (
+                <li key={site.id} className="flex items-center gap-2 text-sm">
+                  <span className="w-40 truncate font-medium">{site.entryTitle ?? "?"}</span>
+                  <Badge variant="secondary">{site.domain ?? "?"}</Badge>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={site.url ?? ""}>
+                    {site.url ?? ""}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {site.season ? `S${site.season}` : ""}{site.episode ? ` E${site.episode}` : ""} · ×{site.useCount}
+                  </span>
                   <Button
                     size="sm"
                     variant="ghost"
-                    aria-label={`Remove ${d.domain ?? "site"}`}
+                    aria-label={`Forget ${site.domain ?? "site"} for ${site.entryTitle ?? "entry"}`}
                     onClick={() =>
                       void act(async () => {
-                        await api.extRemoveDomain(d.id);
-                        await loadDomains();
-                      }, "Site removed")
+                        await api.extDeleteLearnedSite(site.id);
+                        await loadLearned();
+                      }, "Learned site forgotten")
                     }
                   >
                     <Trash2 size={13} />

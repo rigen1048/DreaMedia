@@ -8,7 +8,7 @@ from returns.result import Failure
 from strawberry.types import Info
 
 from Database import csvio, portable
-from Extension import tokens
+from Extension import sites, tokens
 from Extension.store import ExtDomainStore
 from Graphql.children import _uid, _unwrap
 
@@ -21,6 +21,19 @@ class ExtDomain:
     domain: Optional[str]
     media: str
     enabled: bool
+
+
+@strawberry.type
+class ExtLearnedSite:
+    id: int
+    entry_id: int
+    entry_title: Optional[str]
+    domain: Optional[str]
+    url: Optional[str]
+    season: Optional[int]
+    episode: Optional[int]
+    use_count: int
+    last_used_at: Optional[str]
 
 
 @strawberry.type
@@ -38,6 +51,13 @@ class AccountQuery:
         extension's content scripts)."""
         rows = await _domains.list_domains(await _uid(info))
         return [ExtDomain(**r) for r in rows]
+
+    @strawberry.field
+    async def ext_learned_sites(self, info: Info) -> List[ExtLearnedSite]:
+        """Phase 5 learned map: which site serves which anime, manageable
+        from the Extension page."""
+        rows = _unwrap(await sites.list_watch_sites(await _uid(info)))
+        return [ExtLearnedSite(**r) for r in rows]
 
     @strawberry.field
     async def export_csv(self, info: Info, media: str) -> str:
@@ -108,4 +128,9 @@ class AccountMutation:
     @strawberry.field
     async def ext_remove_domain(self, info: Info, domain_id: int) -> bool:
         _unwrap(await _domains.remove_domain(await _uid(info), domain_id))
+        return True
+
+    @strawberry.field
+    async def ext_delete_learned_site(self, info: Info, site_id: int) -> bool:
+        _unwrap(await sites.delete_watch_site(await _uid(info), site_id))
         return True
