@@ -13,18 +13,6 @@ async function backend() {
   return { url: (r.backendUrl || DEFAULT_BACKEND).replace(/\/$/, ""), token: r.token || "" };
 }
 
-async function gqlHttp(query, variables) {
-  const { url, token } = await backend();
-  const resp = await fetch(`${url}/ext/graphql`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-DreaMedia-Token": token },
-    body: JSON.stringify({ query, variables }),
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok || data.errors) throw new Error(data.errors?.[0]?.message || `HTTP ${resp.status}`);
-  return data.data;
-}
-
 function normalizeDomain(raw) {
   const value = String(raw || "").trim();
   if (!value) return "";
@@ -48,21 +36,6 @@ function domainHostPatterns(raw) {
   return [`http://${matchHost}/*`, `https://${matchHost}/*`];
 }
 
-function exactOriginPattern(raw) {
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return [];
-    return [`${url.protocol}//${url.hostname}/*`];
-  } catch (_e) {
-    return [];
-  }
-}
-
-async function originGranted(origins) {
-  if (!origins.length || !chrome.permissions?.contains) return false;
-  try { return await chrome.permissions.contains({ origins }); } catch (_e) { return false; }
-}
-
 // ---- domain allowlist: fetch, cache, register ----
 
 async function cachedDomains() {
@@ -71,29 +44,13 @@ async function cachedDomains() {
 
 async function fetchDomains() {
   try {
-    const data = await gqlHttp("query { domains { id domain media enabled } }", {});
+    const data = await gqlWs("query { domains { id domain media enabled } }", {});
     await chrome.storage.local.set({ domains: data.domains || [] });
   } catch (_e) {
     // vault locked, no token yet, or backend offline: keep the last cached
     // copy — registration keeps working, possibly stale.
   }
   return cachedDomains();
-}
-
-async function pruneUnusedHostPermissions(domains) {
-  if (!chrome.permissions?.getAll || !chrome.permissions?.remove) return;
-  const required = new Set();
-  const { url: activeBackend } = await backend();
-  for (const origin of exactOriginPattern(activeBackend)) required.add(origin);
-  for (const domain of domains) {
-    if (!domain.domain || !domain.enabled) continue;
-    for (const origin of domainHostPatterns(domain.domain)) required.add(origin);
-  }
-  const granted = await chrome.permissions.getAll();
-  const stale = (granted.origins || []).filter(
-    (origin) => /^(https?):\/\//i.test(origin) && !required.has(origin),
-  );
-  if (stale.length) await chrome.permissions.remove({ origins: stale });
 }
 
 // MV2 (Firefox) registration handles live in memory (persistent background).
@@ -106,7 +63,7 @@ async function registerDomains(domains) {
     const js = MEDIA_JS[d.media];
     if (!js) continue;
     const matches = domainHostPatterns(d.domain);
-    if (!matches.length || !(await originGranted(matches))) continue;
+    if (!matches.length) continue;
     wanted.push({
       id: `${d.media}-${d.domain}`,
       matches,
@@ -146,23 +103,21 @@ async function refreshDomains() {
   try {
     const domains = await fetchDomains();
     await registerDomains(domains);
-    await pruneUnusedHostPermissions(domains);
   } catch (e) {
     console.debug("[DreaMedia] domain refresh failed", e);
   }
 }
 
 async function refreshAll() {
-  // Reassert the live lane first; HTTP refreshes must not delay the socket.
+  // Start the shared GraphQL socket before refreshing its cached data.
   void ensureWs();
   await refreshDomains();
   await fetchBlocked();
 }
 
-// ---- live lane (ext v2 phase 2): graphql-transport-ws, HTTP fallback ----
-// One socket carries watch progress and owns the extension connection state.
-// Green requires a token-authenticated extPing after the protocol ack. The
-// periodic transport ping keeps an idle MV3 service worker with a socket alive.
+// ---- single backend lane: authenticated graphql-transport-ws ----
+// All extension GraphQL reads and writes use this one socket. The token is
+// sent once in connection_init; extPing validates it before the socket is ready.
 
 const M_PROGRESS = `mutation LiveProgress($entryId: Int!, $season: Int!, $episode: Int!, $positionSeconds: Int!, $eventTimeMs: String) {
   liveProgress(entryId: $entryId, season: $season, episode: $episode, positionSeconds: $positionSeconds, eventTimeMs: $eventTimeMs)
@@ -172,17 +127,79 @@ const M_END = `mutation LiveEnd($entryId: Int!, $season: Int!, $episode: Int!, $
 }`;
 const Q_WS_AUTH_PROBE = "query { extPing }";
 const WS_HANDSHAKE_TIMEOUT_MS = 15000;
+const WS_PONG_TIMEOUT_MS = 10000;
+const WS_OPERATION_TIMEOUT_MS = 120000;
 
 let ws = null;
 let wsReady = false;
 let wsRetry = null;
 let wsKeepalive = null;
+let wsPongTimer = null;
+let wsPendingPong = null;
+let wsPingSentAt = 0;
+let wsLastPongAt = 0;
 let wsHandshakeTimer = null;
 let wsAuthProbeId = null;
 let wsConnectPromise = null;
 let wsGeneration = 0;
 let gqlSeq = 0;
 const pendingOps = new Map();
+const wsReadyWaiters = new Set();
+
+function wsTransportResponsive() {
+  const heartbeatFresh = wsPendingPong
+    ? Date.now() - wsPingSentAt <= WS_PONG_TIMEOUT_MS
+    : Date.now() - wsLastPongAt <= WS_KEEPALIVE_INTERVAL_MS + WS_PONG_TIMEOUT_MS;
+  return wsReady && ws?.readyState === WebSocket.OPEN && heartbeatFresh;
+}
+
+async function waitForWsReady(timeoutMs = 30000) {
+  if (wsTransportResponsive()) return Promise.resolve();
+  if (wsReady) wsDead("WebSocket is not responsive");
+  if (!(await backend()).token) throw new Error("Extension token is not configured");
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      wsReadyWaiters.delete(onReady);
+      reject(new Error("Authenticated WebSocket is unavailable"));
+    }, timeoutMs);
+    const onReady = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      wsReadyWaiters.delete(onReady);
+      if (error) reject(error);
+      else resolve();
+    };
+    wsReadyWaiters.add(onReady);
+    void ensureWs();
+  });
+}
+
+async function gqlWs(query, variables = {}) {
+  await waitForWsReady();
+  return new Promise((resolve, reject) => {
+    const id = String(++gqlSeq);
+    const timer = setTimeout(() => {
+      const pending = pendingOps.get(id);
+      if (!pending) return;
+      pendingOps.delete(id);
+      try { ws?.send(JSON.stringify({ id, type: "complete" })); } catch (_e) { /* socket is closing */ }
+      reject(new Error("WebSocket GraphQL operation timed out"));
+    }, WS_OPERATION_TIMEOUT_MS);
+    pendingOps.set(id, { resolve, reject, timer });
+    try {
+      ws.send(JSON.stringify({ id, type: "subscribe", payload: { query, variables } }));
+    } catch (error) {
+      clearTimeout(timer);
+      pendingOps.delete(id);
+      reject(error);
+      if (ws) wsDead(error.message || "WebSocket operation send failed");
+    }
+  });
+}
 
 function extensionAction() {
   return chrome.action || chrome.browserAction;
@@ -232,23 +249,13 @@ async function publishConnectionState(status, reason = "") {
         void commitConnectionState("disconnected", pendingConnectionFailureReason);
       }, CONNECTION_FAILURE_GRACE_MS);
     }
+    if (connectionState.status !== "connecting" || connectionState.reason !== "Reconnecting") {
+      await commitConnectionState("connecting", "Reconnecting");
+    }
     return;
   }
   if (status === "connecting") {
-    // Keep a previously authenticated connection green while it reconnects.
-    // A new handshake remains yellow until the token probe succeeds.
-    if (connectionState.status === "disconnected") return;
-    if (connectionState.status === "connected") {
-      if (!connectionFailureTimer) {
-        pendingConnectionFailureReason = "WebSocket reconnect timed out";
-        connectionFailureTimer = setTimeout(() => {
-          connectionFailureTimer = null;
-          void commitConnectionState("disconnected", pendingConnectionFailureReason);
-        }, CONNECTION_FAILURE_GRACE_MS);
-      }
-      return;
-    }
-    await commitConnectionState("connecting");
+    await commitConnectionState("connecting", connectionFailureTimer ? "Reconnecting" : reason);
     if (!connectionFailureTimer) {
       pendingConnectionFailureReason = "WebSocket handshake timed out";
       connectionFailureTimer = setTimeout(() => {
@@ -271,6 +278,12 @@ function stopWsKeepalive() {
     clearInterval(wsKeepalive);
     wsKeepalive = null;
   }
+  if (wsPongTimer) {
+    clearTimeout(wsPongTimer);
+    wsPongTimer = null;
+  }
+  wsPendingPong = null;
+  wsPingSentAt = 0;
 }
 
 function clearWsHandshakeTimer() {
@@ -282,26 +295,45 @@ function clearWsHandshakeTimer() {
 
 function startWsKeepalive(socket) {
   stopWsKeepalive();
-  wsKeepalive = setInterval(() => {
+  const sendPing = () => {
     if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+    wsPendingPong = true;
+    wsPingSentAt = Date.now();
     try {
-      // graphql-transport-ws ping traffic also keeps an MV3 service worker alive.
+      // A matching pong proves the transport is alive and keeps MV3 active.
       socket.send(JSON.stringify({ type: "ping" }));
     } catch (error) {
       if (ws === socket) wsDead(error.message || "WebSocket keepalive failed");
+      return;
     }
-  }, WS_KEEPALIVE_INTERVAL_MS);
+    wsPongTimer = setTimeout(() => {
+      if (ws !== socket || !wsPendingPong) return;
+      wsPongTimer = null;
+      const reason = "WebSocket pong timed out";
+      wsDead(reason);
+      try { socket.close(4000, "DreaMedia heartbeat timeout"); } catch (_e) { /* already closed */ }
+    }, WS_PONG_TIMEOUT_MS);
+  };
+  sendPing();
+  wsKeepalive = setInterval(sendPing, WS_KEEPALIVE_INTERVAL_MS);
 }
 
 function wsDead(reason = "Connection closed") {
+  const deadSocket = ws;
   wsReady = false;
   ws = null;
   wsAuthProbeId = null;
   clearWsHandshakeTimer();
   stopWsKeepalive();
   void publishConnectionState("disconnected", reason);
-  for (const resolve of pendingOps.values()) resolve(false);
+  for (const operation of pendingOps.values()) {
+    clearTimeout(operation.timer);
+    operation.reject(new Error(reason));
+  }
   pendingOps.clear();
+  try {
+    if (deadSocket && deadSocket.readyState < WebSocket.CLOSING) deadSocket.close();
+  } catch (_e) { /* retry below replaces the transport */ }
   scheduleWsRetry();
 }
 
@@ -402,18 +434,30 @@ async function connectWs() {
         if (Object.prototype.hasOwnProperty.call(msg, "payload")) pong.payload = msg.payload;
         socket.send(JSON.stringify(pong));
       } catch (_e) { /* close handler retries */ }
+    } else if (msg.type === "pong") {
+      if (ws === socket && wsPendingPong) {
+        if (wsPongTimer) clearTimeout(wsPongTimer);
+        wsPongTimer = null;
+        wsPendingPong = null;
+        wsPingSentAt = 0;
+        wsLastPongAt = Date.now();
+      }
     } else if (msg.type === "next" || msg.type === "complete" || msg.type === "error") {
       if (msg.id === wsAuthProbeId) {
         if (msg.type !== "next" || msg.payload?.data?.extPing !== true || msg.payload?.errors?.length) {
           const detail = msg.payload?.errors?.[0]?.message;
+          const failureReason = detail || "WebSocket authentication probe failed";
+          for (const onReady of [...wsReadyWaiters]) onReady(new Error(failureReason));
           try {
             if (socket.readyState < WebSocket.CLOSING) socket.close(4401, "Authentication probe failed");
           } catch (_e) { /* force local cleanup below */ }
-          wsDead(detail || "WebSocket authentication probe failed");
+          wsDead(failureReason);
           return;
         }
         wsAuthProbeId = null;
         wsReady = true;
+        wsLastPongAt = Date.now();
+        for (const onReady of [...wsReadyWaiters]) onReady();
         clearWsHandshakeTimer();
         if (wsRetry) {
           clearTimeout(wsRetry);
@@ -422,11 +466,20 @@ async function connectWs() {
         void publishConnectionState("connected");
         return;
       }
-      const resolve = pendingOps.get(msg.id);
-      if (resolve) {
+      const operation = pendingOps.get(msg.id);
+      if (operation && msg.type !== "complete") {
         pendingOps.delete(msg.id);
-        const hasExecutionErrors = msg.type === "next" && msg.payload?.errors?.length > 0;
-        resolve(msg.type !== "error" && !hasExecutionErrors);
+        clearTimeout(operation.timer);
+        if (msg.type === "next" && !msg.payload?.errors?.length) {
+          operation.resolve(msg.payload?.data || {});
+        } else {
+          const error = msg.payload?.errors?.[0]?.message || msg.payload?.[0]?.message || "WebSocket GraphQL operation failed";
+          operation.reject(new Error(error));
+        }
+      } else if (operation && msg.type === "complete") {
+        pendingOps.delete(msg.id);
+        clearTimeout(operation.timer);
+        operation.reject(new Error("WebSocket GraphQL operation completed without a result"));
       }
     }
   };
@@ -448,32 +501,10 @@ async function liveGql(query, p) {
     entryId: p.entry_id, season: p.season, episode: p.episode, positionSeconds: p.position_seconds,
     eventTimeMs: p.event_time_ms == null ? null : String(p.event_time_ms),
   };
-  await ensureWs();
-  if (wsReady && ws?.readyState === WebSocket.OPEN) {
-    return new Promise((resolve) => {
-      const id = String(++gqlSeq);
-      pendingOps.set(id, resolve);
-      try {
-        ws.send(JSON.stringify({ id, type: "subscribe", payload: { query, variables } }));
-      } catch (error) {
-        pendingOps.delete(id);
-        resolve(false);
-        if (ws) wsDead(error.message || "WebSocket operation send failed");
-        return;
-      }
-      setTimeout(() => {
-        const pending = pendingOps.get(id);
-        if (pending) {
-          pendingOps.delete(id);
-          pending(false);
-        }
-      }, 10000);
-    });
-  }
   try {
-    await gqlHttp(query, variables);
-    return true;
-  } catch (_e) {
+    const data = await gqlWs(query, variables);
+    return data.liveProgress === true || data.liveEnd === true;
+  } catch (_error) {
     return false;
   }
 }
@@ -486,7 +517,10 @@ function reconnectAfterConfigurationChange() {
   wsAuthProbeId = null;
   clearWsHandshakeTimer();
   stopWsKeepalive();
-  for (const resolve of pendingOps.values()) resolve(false);
+  for (const operation of pendingOps.values()) {
+    clearTimeout(operation.timer);
+    operation.reject(new Error("WebSocket configuration changed"));
+  }
   pendingOps.clear();
   try {
     if (oldSocket && oldSocket.readyState < WebSocket.CLOSING) {
@@ -509,8 +543,6 @@ chrome.storage.onChanged?.addListener((changes, area) => {
     void refreshDomains();
   }
 });
-chrome.permissions?.onRemoved?.addListener(() => void refreshDomains());
-
 const M_ANCHOR = `mutation Anchor($candidates: [String!]!, $pageUrl: String!) {
   anchorMatch(candidates: $candidates, pageUrl: $pageUrl) {
     entryId season episode cursorSeason cursorEpisode blocked reason
@@ -518,7 +550,7 @@ const M_ANCHOR = `mutation Anchor($candidates: [String!]!, $pageUrl: String!) {
 }`;
 
 async function anchorBind(tabId, candidates, pageUrl) {
-  const data = await gqlHttp(M_ANCHOR, { candidates, pageUrl });
+  const data = await gqlWs(M_ANCHOR, { candidates, pageUrl });
   const match = data?.anchorMatch;
   if (!match?.entryId || !tabId) return false;
   // Phase 4: a blocked entry shows the disclaimer instead of binding.
@@ -548,7 +580,7 @@ async function cachedBlocked() {
 
 async function fetchBlocked() {
   try {
-    const data = await gqlHttp(Q_BLOCKED, {});
+    const data = await gqlWs(Q_BLOCKED, {});
     await chrome.storage.local.set({ blockedYt: data.blockedList || [] });
   } catch (_e) {
     // vault locked / backend offline: keep the cached copy (stale beats none)
@@ -584,17 +616,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       switch (msg.type) {
-        case "dreamedia:ping":
-          void ensureWs();
-          sendResponse({ ok: true, data: await gqlHttp("query { extPing }", {}) });
-          break;
         case "dreamedia:connectionStatus":
+          if (connectionState.status === "connected") {
+            if (!wsTransportResponsive()) {
+              wsDead("WebSocket is not responsive");
+              sendResponse({ ok: true, data: { status: "connecting", reason: "Reconnecting" } });
+              break;
+            }
+          }
           sendResponse({ ok: true, data: connectionState });
           void ensureWs();
           break;
+        case "dreamedia:connect":
+          await waitForWsReady();
+          sendResponse({ ok: true, data: connectionState });
+          break;
         case "dreamedia:subscribe": {
           const body = msg.body;
-          const data = await gqlHttp(
+          const data = await gqlWs(
             `mutation Subscribe($link: String!, $kind: String!, $words: [String!], $rank: String, $withhold: Int, $domain: String, $subdomain: String) {
               subscribe(link: $link, kind: $kind, words: $words, rank: $rank, withhold: $withhold, domain: $domain, subdomain: $subdomain) { ok channelId }
             }`,
@@ -617,7 +656,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case "dreamedia:importYoutubeSubscriptions": {
-          const data = await gqlHttp(
+          const data = await gqlWs(
             `mutation ImportYouTubeChannels($links: [String!]!, $kind: String!, $words: [String!], $rank: String, $withhold: Int, $domain: String, $subdomain: String) {
               importYoutubeChannels(links: $links, kind: $kind, words: $words, rank: $rank, withhold: $withhold, domain: $domain, subdomain: $subdomain) { added skipped requested errors }
             }`,
@@ -635,12 +674,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case "dreamedia:cards":
-          sendResponse({ ok: true, data: { cards: (await gqlHttp("query { cards { id name done total } }", {})).cards } });
+          sendResponse({ ok: true, data: { cards: (await gqlWs("query { cards { id name done total } }", {})).cards } });
           break;
         case "dreamedia:addItem":
           sendResponse({
             ok: true,
-            data: (await gqlHttp(
+            data: (await gqlWs(
               `mutation AddItems($cardId: Int!, $links: [String!]!) {
                 addCardItems(cardId: $cardId, links: $links) { added requested errors }
               }`,
@@ -652,7 +691,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({
             ok: true,
             data: {
-              entries: (await gqlHttp(
+              entries: (await gqlWs(
                 "query { aniEntries { id title seasons cursorSeason cursorEpisode } }", {},
               )).aniEntries,
             },
@@ -662,7 +701,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({
             ok: true,
             data: {
-              categories: (await gqlHttp(
+              categories: (await gqlWs(
                 "query { ytCategories { id name subdomains { id name } } }", {},
               )).ytCategories,
             },
@@ -682,14 +721,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const hit = (await cachedDomains()).find(
             (d) => host === d.domain || host.endsWith(`.${d.domain}`),
           );
-          const permissionGranted = hit
-            ? await originGranted(domainHostPatterns(hit.domain))
-            : false;
-          sendResponse({ ok: true, host, registered: hit || null, permissionGranted });
+          sendResponse({ ok: true, host, registered: hit || null });
           break;
         }
         case "dreamedia:addDomain": {
-          const data = await gqlHttp(
+          const data = await gqlWs(
             `mutation AddDomain($domain: String!, $media: String!) {
               addDomain(domain: $domain, media: $media) { id domain media enabled }
             }`,

@@ -21,29 +21,6 @@ async function currentTab() {
   return tab;
 }
 
-function sitePermissionOrigins(raw) {
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return [];
-    const host = url.hostname.toLowerCase().replace(/^www\./, "");
-    const isIp = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(":");
-    const matchHost = isIp || host === "localhost" ? host : `*.${host}`;
-    return [`http://${matchHost}/*`, `https://${matchHost}/*`];
-  } catch (_e) {
-    return [];
-  }
-}
-
-function backendPermissionOrigins(raw) {
-  try {
-    const url = new URL(raw.trim());
-    if (url.protocol !== "http:" && url.protocol !== "https:") return [];
-    return [`${url.protocol}//${url.hostname}/*`];
-  } catch (_e) {
-    return [];
-  }
-}
-
 function setConnection(state, text) {
   $("connection").dataset.state = state;
   $("connectionText").textContent = text;
@@ -52,12 +29,13 @@ function setConnection(state, text) {
 function applyConnectionState(data) {
   const labels = {
     idle: ["idle", "Not connected"],
-    connected: ["ok", "Connected"],
-    connecting: ["loading", "Connecting…"],
-    disconnected: ["err", data.reason ? `Disconnected: ${data.reason}` : "Disconnected"],
+    connected: ["ok", "Connected (WebSocket)"],
+    connecting: ["loading", data.reason === "Reconnecting" ? "Reconnecting…" : "Connecting…"],
+    disconnected: ["err", "Disconnected"],
   };
   const [state, text] = labels[data.status] || labels.disconnected;
   setConnection(state, text);
+  $("connection").title = data.reason || "";
 }
 
 async function syncConnectionStatus() {
@@ -87,7 +65,6 @@ const tabs = [...document.querySelectorAll('[role="tab"]')];
 let chooseInitialTab = true;
 let page = { kind: "none", playlist: false, subscriptionChannels: false };
 let currentUrl = "";
-let currentSiteRecord = null;
 
 function describePage(raw) {
   try {
@@ -167,24 +144,23 @@ async function loadConfiguration() {
 
 action("saveConfig", "configStatus", async () => {
   const backendUrl = $("backendUrl").value.trim();
-  const origins = backendPermissionOrigins(backendUrl);
-  if (!origins.length) throw new Error("Enter a valid HTTP or HTTPS backend URL.");
-  status("configStatus", "Requesting access to the backend…");
-  const granted = await chrome.permissions.request({ origins });
-  if (!granted) throw new Error("Backend access was not granted.");
-  await chrome.storage.local.set({ backendUrl, token: $("token").value.trim() });
-  status("configStatus", "Checking connection…");
-  const r = await send("dreamedia:ping");
-  status("configStatus", r.ok ? "Backend verified over HTTP" : `Connection failed: ${r.error}`, r.ok ? "ok" : "err");
-  await syncConnectionStatus();
-  if (r.ok) {
-    const refreshed = await send("dreamedia:refreshDomains");
-    if (!refreshed.ok) throw new Error(refreshed.error || "Background refresh failed");
-    await loadLists(true, false);
-    await checkSite();
-    await syncConnectionStatus();
-    showSettings(false);
+  let parsedBackendUrl;
+  try { parsedBackendUrl = new URL(backendUrl); } catch (_e) { throw new Error("Enter a valid HTTP or HTTPS backend URL."); }
+  if (parsedBackendUrl.protocol !== "http:" && parsedBackendUrl.protocol !== "https:") {
+    throw new Error("Enter a valid HTTP or HTTPS backend URL.");
   }
+  await chrome.storage.local.set({ backendUrl, token: $("token").value.trim() });
+  status("configStatus", "Connecting by WebSocket…");
+  const connection = await send("dreamedia:connect");
+  if (!connection.ok) throw new Error(connection.error || "WebSocket authentication failed.");
+  applyConnectionState(connection.data);
+  status("configStatus", "WebSocket connected.", "ok");
+  const refreshed = await send("dreamedia:refreshDomains");
+  if (!refreshed.ok) throw new Error(refreshed.error || "Background refresh failed");
+  await loadLists(true, false);
+  await checkSite();
+  await syncConnectionStatus();
+  showSettings(false);
 });
 
 // ---- this site (ext v2: domain allowlist) ----
@@ -193,21 +169,17 @@ async function checkSite() {
   const badge = $("siteBadge");
   if (!tab?.url || !/^https?:/.test(tab.url)) {
     currentUrl = "";
-    currentSiteRecord = null;
     $("siteHost").textContent = "No web page open";
     $("siteEnable").hidden = true;
-    $("ytImport").hidden = true;
     badge.hidden = true;
     showSubscriptionFields();
     return;
   }
   currentUrl = tab.url;
   page = describePage(tab.url);
-  $("ytImport").hidden = !page.subscriptionChannels;
   const r = await send("dreamedia:domainStatus", { url: tab.url });
   const host = r.host || new URL(tab.url).hostname;
   $("siteHost").textContent = host;
-  currentSiteRecord = r.registered || null;
   const videoSite = r.registered?.media === "yt" || ["youtube", "video", "channel"].includes(page.kind);
   $("siteIcon").querySelector("use").setAttribute("href", videoSite ? "#video" : "#globe");
   if (chooseInitialTab) {
@@ -217,9 +189,6 @@ async function checkSite() {
     selectTab($(initialTab));
     if (initialTab === "subscribeTab" && page.kind === "youtube" && page.playlist) $("kind").value = "playlist";
   }
-  $("playlistHint").textContent = page.kind === "video"
-    ? "Save this video to a custom playlist in Todo."
-    : "Open a YouTube video to save it to a custom playlist in Todo.";
   showSubscriptionFields();
   if (!r.ok) {
     badge.hidden = true;
@@ -229,38 +198,21 @@ async function checkSite() {
   }
   const listed = Boolean(r.registered);
   const enabled = listed && r.registered.enabled !== false;
-  const grantNeeded = enabled && !r.permissionGranted;
   badge.hidden = false;
   badge.textContent = enabled ? "Enabled" : listed ? "Paused" : "Not enabled";
   badge.classList.toggle("enabled", enabled);
   const media = r.registered?.media === "ani" ? "Anime" : "YouTube";
   badge.title = listed ? `${media} · ${enabled ? "Enabled" : "Paused in DreaMedia"}` : "";
-  $("siteEnable").hidden = listed ? !grantNeeded : false;
+  $("siteEnable").hidden = listed;
   $("siteMediaWrap").hidden = listed;
-  $("enableSite").textContent = grantNeeded ? "Grant access" : "Enable site";
-  if (grantNeeded) status("siteStatus", "This enabled site needs permission before DreaMedia can run on it.");
-  else if (listed && !enabled) status("siteStatus", "Resume this site in DreaMedia → Ext → Sites.");
+  $("enableSite").textContent = "Enable site";
+  if (listed && !enabled) status("siteStatus", "Resume this site in DreaMedia → Ext → Sites.");
   else if ($("siteStatus").classList.contains("err")) status("siteStatus", "");
-  $("trackHint").textContent = enabled && r.registered.media === "ani"
-    ? "Manually link this tab to an anime you already track."
-    : "This site must be enabled as Anime for playback to sync.";
 }
 
 action("enableSite", "siteStatus", async () => {
   const pageUrl = currentUrl;
   if (!pageUrl) return status("siteStatus", "Open a web page first", "err");
-  const origins = sitePermissionOrigins(pageUrl);
-  if (!origins.length) return status("siteStatus", "This page has no HTTP or HTTPS site permission pattern.", "err");
-  status("siteStatus", "Requesting access to this site…");
-  const granted = await chrome.permissions.request({ origins });
-  if (!granted) return status("siteStatus", "Site access was not granted.", "err");
-  if (currentSiteRecord?.enabled !== false && currentSiteRecord) {
-    const refreshed = await send("dreamedia:refreshDomains");
-    if (!refreshed.ok) throw new Error(refreshed.error || "Could not activate this site.");
-    status("siteStatus", "Access granted. Reload the tab to activate DreaMedia.", "ok");
-    await checkSite();
-    return;
-  }
   status("siteStatus", "Adding site to DreaMedia…");
   const r = await send("dreamedia:addDomain", {
     domain: pageUrl,
@@ -283,9 +235,6 @@ function showSubscriptionFields() {
   $("wordsField").hidden = kind !== "wordscan";
   $("rankField").hidden = kind !== "random";
   $("withholdField").hidden = kind !== "withhold";
-  $("sourceHint").textContent = kind === "playlist"
-    ? (page.playlist ? "Follow new items in the YouTube playlist linked to this page." : "Open a YouTube playlist or a video within that playlist.")
-    : (page.kind === "channel" ? "Follow this channel in your DreaMedia feed." : "Open a YouTube channel page for this notification type.");
 }
 $("kind").addEventListener("change", showSubscriptionFields);
 showSubscriptionFields();

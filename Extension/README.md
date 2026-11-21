@@ -29,9 +29,10 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
    - **Firefox**: `about:debugging#/runtime/this-firefox` →
      "Load Temporary Add-on" → pick `mv2/manifest.json`.
 3. Open the popup’s **Connection settings** (gear icon). Enter your backend
-   URL (`http://127.0.0.1:8123` by default) and token, then select **Save & ping**.
-   The extension asks for access to only that backend host. **Enable site** asks
-   separately for the selected site’s HTTP/HTTPS host access.
+   URL (`http://127.0.0.1:8123` by default) and token, then select **Save & connect**.
+   The footer reports the authenticated WebSocket connection state.
+   The browser asks once for HTTP/HTTPS access to all sites at installation;
+   the extension registers tracking scripts only on domains enabled in DreaMedia.
 
 ## Popup
 
@@ -44,9 +45,9 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
 - **Categories** are optional. Existing YouTube domains and their own
   subdomains are suggested from DreaMedia; choose both names or neither.
   Entering a new domain/subdomain pair creates it when the source is added.
-- **Import subscriptions** is available on YouTube’s channel subscriptions
-  page. Choose a notification mode and optional category first; the batch
-  applies them only to channels not already in DreaMedia.
+- **Import YouTube subscriptions** is visible in the **Source** tab. Open
+  YouTube’s channel subscriptions page to scan, preview, and explicitly import
+  channels not already in DreaMedia.
 - **Save video** adds the active YouTube video to a custom playlist in Todo.
 - **Bind anime** lets you manually link the tab to a tracked anime and set the
   season and episode. It does not replace automatic matching on enabled sites.
@@ -66,9 +67,11 @@ for the original AGPL-3.0 license.
 - After editing `shared/`, run `python3 setup.py --build-extensions-only` to
   synchronize both packages without starting or resetting the DreaMedia stack.
 
-The background worker/page is the only network lane: content and popup scripts
-message it, it calls `http://<backend>/ext/graphql` over HTTP with
-`X-DreaMedia-Token`, and sends live progress over the same route using the
-`graphql-transport-ws` subprotocol. The 20-second client ping keeps an idle
-service worker active; the popup shows green only after the socket's authenticated
-`extPing` query succeeds.
+The background worker is the only backend network lane: content and popup
+scripts message it, and all GraphQL queries and mutations use one persistent
+`graphql-transport-ws` connection to `/ext/graphql`. The extension sends its
+token once in `connection_init`; the backend validates it for the socket and
+reuses that identity until the connection closes. The worker sends a ping every
+20 seconds and requires the server's pong within 10 seconds. The popup shows green
+only for an authenticated, responsive socket; it shows yellow while reconnecting
+and red only after a 30-second outage.

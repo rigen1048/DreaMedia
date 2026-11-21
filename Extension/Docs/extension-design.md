@@ -34,12 +34,12 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
   single "Enable DreaMedia on this site" button + media type. A DreaMedia
   page (Management/Settings section) lists domains with toggle/remove.
   Both write the same table.
-- HTTP/HTTPS host origins are optional, not install-time permissions. The
-  popup requests the backend origin when saving connection settings and a
-  site's origins when the user enables that site. Registration is limited to
-  enabled domains for which permission is currently granted. The one-shot
-  YouTube import uses the action's `activeTab` grant instead of persistent
-  access to YouTube.
+- HTTP/HTTPS host access is declared once at installation so adding a domain
+  does not trigger another Chrome prompt. This is a broad browser permission;
+  the browser may warn that the extension can access all sites. The background
+  still registers content scripts only for domains enabled in DreaMedia, so
+  the DreaMedia allowlist remains the script-execution gate. YouTube import is
+  still an explicit, user-triggered scan of the active subscriptions tab.
 - We never prescribe which sites to use — the user teaches the extension
   their sites once, per site.
 
@@ -95,20 +95,23 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
   queries/mutations, token auth, small stable contract. Keeps the v1
   guarantee ("the extension is released software that can't ride our
   internal refactors") while giving one lane for logging, tracing, and
-  debuggability.
+  debuggability. The extension uses only the WebSocket transport; HTTP header
+  authentication is not accepted.
 - The REST `/ext` router stays until the new extension ships, then is
   deleted. Token system (`Extension/tokens.py`, `dm_` + sha256) is
   unchanged.
 
 ## 7) Websocket + live-session table (crash-safe progress)
 
-- The live-update websocket uses Strawberry's `graphql-transport-ws`
-  subprotocol. After the protocol acknowledgement, the extension executes
-  token-authenticated `extPing`; only a successful result counts as connected.
-- Popup and configuration actions use HTTP GraphQL at the same `/ext/graphql`
-  endpoint; the websocket carries live progress and end-session mutations.
+- The extension uses Strawberry's `graphql-transport-ws` subprotocol for all
+  GraphQL queries and mutations. After protocol acknowledgement it runs a
+  token-authenticated `extPing`; only success marks the connection ready.
+- The token is sent once in `connection_init`; the backend validates it and
+  reuses the authenticated user identity for operations on that connection.
 - A client `ping` is sent every 20 seconds to keep an idle MV3 service worker
-  active, and server `ping` payloads are mirrored in the corresponding `pong`.
+  active; the server's `pong` is required within 10 seconds.
+  Socket loss switches the UI to reconnecting immediately; red is delayed for
+  a 30-second outage grace period.
 - New table `ext_live_sessions`: `user_id, entry_id, season, episode,
   position_seconds, updated_at` — one row per active watch.
   - While watching: the extension upserts every few seconds.
@@ -140,8 +143,8 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
   scrolls to let lazy-loaded rows appear, deduplicates them, and returns a
   count plus a short preview to the popup.
 - The popup keeps the list in memory until the user explicitly selects
-  **Import all**. It submits bounded batches to `/ext/graphql`; no YouTube
-  password, cookie, or OAuth token is requested or sent to DreaMedia.
+  **Import all**. It submits bounded batches over the authenticated WebSocket;
+  no YouTube password, cookie, or OAuth token is requested or sent to DreaMedia.
 - The backend resolves each link with bounded concurrency. Each new channel,
   mode, optional Withhold threshold, and optional category are committed in one
   transaction. Existing channels are skipped so their current settings stay
@@ -155,7 +158,7 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
 
 ```
 ext_domains (DB) ──► popup "enable this site" / DreaMedia domains page
-        │ (fetched by background, cached locally)
+        │ (fetched by background, cached locally over WebSocket)
         ▼
 background: registerContentScripts per domain, per media type
         │
@@ -163,8 +166,7 @@ background: registerContentScripts per domain, per media type
         └── anime module: anchor detect → server match → auto-bind
                           video attach (shared core) → position stream
         │
-        ├── HTTP GraphQL actions ─────────────────────────────► /ext/graphql
-        ▼  live lane: graphql-transport-ws (token-authenticated) → /ext/graphql
+        └── graphql-transport-ws (all queries, mutations, token) ─► /ext/graphql
         ▼
 Backend: mutations → stores → Postgres
          live positions → ext_live_sessions → boot sweep merge → ani cursor
@@ -176,7 +178,8 @@ Backend: mutations → stores → Postgres
 
 1. `ext_domains` table + store + GraphQL + DreaMedia domains page;
    dynamic registration gates script execution to the allowlist. The current
-   manifests request optional HTTP/HTTPS origins only when a user enables a site.
+   manifests declare HTTP/HTTPS host access at install to remove per-domain
+   prompts; registration remains limited to the user's enabled domains.
 2. `/ext/graphql` schema + graphql-transport-ws live lane + `ext_live_sessions`
    + boot sweep.
 3. Anchor detection + server-side matching + auto-bind.

@@ -2,9 +2,9 @@
 
 Mounted at /ext/graphql. Deliberately small and stable — the extension is
 released software that can't ride internal refactors, exactly like the REST
-/ext router it replaces. HTTP POST carries the token in X-DreaMedia-Token;
-the websocket (graphql-transport-ws) carries it in connection_init's
-payload, which strawberry drops into context["connection_params"].
+/ext router it replaces. The extension uses graphql-transport-ws exclusively;
+its token is sent once in connection_init's payload, which Strawberry exposes
+as context["connection_params"].
 """
 from __future__ import annotations
 
@@ -27,24 +27,26 @@ _domains = store.ExtDomainStore()
 
 
 async def ext_context():
-    # The router's merged context always carries "request" (Request for
-    # HTTP, WebSocket for the socket). The ws token arrives in
-    # connection_init AFTER the context is created, so strawberry merges it
-    # into this dict as "connection_params" — read it lazily in _ext_uid.
+    # The ws token arrives in connection_init AFTER the context is created,
+    # so Strawberry merges it into this dict as "connection_params".
     return {}
 
 
 async def _ext_uid(info: Info) -> int:
     ctx = info.context
+    user_id = ctx.get("ext_user_id")
+    if user_id is not None:
+        return user_id
     params = ctx.get("connection_params") or {}
     token = params.get("token", "")
     if not token:
-        req = ctx.get("request")
-        headers = getattr(req, "headers", None) or {}
-        token = headers.get("X-DreaMedia-Token", "")
+        raise ValueError("extension GraphQL requires WebSocket authentication")
     user_id = await user_for_token(token)
     if user_id is None:
         raise ValueError("invalid extension token")
+    # Validate connection_init once, then reuse that authenticated identity
+    # for every resolver operation on this socket until it closes.
+    ctx["ext_user_id"] = user_id
     return user_id
 
 

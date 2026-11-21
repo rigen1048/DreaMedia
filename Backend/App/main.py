@@ -69,16 +69,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="DreaMedia", version="0.1.0", lifespan=lifespan)
 
-# Extension CORS (D55): the extension's background worker fetches from
-# chrome-extension:// / moz-extension:// origins. Token-authed, /ext-only is
-# not expressible in one CORSMiddleware, so the origin regex is the guard.
+# Extension origin CORS (D55): the background worker uses the WebSocket lane;
+# other extension-origin HTTP requests still use these standard CORS headers.
 from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"^(chrome-extension|moz-extension|safari-web-extension)://.*$",
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-DreaMedia-Token"],
+    allow_headers=["Content-Type"],
     allow_credentials=False,
     max_age=600,
 )
@@ -162,8 +161,8 @@ app.include_router(
 app.include_router(
     GraphQLRouter(supergraph_schema, context_getter=_graphql_context), prefix="/graphql"
 )
-# Ext v2: the extension's own stable schema — HTTP POST and the
-# graphql-transport-ws websocket lane share this one path.
+# Ext v2: the extension's own stable schema, authenticated through
+# graphql-transport-ws connection_init on this path.
 app.include_router(
     GraphQLRouter(ext_schema, context_getter=ext_context), prefix="/ext/graphql"
 )

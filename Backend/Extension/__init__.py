@@ -1,4 +1,3 @@
-"""DreaMedia Extension API (D55) — the localhost endpoint the browser
-extension talks to. Auth is a per-user extension token (X-DreaMedia-Token),
-NOT the session cookie: the extension is a separate client (the GraphQL-only
-rule governs the frontend app, not this machine-local API)."""
+"""DreaMedia Extension API (D55) — the backend endpoint the browser
+extension talks to. Extension GraphQL uses a per-user token sent in the
+graphql-transport-ws connection_init payload, not the session cookie."""

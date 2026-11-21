@@ -66,9 +66,8 @@
 
     <section id="subscribePanel" class="panel" role="tabpanel" aria-labelledby="subscribeTab">
       <h1>Add YouTube source</h1>
-      <p id="sourceHint" class="description">Follow a YouTube channel or playlist in your feed.</p>
-      <div id="ytImport" class="subscription-import" hidden>
-        <p class="field-note">Scan the channels on this page. Nothing is sent to DreaMedia until you choose Import all.</p>
+      <div id="ytImport" class="subscription-import">
+        <h2 class="import-title">Import YouTube subscriptions</h2>
         <div class="import-actions">
           <button id="scanSubscriptions" class="secondary" type="button">Scan subscriptions</button>
           <button id="importSubscriptions" class="primary" type="button" hidden disabled>Import all</button>
@@ -80,7 +79,7 @@
         <div class="field">
           <label for="kind">Notification type</label>
           <div class="select-wrap">
-            <select id="kind" aria-describedby="sourceHint">
+            <select id="kind">
               <option value="tracking">Track — every upload</option>
               <option value="wordscan">WordScan — matching titles</option>
               <option value="random">Random — occasional picks</option>
@@ -105,13 +104,11 @@
         </div>
         <div id="withholdField" class="field" hidden>
           <label for="withhold">Batch size</label>
-          <input id="withhold" type="number" min="1" step="1" value="2" aria-describedby="withholdHint">
-          <p id="withholdHint" class="field-note">Hold uploads until this many have accumulated.</p>
+          <input id="withhold" type="number" min="1" step="1" value="2">
         </div>
         <div id="wordsField" class="field" hidden>
           <label for="words">Words to match</label>
-          <input id="words" placeholder="trailer, live, devlog" aria-describedby="wordsHint">
-          <p id="wordsHint" class="field-note">Separate words with commas.</p>
+          <input id="words" placeholder="trailer, live, devlog">
         </div>
         <div class="pair">
           <div class="field">
@@ -125,7 +122,6 @@
             <datalist id="subdomainSuggestions"></datalist>
           </div>
         </div>
-        <p class="field-note">Choose both category names, or leave both empty. New pairs are created when the source is added.</p>
       </div>
       <div class="panel-actions">
         <p id="subStatus" class="status" role="status"></p>
@@ -135,11 +131,10 @@
 
     <section id="playlistPanel" class="panel" role="tabpanel" aria-labelledby="playlistTab" hidden>
       <h1>Add to a playlist</h1>
-      <p id="playlistHint" class="description">Save this video to a custom playlist in Todo.</p>
       <div class="fields">
         <div class="field">
           <label for="card">Custom playlist</label>
-          <div class="select-wrap"><select id="card" aria-describedby="playlistHint"><option value="">Loading playlists…</option></select><svg><use href="#chevron"/></svg></div>
+          <div class="select-wrap"><select id="card"><option value="">Loading playlists…</option></select><svg><use href="#chevron"/></svg></div>
         </div>
       </div>
       <div class="panel-actions">
@@ -150,11 +145,10 @@
 
     <section id="trackPanel" class="panel" role="tabpanel" aria-labelledby="trackTab" hidden>
       <h1>Bind tab to anime</h1>
-      <p id="trackHint" class="description">Manually link this tab to an anime you already track.</p>
       <div class="fields">
         <div class="field">
           <label for="entry">Anime</label>
-          <div class="select-wrap"><select id="entry" aria-describedby="trackHint"><option value="">Loading anime…</option></select><svg><use href="#chevron"/></svg></div>
+          <div class="select-wrap"><select id="entry"><option value="">Loading anime…</option></select><svg><use href="#chevron"/></svg></div>
         </div>
         <div class="pair">
           <div class="field"><label for="season">Season</label><input id="season" type="number" min="1" value="1"></div>
@@ -171,7 +165,6 @@
   <main id="setup" class="popup-content setup" hidden>
     <section class="panel">
       <h1 id="setupTitle" tabindex="-1">Connection settings</h1>
-      <p class="description">Use a personal extension token, not your login.</p>
       <div class="fields">
         <div class="field">
           <label for="backendUrl">Backend URL</label>
@@ -179,13 +172,12 @@
         </div>
         <div class="field">
           <label for="token">Extension token</label>
-          <input id="token" type="password" placeholder="dm_…" spellcheck="false" autocomplete="off" aria-describedby="tokenHelp">
-          <p id="tokenHelp" class="field-note">In DreaMedia, open <strong>Ext → Token</strong> and choose <strong>Issue new token</strong>. It’s shown once.</p>
+          <input id="token" type="password" placeholder="dm_…" spellcheck="false" autocomplete="off">
         </div>
       </div>
       <div class="panel-actions">
         <p id="configStatus" class="status" role="status"></p>
-        <button id="saveConfig" class="primary" type="button"><svg aria-hidden="true"><use href="#link"/></svg>Save &amp; ping</button>
+        <button id="saveConfig" class="primary" type="button"><svg aria-hidden="true"><use href="#link"/></svg>Save &amp; connect</button>
       </div>
     </section>
   </main>

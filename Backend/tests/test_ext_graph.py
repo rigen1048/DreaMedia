@@ -191,6 +191,80 @@ async def test_websocket_ext_ping_probe_authenticates_connection_params(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_extension_api_rejects_http_header_auth(monkeypatch):
+    async def user_for_token(token):
+        return 23 if token == "probe-token" else None
+
+    monkeypatch.setattr(ext_graph, "user_for_token", user_for_token)
+    result = await ext_graph.ext_schema.execute(
+        "query { extPing }",
+        context_value={"request": SimpleNamespace(headers={"X-DreaMedia-Token": "probe-token"})},
+    )
+
+    assert result.errors
+    assert "WebSocket authentication" in result.errors[0].message
+
+
+@pytest.mark.asyncio
+async def test_extension_identity_is_validated_once_per_socket_context(monkeypatch):
+    calls = []
+
+    async def user_for_token(token):
+        calls.append(token)
+        return 23
+
+    monkeypatch.setattr(ext_graph, "user_for_token", user_for_token)
+    info = SimpleNamespace(context={"connection_params": {"token": "probe-token"}})
+
+    assert await ext_graph._ext_uid(info) == 23
+    assert await ext_graph._ext_uid(info) == 23
+    assert calls == ["probe-token"]
+
+
+def test_websocket_route_authenticates_once_and_answers_client_ping(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from strawberry.fastapi import GraphQLRouter
+
+    calls = []
+
+    async def user_for_token(token):
+        calls.append(token)
+        return 23 if token == "probe-token" else None
+
+    monkeypatch.setattr(ext_graph, "user_for_token", user_for_token)
+    app = FastAPI()
+    app.include_router(
+        GraphQLRouter(ext_graph.ext_schema, context_getter=ext_graph.ext_context),
+        prefix="/ext/graphql",
+    )
+
+    with TestClient(app) as client:
+        with client.websocket_connect(
+            "/ext/graphql", subprotocols=["graphql-transport-ws"]
+        ) as websocket:
+            websocket.send_json({"type": "connection_init", "payload": {"token": "probe-token"}})
+            assert websocket.receive_json() == {"type": "connection_ack"}
+
+            websocket.send_json({"type": "ping"})
+            assert websocket.receive_json() == {"type": "pong"}
+
+            for operation_id in ("auth", "next"):
+                websocket.send_json({
+                    "id": operation_id,
+                    "type": "subscribe",
+                    "payload": {"query": "query { extPing }", "variables": {}},
+                })
+                result = websocket.receive_json()
+                assert result["id"] == operation_id
+                assert result["type"] == "next"
+                assert result["payload"]["data"] == {"extPing": True}
+                assert websocket.receive_json() == {"id": operation_id, "type": "complete"}
+
+    assert calls == ["probe-token"]
+
+
+@pytest.mark.asyncio
 async def test_extension_card_add_counts_only_new_items(monkeypatch, extension_info):
     class FakeCards:
         async def add_item_detailed(self, _user_id, _card_id, _video_id, url, _title, _thumbnail):
