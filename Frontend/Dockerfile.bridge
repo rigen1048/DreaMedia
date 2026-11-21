@@ -1,6 +1,6 @@
 # DreaMedia notification bridge — the frontend-owned REST receiver.
 # The backend POSTs messages here; the bell reads only this service.
-FROM node:22-alpine
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
 WORKDIR /app
 COPY server/ ./server/
 ENV BRIDGE_HOST=0.0.0.0 BRIDGE_PORT=3100 BRIDGE_STORE=/data/inbox.json
