@@ -14,8 +14,16 @@ import strawberry
 from returns.result import Failure
 from strawberry.types import Info
 
+from Database.ani_store import AniStore
+from Database.card_store import CardStore
+from Database.pg_store import PgStore
 from Extension import anchor, live, store
 from Extension.tokens import user_for_token
+
+_ani = AniStore()
+_cards = CardStore()
+_yt = PgStore()
+_domains = store.ExtDomainStore()
 
 
 async def ext_context():
@@ -60,6 +68,33 @@ class ExtQuery:
         ciphertext); the extension keeps its last copy when locked."""
         return [BlockedChannel(**r) for r in _unwrap(await store.list_blocked_yt(await _ext_uid(info)))]
 
+    @strawberry.field
+    async def cards(self, info: Info) -> List[ExtCard]:
+        """Todo cards the popup can add the current page's video to."""
+        rows = await _cards.list_cards(await _ext_uid(info))
+        return [ExtCard(id=r["id"], name=r.get("name"), done=r["done"], total=r["total"]) for r in rows]
+
+    @strawberry.field
+    async def ani_entries(self, info: Info) -> List[AniEntryOption]:
+        """Entries the popup can bind a tab to (id, title, seasons, cursor)."""
+        view = await _ani.management_view(await _ext_uid(info))
+        return [
+            AniEntryOption(
+                id=e.get("id"), title=e.get("title"),
+                seasons=[sn.get("season_no") for sn in e.get("seasons", []) if isinstance(sn, dict)],
+                cursor_season=e.get("cursor_season"), cursor_episode=e.get("cursor_episode"),
+            )
+            for e in view
+        ]
+
+    @strawberry.field
+    async def domains(self, info: Info) -> List[ExtDomainInfo]:
+        """Enabled allowlist for content-script registration (phase 1)."""
+        rows = await _domains.list_domains(await _ext_uid(info), enabled_only=True)
+        if any(r["domain"] is None for r in rows):
+            raise ValueError("vault locked (D9)")
+        return [ExtDomainInfo(**r) for r in rows]
+
 
 @strawberry.type
 class AnchorMatch:
@@ -77,6 +112,44 @@ class BlockedChannel:
     name: str
     url: str
     reason: Optional[str]
+
+
+@strawberry.type
+class ExtCard:
+    id: int
+    name: Optional[str]
+    done: int
+    total: int
+
+
+@strawberry.type
+class ExtDomainInfo:
+    id: int
+    domain: Optional[str]
+    media: str
+    enabled: bool
+
+
+@strawberry.type
+class AniEntryOption:
+    id: int
+    title: Optional[str]
+    seasons: List[int]
+    cursor_season: Optional[int]
+    cursor_episode: Optional[int]
+
+
+@strawberry.type
+class SubscribeResult:
+    ok: bool
+    channel_id: int
+
+
+@strawberry.type
+class AddItemsResult:
+    added: int
+    requested: int
+    errors: List[str]
 
 
 @strawberry.type
@@ -109,6 +182,91 @@ class ExtMutation:
             await _ext_uid(info), entry_id, season, episode, position_seconds
         ))
         return True
+
+    @strawberry.field
+    async def subscribe(
+        self, info: Info, link: str, kind: str = "tracking",
+        words: Optional[List[str]] = None, rank: Optional[str] = None,
+        domain: Optional[str] = None, subdomain: Optional[str] = None,
+    ) -> SubscribeResult:
+        """Subscribe-from-page (HydraTracker capability): the popup sends
+        the current tab's URL; resolution happens server-side."""
+        import asyncio
+
+        from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
+
+        user_id = await _ext_uid(info)
+        if kind == "playlist":
+            playlist_id = parse_playlist_id(link)
+            if not playlist_id:
+                raise ValueError("could not extract a playlist id from that link")
+            info_r = await asyncio.to_thread(resolve_channel, link.split("?")[0])
+            if isinstance(info_r, Failure):
+                name, url, logo = "Playlist", link, None
+            else:
+                resolved = info_r.unwrap()
+                name, url, logo = resolved.name, resolved.url, resolved.logo
+            result = await _yt.add_playlist(user_id, playlist_id, name, url, logo=logo)
+        elif kind in ("tracking", "wordscan"):
+            info_r = await asyncio.to_thread(resolve_channel, link)
+            if isinstance(info_r, Failure):
+                raise ValueError(info_r.failure())
+            resolved = info_r.unwrap()
+            result = await _yt.add_tracking(
+                user_id, resolved.rss_id, resolved.name, resolved.url,
+                kind=kind, words=words, logo=resolved.logo,
+            )
+        elif kind == "random":
+            info_r = await asyncio.to_thread(resolve_channel, link)
+            if isinstance(info_r, Failure):
+                raise ValueError(info_r.failure())
+            resolved = info_r.unwrap()
+            result = await _yt.add_random(
+                user_id, resolved.name, resolved.url, rank or "week", logo=resolved.logo
+            )
+        else:
+            raise ValueError(f"unknown kind: {kind}")
+        channel_id = _unwrap(result)
+        if domain:
+            await _yt.assign_category(user_id, channel_id, domain, subdomain)
+        return SubscribeResult(ok=True, channel_id=channel_id)
+
+    @strawberry.field
+    async def create_card(self, info: Info, name: str) -> ExtCard:
+        result = await _cards.create_card(await _ext_uid(info), name)
+        card_id = _unwrap(result)
+        return ExtCard(id=card_id, name=name, done=0, total=0)
+
+    @strawberry.field
+    async def add_card_items(self, info: Info, card_id: int, links: List[str]) -> AddItemsResult:
+        """Paste video links — resolved (title/thumb) once at add-time (D47)."""
+        import asyncio
+
+        from Orchestrator.Yt.Fetch.convert import resolve_video
+
+        user_id = await _ext_uid(info)
+        added = 0
+        errors: List[str] = []
+        for link in links:
+            info_r = await asyncio.to_thread(resolve_video, link)
+            if isinstance(info_r, Failure):
+                errors.append(f"{link}: {info_r.failure()}")
+                continue
+            video = info_r.unwrap()
+            result = await _cards.add_item(
+                user_id, card_id, video.video_id, video.url, video.title, video.thumbnail
+            )
+            if isinstance(result, Failure):
+                errors.append(f"{link}: {result.failure()}")
+            else:
+                added += 1
+        return AddItemsResult(added=added, requested=len(links), errors=errors)
+
+    @strawberry.field
+    async def add_domain(self, info: Info, domain: str, media: str = "ani") -> ExtDomainInfo:
+        """The popup's 'Enable DreaMedia on this site' button (phase 1)."""
+        result = await _domains.add_domain(await _ext_uid(info), domain, media)
+        return ExtDomainInfo(**_unwrap(result))
 
 
 ext_schema = strawberry.Schema(query=ExtQuery, mutation=ExtMutation)
