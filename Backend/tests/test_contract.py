@@ -592,6 +592,29 @@ async def yt_channels(user_id):
     return await PgStore().channels_view(user_id)
 
 
+async def test_csv_youtube_hydrawatch_import_no_network():
+    """HydraWatch's actual export format (FreeTube-shaped, quoted titles)
+    imports with NO network resolution — Channel ID and Title are present,
+    so rows subscribe directly from the file."""
+    user_id = await _user_id()
+    hydra = (
+        "Channel ID,Channel URL,Channel Title\n"
+        "UCELHcNI5hYHy5iz54WUsndQ,https://www.youtube.com/channel/UCELHcNI5hYHy5iz54WUsndQ,\"Hack the Clown\"\n"
+        "UCPKAKrjoMz7POptCloy7AIQ,https://www.youtube.com/channel/UCPKAKrjoMz7POptCloy7AIQ,\"LRN2DIY\"\n"
+        "UC4SVo0Ue36XCfOyb5Lh1viQ,https://www.youtube.com/channel/UC4SVo0Ue36XCfOyb5Lh1viQ,\"Bro Code\"\n"
+    )
+    result = (await csvio.import_youtube(user_id, hydra)).unwrap()
+    assert result["imported"] == 3 and result["skipped"] == 0, result["errors"]
+
+    names = {c["name"] for c in await yt_channels(user_id)}
+    assert {"Hack the Clown", "LRN2DIY", "Bro Code"} <= names
+
+    yt = PgStore()
+    for channel in await yt.channels_view(user_id):
+        if channel["name"] in {"Hack the Clown", "LRN2DIY", "Bro Code"}:
+            await yt.delete_channel(user_id, channel["id"])
+
+
 async def test_csv_anime_roundtrip():
     """anime.csv carries title, list and cursor; re-import re-tracks through
     AniList and restores the position."""
