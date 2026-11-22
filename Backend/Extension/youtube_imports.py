@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Sequence
@@ -24,8 +25,33 @@ from Utility.logs import log
 MAX_IMPORT_CHANNELS = 2000
 MAX_STATUS_ERRORS = 10
 CLAIM_STALE_AFTER_MINUTES = 5
+DEFAULT_IMPORT_WORKERS = 8
+MAX_IMPORT_WORKERS = 16
 _CHANNEL_PATH = re.compile(r"^/(?:@[^/]+|channel/UC[A-Za-z0-9_-]{22})(?:/|$)", re.I)
 _CHANNEL_KINDS = {"tracking", "wordscan", "random", "withhold"}
+
+
+def import_worker_count() -> int:
+    """Configured per-process concurrency, bounded to avoid request bursts."""
+    raw = os.getenv("DREAMEDIA_YT_IMPORT_WORKERS", str(DEFAULT_IMPORT_WORKERS))
+    try:
+        requested = int(raw)
+    except (TypeError, ValueError):
+        log.warning(
+            "Invalid DREAMEDIA_YT_IMPORT_WORKERS=%r; using %s",
+            raw,
+            DEFAULT_IMPORT_WORKERS,
+        )
+        return DEFAULT_IMPORT_WORKERS
+    bounded = min(MAX_IMPORT_WORKERS, max(1, requested))
+    if bounded != requested:
+        log.warning(
+            "DREAMEDIA_YT_IMPORT_WORKERS=%s is outside 1..%s; using %s",
+            requested,
+            MAX_IMPORT_WORKERS,
+            bounded,
+        )
+    return bounded
 
 
 def normalize_source_options(

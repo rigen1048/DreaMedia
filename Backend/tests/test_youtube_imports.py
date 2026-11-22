@@ -232,3 +232,16 @@ async def test_stale_worker_claim_does_not_increment_job_progress(monkeypatch):
     )
 
     assert len([call for call in connection.calls if call[0] == "execute"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("setting", "expected"),
+    [(None, 8), ("12", 12), ("0", 1), ("80", 16), ("invalid", 8)],
+)
+def test_worker_count_uses_default_override_and_hard_bounds(monkeypatch, setting, expected):
+    if setting is None:
+        monkeypatch.delenv("DREAMEDIA_YT_IMPORT_WORKERS", raising=False)
+    else:
+        monkeypatch.setenv("DREAMEDIA_YT_IMPORT_WORKERS", setting)
+
+    assert youtube_imports.import_worker_count() == expected
