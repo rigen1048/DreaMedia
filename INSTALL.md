@@ -2,7 +2,7 @@
 
 Use [FEATURES.md][features] as the companion guide after installation; it explains the source modes, notification scopes, queues, and resilience behavior this setup enables.
 
-DreaMedia is a self-hosted application. The recommended deployment uses Docker Compose for PostgreSQL, the backend, the notification bridge, and the frontend.
+DreaMedia is a self-hosted application. The recommended deployment uses Docker Compose for PostgreSQL, the backend, and the frontend. Header-bell notifications are stored in PostgreSQL with the rest of the application data.
 
 ## Requirements
 
@@ -40,12 +40,6 @@ Set a strong PostgreSQL password:
 DREAMEDIA_PG_PASSWORD=replace-with-a-long-random-password
 ```
 
-The launcher can generate a bridge token when one is not supplied. For a controlled deployment, set one explicitly:
-
-```dotenv
-FRONTEND_NOTIFY_TOKEN=replace-with-a-long-random-token
-```
-
 ## Start the application
 
 ```bash
@@ -68,7 +62,7 @@ The first account created through the web UI becomes an administrator.
 python3 setup.py --dev
 ```
 
-This mode runs PostgreSQL through Docker and starts the bridge, backend, and Vite frontend locally.
+This mode runs PostgreSQL through Docker and starts the backend and Vite frontend locally.
 
 ## Demo data
 
@@ -158,7 +152,7 @@ This stops containers while preserving the named PostgreSQL volume. Avoid `docke
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 frontend backend bridge
+docker compose logs --tail=100 frontend backend
 ```
 
 ### The backend cannot connect to PostgreSQL
@@ -171,13 +165,15 @@ Check that `DREAMEDIA_PG_PASSWORD` matches the password used when the PostgreSQL
 
 ### The notification bell is empty
 
-Check the bridge health endpoint through the frontend:
+The bell reads the authenticated PostgreSQL notification API through FastAPI:
 
 ```text
-http://localhost:8124/bridge/health
+http://localhost:8124/notifications
 ```
 
-Confirm that `FRONTEND_NOTIFY_TOKEN` is the same for backend and bridge.
+Sign in first; the endpoint uses the browser session cookie. If it reports
+`401`, sign in again. If the bell is empty, check whether notification rows
+exist for the current account and whether its vault is unlocked.
 
 ### Source metadata is missing
 

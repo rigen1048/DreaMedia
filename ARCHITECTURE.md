@@ -1,6 +1,6 @@
 # DreaMedia Architecture
 
-DreaMedia is a self-hosted personal media system composed of a React frontend, FastAPI/GraphQL backend, PostgreSQL database, background source workers, a notification bridge, and browser extensions.
+DreaMedia is a self-hosted personal media system composed of a React frontend, FastAPI/GraphQL backend, PostgreSQL database, background source workers, and browser extensions.
 
 Compared with its HydraWatch predecessor, DreaMedia formalizes the backend around extensible media-source contracts. The architecture is intended to make a new source type a pipeline implementation rather than a cross-cutting rewrite.
 
@@ -8,7 +8,7 @@ Compared with its HydraWatch predecessor, DreaMedia formalizes the backend aroun
 
 ![DreaMedia runtime architecture](docs/diagrams/dreamedia-runtime.png)
 
-This picture reflects the current repository boundaries: the browser and extension use separate lanes, source managers coordinate durable work, and the notification bridge handles delivery rather than ordinary feed reads.
+The browser and extension use separate lanes, source managers coordinate durable work, and notification history/read state live with the rest of the durable application data in PostgreSQL.
 
 ```text
                                    ┌─────────────────────┐
@@ -17,21 +17,16 @@ This picture reflects the current repository boundaries: the browser and extensi
                                    └──────────┬──────────┘
                                               │ fetch
                                               ▼
-┌──────────────┐     GraphQL /graphql     ┌───────────────┐
-│ React browser│ ◀──────────────────────▶ │ FastAPI backend│
-└──────┬───────┘                           └──────┬────────┘
-       │ REST + SSE /bridge                       │
-       ▼                                           ▼
-┌──────────────┐                           ┌───────────────┐
-│ Node bridge  │ ◀──── internal push ───── │ background    │
-│ list + inbox │                           │ workers       │
-└──────────────┘                           └──────┬────────┘
-                                                  │
-                                                  ▼
-                                           ┌───────────────┐
-                                           │ PostgreSQL    │
-                                           │ encrypted data│
-                                           └───────────────┘
+┌──────────────┐  GraphQL + REST /notifications  ┌───────────────┐
+│ React browser│ ◀─────────────────────────────▶ │ FastAPI backend│
+└──────────────┘                                  └──────┬────────┘
+                                                        │
+                                                        ▼
+                                                 ┌───────────────┐
+                                                 │ PostgreSQL    │
+                                                 │ encrypted data│
+                                                 │ + bell history│
+                                                 └───────────────┘
 
 Browser extension ── token GraphQL /ext/graphql ──▶ FastAPI
 ```
@@ -162,9 +157,9 @@ YouTube videos and anime events are read through the main GraphQL workspace quer
 
 ### Bell lane
 
-Backend-originated messages such as release confirmations, operational events, and bridge messages are written to encrypted history and pushed to the frontend-owned Node bridge. The browser reads the bridge using its authenticated session and receives live messages through SSE.
+Backend-originated messages such as release confirmations and operational events are written once to the encrypted PostgreSQL `notifications` table. The frontend bell reads that table through the authenticated FastAPI `/notifications` API and updates `seen` state through `/notifications/seen`. The bell polls the API; there is no separate JSON inbox, notification service, or second source of truth.
 
-This separation prevents ordinary feed rows from silently appearing in the bell and gives backend messages their own delivery history.
+Ordinary YouTube and anime feed rows remain in their own feed tables and do not silently appear in the bell. Bell notification content, ownership, and read state all remain in PostgreSQL.
 
 ## Notification scope gate
 
@@ -246,15 +241,14 @@ Docker Compose runs:
 
 - `db` — PostgreSQL;
 - `backend` — FastAPI and workers;
-- `bridge` — notification receiver;
 - `frontend` — Nginx/Vite-served application.
 
-The local development launcher can run the bridge, backend, and frontend outside containers while retaining Docker PostgreSQL.
+The local development launcher can run the backend and frontend outside containers while retaining Docker PostgreSQL. The bell reads notification history and persists read state through the authenticated backend API; both remain in the dedicated PostgreSQL notifications table.
 
 ## Design tradeoffs
 
 - One workspace query makes the SPA simple but creates a scaling pressure toward pagination.
-- A JSON-file bridge is intentionally lightweight for personal installations but is not a multi-instance message broker.
+- PostgreSQL is the sole durable source of truth for notification history and read state; the frontend does not maintain a separate notification inbox.
 - The anime cursor is simple and useful but is not a complete rewatch history model.
 - External metadata providers improve UX but introduce availability and freshness dependencies.
 - Self-hosting gives control but makes host, backup, TLS, and filesystem security the user’s responsibility.

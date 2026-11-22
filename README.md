@@ -129,19 +129,17 @@ python3 setup.py update
 
 ![DreaMedia runtime architecture](docs/diagrams/dreamedia-runtime.png)
 
-The diagram is generated from the current backend, bridge, database, manager, and extension boundaries. The extension-specific lanes are shown in [ARCHITECTURE.md](ARCHITECTURE.md#browser-extension).
+The diagram is generated from the current backend, database, manager, and extension boundaries. The extension-specific lanes are shown in [ARCHITECTURE.md](ARCHITECTURE.md#browser-extension).
 
 
 ```text
-Browser ── GraphQL /graphql ──▶ FastAPI ──▶ PostgreSQL
-   ▲                              │
-   └──── REST + SSE /bridge ◀─────┘
-                    notification bridge
+Browser ── GraphQL + /notifications REST ──▶ FastAPI ──▶ PostgreSQL
+                                                        └─ encrypted notification history
 ```
 
 - **Backend:** FastAPI, Strawberry GraphQL, PostgreSQL, background workers.
 - **Frontend:** React 19, TypeScript, Vite, Radix UI primitives.
-- **Bridge:** small Node.js REST + SSE receiver for backend-originated bell messages.
+- **Notifications:** frontend bell reads and updates encrypted notification rows in PostgreSQL through FastAPI.
 - **Extension:** Chrome MV3 and Firefox MV2 with a stable extension GraphQL lane.
 - **Deployment:** Docker Compose or local development mode.
 

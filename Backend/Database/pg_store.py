@@ -1463,14 +1463,14 @@ class PgStore:
             )
 
     async def messages(self, user_id: int, limit: int = 100) -> List[Dict[str, Any]]:
-        """Backend message history (bell fallback hydration)."""
+        """Backend message history from the bell's PostgreSQL source of truth."""
         key = await vault.get(user_id)
         if key is None:
             return []
         pool = await get_pool()
         async with pool.acquire() as con:
             rows = await con.fetch(
-                "SELECT id, media, kind, payload_enc, pushed, seen, created_at "
+                "SELECT id, media, kind, payload_enc, seen, created_at "
                 "FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
                 user_id, limit,
             )
@@ -1480,7 +1480,7 @@ class PgStore:
             {
                 "id": r["id"], "media": r["media"], "kind": r["kind"],
                 "payload": json.loads(decrypt(key, r["payload_enc"]) or "{}"),
-                "pushed": r["pushed"], "seen": r["seen"],
+                "seen": r["seen"],
                 "created_at": r["created_at"].isoformat(),
             }
             for r in rows

@@ -4,9 +4,8 @@ The script drives the real UI with Playwright (no mocks, no stubbed GraphQL):
 it signs in as the demo user, creates and renames a domain, adds a muted
 subdomain, attaches the domain to a channel and mutes the channel, moves an
 anime between watch states, builds a todo playlist from video links, advances
-the episode queue, proves the browser-facing bridge path refuses forged bell
-pushes, pushes one message through the internal bridge port, and confirms the
-bell renders it and can mark it read.
+the episode queue, verifies the header bell reads PostgreSQL notifications,
+and confirms read state persists in the database.
 
 Usage (stack already running via start.py):
 
@@ -29,8 +28,6 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 BASE = os.environ.get("DREAMEDIA_URL", "http://127.0.0.1:8124").rstrip("/")
-# The bridge listens on an internal-only port: only the backend may push.
-BRIDGE = os.environ.get("DREAMEDIA_BRIDGE_URL", "http://127.0.0.1:3123").rstrip("/")
 OUT = Path(__file__).resolve().parent / "shots"
 CHECK: list[tuple[str, bool]] = []
 
@@ -326,59 +323,45 @@ async def main() -> None:
         await page.get_by_role("button", name="Cancel").first.click()
         await page.wait_for_timeout(300)
 
-        # -------- bridge push -> bell
-        viewer = await page.evaluate(
+        # -------- PostgreSQL notifications -> bell
+        notification_data = await page.evaluate(
             """async () => {
-              const r = await fetch('/graphql', {method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({query:'{ viewer { id } }'})});
-              return (await r.json()).data.viewer.id;
+              const r = await fetch('/notifications?limit=100', {credentials:'include', cache:'no-store'});
+              return {status:r.status, body:await r.json()};
             }"""
         )
-        payload = json.dumps(
-            {
-                "id": "e2e-bridge-1",
-                "rowId": 999,
-                "userId": viewer,
-                "media": "ani",
-                "kind": "release_confirmed",
-                "title": "Bridge smoke test",
-                "message": "Release confirmed · Season 2",
-                "level": "release",
-                "createdAt": "2026-11-14T16:00:00+00:00",
-                "payload": {"entryId": 1},
-            }
-        ).encode()
-        # The backend pushes to the bridge's internal port; the browser-facing
-        # /bridge/ path must refuse pushes so the bell stays backend-exclusive.
-        forged = urllib.request.Request(
-            f"{BASE}/bridge/api/notifications",
-            data=payload,
-            headers={"Content-Type": "application/json"},
+        rows = notification_data.get("body", {}).get("notifications", [])
+        ok(
+            "authenticated PostgreSQL notification API",
+            notification_data["status"] == 200 and isinstance(rows, list),
+            f"{len(rows)} rows",
         )
-        try:
-            urllib.request.urlopen(forged)
-            forged_status = 200
-        except urllib.error.HTTPError as exc:
-            forged_status = exc.code
-        ok("browser cannot forge a bell push", forged_status == 403, str(forged_status))
-
-        req = urllib.request.Request(
-            f"{BRIDGE}/api/notifications",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req) as resp:
-            ok("bridge accepted push", resp.status == 202, str(resp.status))
-
-        await page.goto(BASE, wait_until="networkidle")
-        await page.wait_for_timeout(1500)
-        await page.locator(".bell").first.click()
-        await page.wait_for_timeout(1200)
-        ok("bell shows pushed message", await page.locator(".bell-item", has_text="Bridge smoke test").count() == 1)
+        bell_button = page.locator('button[aria-label^="Backend messages"]').first
+        await bell_button.click()
+        dialog = page.get_by_role("dialog", name="Backend messages")
+        await page.wait_for_timeout(300)
+        if rows:
+            first_title = rows[0].get("title") or rows[0].get("kind")
+            ok("bell renders a PostgreSQL row", await dialog.get_by_text(first_title, exact=True).count() > 0)
+        else:
+            ok("bell shows empty PostgreSQL history", await dialog.get_by_text("No PostgreSQL notifications yet.").count() == 1)
         await page.screenshot(path=str(OUT / "14-bell-qa.png"))
-        await page.get_by_role("button", name="Mark all read").click()
-        await page.wait_for_timeout(1200)
-        ok("bell mark all read", "0 new" in (await page.locator(".bell-panel__head").inner_text()).lower())
+        unread = [row for row in rows if not row.get("seen")]
+        if unread:
+            await dialog.get_by_role("button", name="Mark all read").click()
+            await page.wait_for_timeout(300)
+            readback = await page.evaluate(
+                """async () => {
+                  const r = await fetch('/notifications?limit=100', {credentials:'include', cache:'no-store'});
+                  return {status:r.status, body:await r.json()};
+                }"""
+            )
+            updated = readback.get("body", {}).get("notifications", [])
+            by_id = {row.get("id"): row for row in updated}
+            persisted = all(by_id.get(row["id"], {}).get("seen") for row in unread)
+            ok("bell mark-all-read persisted in PostgreSQL", readback["status"] == 200 and persisted)
+        else:
+            ok("bell PostgreSQL read state is current", all(row.get("seen") for row in rows))
 
         # -------- admin: page, backup, upload, destructive restore round-trip
         await page.get_by_role("button", name="Admin").click()

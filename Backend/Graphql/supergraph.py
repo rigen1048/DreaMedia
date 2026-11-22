@@ -1,7 +1,8 @@
-"""Supergraph (D25): the single GraphQL endpoint the frontend talks to.
+"""Supergraph (D25): the primary GraphQL endpoint the frontend talks to.
 
 Merges the yt/ani feature schemas with auth (viewer/login/signup/logout)
-and the backend-message history. Session cookies are written through
+and the backend-message history. The header bell also uses the authenticated
+PostgreSQL REST endpoints in Auth.notify_router. Session cookies are written through
 request.state and applied by the HTTP middleware in App.main — so login is
 a normal GraphQL mutation, not a side-channel REST route.
 """
@@ -51,9 +52,7 @@ class AuthQuery:
 
     @strawberry.field
     async def backend_messages(self, info: Info, limit: int = 100) -> List[BackendMessage]:
-        """Durable history of backend-originated messages. The bell itself is
-        fed by the frontend's REST receiver; this query is the audit/hydration
-        lane and is never mixed with feed rows."""
+        """Durable backend-message history from the notification table."""
         viewer = await _viewer(info)
         if viewer is None:
             return []
@@ -74,7 +73,7 @@ class AuthQuery:
                     id=r["id"], media=r["media"], kind=r["kind"], title=str(title),
                     message=str(message), level=str(record.get("level") or "info"),
                     url=record.get("url"), created_at=r["created_at"],
-                    seen=r["seen"], pushed=r["pushed"],
+                    seen=r["seen"],
                     payload=json.dumps(record.get("payload", record), default=str),
                 )
             )

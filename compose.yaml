@@ -3,9 +3,8 @@
 # login and live only in the app's in-memory vault (D8/D9).
 # ACCESS (D54): 'wifi' publishes on 0.0.0.0 (LAN), 'computer' on 127.0.0.1 only.
 #
-# Flow: db (Postgres 17) → backend (FastAPI + GraphQL) → frontend (nginx + SPA,
-# proxies /graphql, /auth, … to backend and /bridge/ to the notification
-# receiver), with bridge (REST + SSE) as a sibling the backend pushes into.
+# Flow: db (Postgres 17) → backend (FastAPI + GraphQL + notifications) →
+# frontend (nginx + SPA, proxies application APIs directly to the backend).
 services:
   db:
     image: postgres:17-alpine@sha256:526f86d93c6ea08fd3f1fe5605650cacc781b2c6013169a0ad8f42c7d3d84f32
@@ -25,25 +24,6 @@ services:
       retries: 12
       start_period: 5s
 
-  bridge:
-    build:
-      context: ./Frontend
-      dockerfile: Dockerfile.bridge
-    restart: unless-stopped
-    environment:
-      BRIDGE_HOST: 0.0.0.0
-      BRIDGE_PORT: "3123"
-      BRIDGE_STORE: /data/inbox.json
-      BRIDGE_BACKEND_URL: http://backend:8000
-      FRONTEND_NOTIFY_TOKEN: ${FRONTEND_NOTIFY_TOKEN:-}
-      BRIDGE_ALLOW_ORIGIN: ${BRIDGE_ALLOW_ORIGIN:-*}
-    volumes:
-      # Bind mount, not a named volume: bell history must survive the
-      # "docker compose down -v" that start.py performs on every launch.
-      - ./.bridge:/data
-    # No published port: the bell is reached through the frontend's /bridge/
-    # proxy and pushes come from the backend over the compose network.
-
   backend:
     build: ./Backend
     restart: unless-stopped
@@ -55,8 +35,6 @@ services:
       DREAMEDIA_PG_PORT: "5432"
       DREAMEDIA_PG_PASSWORD: ${DREAMEDIA_PG_PASSWORD:?Set DREAMEDIA_PG_PASSWORD in the root .env}
       BACKUP_DIR: /backups
-      FRONTEND_NOTIFY_URL: http://bridge:3123/api/notifications
-      FRONTEND_NOTIFY_TOKEN: ${FRONTEND_NOTIFY_TOKEN:-}
     volumes:
       - ./backups:/backups
     ports:
@@ -64,8 +42,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      bridge:
-        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8123/health',timeout=3)\""]
       interval: 15s
@@ -80,8 +56,6 @@ services:
       - "${ACCESS_HOST:-127.0.0.1}:8124:3000"
     depends_on:
       backend:
-        condition: service_started
-      bridge:
         condition: service_started
 
 volumes:

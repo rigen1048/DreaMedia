@@ -23,8 +23,6 @@ export default defineConfig(({ mode }) => {
   const backendTarget =
     process.env.DREAMEDIA_API_TARGET ?? env.DREAMEDIA_API_TARGET ?? "http://127.0.0.1:8123";
   const proxy = createBackendProxy(backendTarget);
-  const bridgeTarget =
-    process.env.DREAMEDIA_BRIDGE_TARGET ?? env.DREAMEDIA_BRIDGE_TARGET ?? "http://127.0.0.1:3123";
 
   return {
     plugins: [react(), tailwindcss()],
@@ -44,11 +42,6 @@ export default defineConfig(({ mode }) => {
       allowedHosts: ["localhost", "127.0.0.1"],
       proxy: {
         ...Object.fromEntries(apiPrefixes.map((prefix) => [prefix, proxy])),
-        "/bridge": {
-          target: bridgeTarget,
-          changeOrigin: true,
-          rewrite: (requestPath: string) => requestPath.replace(/^\/bridge/, ""),
-        },
       },
     },
   };

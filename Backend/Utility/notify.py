@@ -1,11 +1,7 @@
-"""Backend → frontend message lane (D15/D24).
+"""Backend notification production and encrypted PostgreSQL persistence.
 
-Two deliberately separate lanes:
-1. Durable history in the `notifications` table (per-user, encrypted
-   payload). It survives a missed push and is readable through GraphQL.
-2. Push to the frontend's REST receiver (`FRONTEND_NOTIFY_URL`). The
-   frontend owns that endpoint; the bell displays only messages that came
-   through it, so the bell can never show feed rows.
+The PostgreSQL `notifications` table is the single source of truth for
+notification history, bell hydration, and read state.
 
 Notification scoping (feature completion): delivery is gated by the owning
 domain, subdomain, and channel/entry. Muting a domain silences every
@@ -16,20 +12,12 @@ the raw `notify()` stays unconditional for operational messages.
 from __future__ import annotations
 
 import json
-import os
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-
-import httpx
 
 from Database import vault
 from Database.crypto import encrypt
 from Database.db import get_pool
 from Utility.logs import log
-
-_NOTIFY_URL = os.environ.get("FRONTEND_NOTIFY_URL")
-_NOTIFY_TOKEN = os.environ.get("FRONTEND_NOTIFY_TOKEN", "")
-
 
 async def notify(
     user_id: int,
@@ -42,8 +30,7 @@ async def notify(
     level: str = "info",
     url: Optional[str] = None,
 ) -> Optional[int]:
-    """Store + push. Never raises: a notification must not break the
-    pipeline that produced it. Returns the stored row id (or None)."""
+    """Store in PostgreSQL. Never raises; return its row id or None."""
     key = await vault.get(user_id)
     if key is None:
         log.warning("notify skipped (vault locked, D9): user=%s %s", user_id, kind)
@@ -56,53 +43,21 @@ async def notify(
         "payload": payload,
     }
     blob = encrypt(key, json.dumps(record, default=str))
-    row_id = None
-    created_at = datetime.now(timezone.utc).isoformat()
     try:
         pool = await get_pool()
         async with pool.acquire() as con:
             row = await con.fetchrow(
                 "INSERT INTO notifications (user_id, media, kind, payload_enc) "
                 "VALUES ($1, $2, $3, $4) RETURNING id, created_at",
-                user_id, media, kind, blob,
+                user_id,
+                media,
+                kind,
+                blob,
             )
-            row_id = row["id"]
-            created_at = row["created_at"].isoformat()
+            return row["id"]
     except Exception:
         log.exception("notify: DB persist failed")
-
-    target = _NOTIFY_URL
-    if not target:
-        return row_id
-    body = {
-        "id": f"{user_id}-{row_id}" if row_id is not None else f"{user_id}-{created_at}",
-        "rowId": row_id,
-        "userId": user_id,
-        "media": media,
-        "kind": kind,
-        "title": record["title"],
-        "message": record["message"],
-        "level": level,
-        "url": url,
-        "createdAt": created_at,
-        "payload": payload,
-    }
-    headers = {"X-Dreamedia-Token": _NOTIFY_TOKEN} if _NOTIFY_TOKEN else {}
-    pushed = False
-    try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            resp = await client.post(target, json=body, headers=headers)
-            pushed = resp.status_code < 400
-    except Exception as exc:
-        log.warning("notify push failed: %s", exc)
-    if pushed and row_id is not None:
-        try:
-            pool = await get_pool()
-            async with pool.acquire() as con:
-                await con.execute("UPDATE notifications SET pushed = TRUE WHERE id = $1", row_id)
-        except Exception:
-            pass
-    return row_id
+    return None
 
 
 # --------------------------------------------------------------------------

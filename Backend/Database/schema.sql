@@ -20,15 +20,14 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Unhappy-path notifications (D15/D24): stored AND pushed to the
--- frontend's single notification API. History survives a missed push.
+-- Backend messages for the header bell. Encrypted PostgreSQL rows are the
+-- single source of truth; the frontend reads and updates them via the API.
 CREATE TABLE IF NOT EXISTS notifications (
     id            BIGSERIAL PRIMARY KEY,
     user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     media         TEXT NOT NULL,
     kind          TEXT NOT NULL,
     payload_enc   BYTEA NOT NULL,
-    pushed        BOOLEAN NOT NULL DEFAULT FALSE,
     seen          BOOLEAN NOT NULL DEFAULT FALSE,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -270,6 +269,9 @@ CREATE INDEX IF NOT EXISTS idx_ani_todo_user ON ani_todo(user_id, done);
 -- ==================== Feature-completion migrations ====================
 -- Idempotent: this file is replayed on every start, so post-original columns
 -- are added here behind IF NOT EXISTS / DO guards.
+
+-- No separate push receiver remains; bell delivery is a read of this table.
+ALTER TABLE notifications DROP COLUMN IF EXISTS pushed;
 
 -- Notification scoping: disable notifications for an entire domain, an
 -- entire subdomain, or a single channel. Effective delivery is

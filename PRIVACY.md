@@ -67,8 +67,8 @@ The implementation includes:
 - AEAD encryption for stored user content.
 - Blind indexes for equality and uniqueness checks.
 - Hashed, revocable extension tokens.
-- A token-protected backend-to-bridge push lane.
-- Session-authenticated browser reads from the bridge.
+- Session-authenticated browser reads and read-state updates through the backend API.
+- PostgreSQL as the sole durable store for notification history and read state.
 - Admin checks on GraphQL and REST admin operations.
 - Validated restore filenames and upload archives.
 

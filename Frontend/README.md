@@ -1,56 +1,52 @@
 # Frontend
 
-Presentation, interaction and one service: the notification receiver. Durable
-data, ingestion, auth and notification production remain backend-owned.
+Presentation and interaction only. All durable application data, including
+header-bell notifications and their read state, is owned by the backend and
+stored in PostgreSQL.
 
 ## Two lanes
 
 - **Data:** one GraphQL endpoint. `src/lib/gql.ts` is the only transport;
   `src/app/api.ts` holds every operation (workspace query, YouTube, anime,
   playlists, auth). No REST calls for application data.
-- **Bell:** `src/lib/bridge.ts` talks only to `/bridge` —
-  `GET /api/notifications`, `POST /api/notifications/seen` and an SSE stream.
-  Feed rows are never read here, so the bell can only show backend pushes.
+- **Bell:** `src/lib/notifications.ts` calls the authenticated backend REST
+  API at `GET /notifications` and `POST /notifications/seen`. Both read and
+  update the encrypted PostgreSQL `notifications` table. The bell polls that
+  API; there is no frontend-owned inbox or second notification store.
 
 ## Source map
 
 ```text
 Frontend/
-├── server/notify-bridge.mjs   REST receiver + SSE + JSON inbox (no deps)
 ├── src/
 │   ├── app/          App shell, rail/topbar, provider, GraphQL API, UI primitives
 │   ├── features/     auth · notifications · management · todo · bell
-│   ├── lib/          gql client, bridge client, types, formatting
+│   ├── lib/          gql client, notification API client, types, formatting
 │   └── styles/       theme tokens + layout/pages
-├── Dockerfile        bun build → nginx (proxies /graphql, /bridge, …)
-└── Dockerfile.bridge node:22-alpine running the receiver
+└── Dockerfile        bun build → nginx proxying authenticated APIs to FastAPI
 ```
 
 ## Scripts
 
 ```bash
-npm run dev       # vite on :8124 (proxies API to :8123, bridge to :3123)
-npm run bridge    # notification receiver on :3123
+    bun run dev       # Vite proxies application APIs to FastAPI on :8123
 npm run check     # tsc --noEmit
 npm run build     # production bundle
 ```
 
-Vite proxies `/graphql`, `/auth`, `/admin`, `/yt`, `/ani`, `/notifications`,
-`/health` to `DREAMEDIA_API_TARGET` (default `http://127.0.0.1:8123`) and
-`/bridge` to `DREAMEDIA_BRIDGE_TARGET` (default `http://127.0.0.1:3123`).
-In production nginx does the same, with buffering disabled for SSE.
+Vite and production nginx proxy `/graphql`, `/auth`, `/admin`, `/yt`, `/ani`,
+`/notifications`, and `/health` directly to FastAPI.
 
 ## Receiver API
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/api/notifications` | backend push; `X-Dreamedia-Token` when configured |
-| GET | `/api/notifications?userId=` | newest-first list + unseen count |
-| POST | `/api/notifications/seen` | `{userId, ids}` mark read |
-| GET | `/api/notifications/stream?userId=` | SSE live messages |
-| GET | `/health` | liveness + subscriber count |
+| GET | `/notifications?limit=` | authenticated newest-first PostgreSQL history |
+| POST | `/notifications/seen` | authenticated `{ids, seen}` read-state update |
 
-State persists to `.bridge/inbox.json` (configurable via `BRIDGE_STORE`).
+Notification content is encrypted per user in PostgreSQL. The browser uses its
+session cookie; user IDs are derived by the backend, never trusted from query
+parameters.
 
 ## Package manager: **bun only**
 

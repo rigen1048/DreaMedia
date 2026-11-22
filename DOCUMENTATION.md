@@ -8,7 +8,7 @@ DreaMedia uses several focused documents instead of putting product philosophy, 
 - [Features](FEATURES.md) — detailed feature inventory and user workflows.
 - [Installation](INSTALL.md) — setup, configuration, extension installation, backups, updates, and troubleshooting.
 - [Privacy model](PRIVACY.md) — threat model, trust boundaries, encryption, and hardening.
-- [Architecture](ARCHITECTURE.md) — backend, frontend, bridge, extension, workers, data flow, restore design, and current internal diagrams.
+- [Architecture](ARCHITECTURE.md) — backend, frontend, extension, workers, data flow, restore design, and current internal diagrams.
 - [Contributing](CONTRIBUTING.md) — product principles, development setup, testing, and contribution expectations.
 
 ## Existing project documentation

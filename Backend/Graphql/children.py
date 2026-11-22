@@ -94,7 +94,6 @@ class BackendMessage:
     url: Optional[str]
     created_at: str
     seen: bool
-    pushed: bool
     payload: str
 
 

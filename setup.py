@@ -42,16 +42,6 @@ def load_env() -> dict[str, str]:
             env.setdefault(key.strip(), value.strip().strip('"').strip("'"))
     if not env.get("DREAMEDIA_PG_PASSWORD"):
         sys.exit("✗ DREAMEDIA_PG_PASSWORD is empty in .env (required, see .env.example)")
-    # Bridge token (2026 review: fail-closed bridge needs one). Generate once,
-    # persist to .env so the backend and the bridge share it across restarts.
-    if not env.get("FRONTEND_NOTIFY_TOKEN"):
-        import secrets
-
-        token = secrets.token_hex(24)
-        with env_file.open("a") as fh:
-            fh.write(f"\nFRONTEND_NOTIFY_TOKEN={token}\n")
-        env["FRONTEND_NOTIFY_TOKEN"] = token
-        print("→ Generated FRONTEND_NOTIFY_TOKEN and saved it to .env")
     return env
 
 
@@ -275,7 +265,7 @@ def update_database(backup_dir: Path, keep: int, env) -> Path | None:
     """Pull code and restore a validated snapshot without deleting pgdata."""
     require_clean_git_worktree()
     running = running_compose_services(env)
-    app_services = [name for name in ("bridge", "backend", "frontend") if name in running]
+    app_services = [name for name in ("backend", "frontend") if name in running]
     database_restarted = False
     try:
         if app_services:
@@ -404,7 +394,7 @@ def main() -> None:
     # 5. app services
     if not args.dev:
         # Default: the whole app runs in containers (D6 docker app).
-        print("→ Building + starting the stack (db, bridge, backend, frontend)...")
+        print("→ Building + starting the stack (db, backend, frontend)...")
         result = subprocess.run(
             ["docker", "compose", "up", "-d", "--build"],
             cwd=ROOT, capture_output=True, text=True, env=env,
@@ -421,7 +411,6 @@ def main() -> None:
             compose_logs(env)
             sys.exit("✗ The stack started but never became healthy (see logs above)")
 
-        bridge_ok = wait_for("http://127.0.0.1:3123/health", seconds=30)
         if updating and restored_backup is not None:
             print(f"→ Pre-update backup restored: {restored_backup}")
         elif updating:
@@ -433,27 +422,13 @@ def main() -> None:
         print("=" * 50)
         print(f"🐴 DreaMedia is up: http://localhost:8124"
               + (f"  (LAN: http://{lan_ip()}:8124)" if bind == "0.0.0.0" else ""))
-        print(f"   bell bridge    : http://127.0.0.1:3123/health "
-              + ("✓" if bridge_ok else "✗ not answering"))
+        print("   notification history: PostgreSQL")
         print("   logs   : docker compose logs -f")
         print("   stop   : docker compose down")
         print("=" * 50)
         return
 
-    # --dev: local processes instead of containers
-    # The frontend owns the notification receiver; the backend pushes into it.
-    env.setdefault("FRONTEND_NOTIFY_URL", "http://127.0.0.1:3123/api/notifications")
-    bridge_env = dict(env)
-    bridge_env.setdefault("BRIDGE_PORT", "3123")
-    bridge_env.setdefault("BRIDGE_STORE", str(FRONTEND / ".bridge" / "inbox.json"))
-    print("→ Starting notification bridge on :3123...")
-    bridge_log = (ROOT / ".bridge.log").open("w")
-    bridge = subprocess.Popen(
-        ["node", "server/notify-bridge.mjs"],
-        cwd=FRONTEND, stdout=bridge_log, stderr=subprocess.STDOUT, env=bridge_env,
-    )
-    (ROOT / ".bridge.pid").write_text(str(bridge.pid))
-
+    # --dev: local processes instead of containers; notifications still live in PostgreSQL.
     print("→ Syncing backend deps (uv)...")
     run(["uv", "sync", "-q"], cwd=BACKEND)
     print(f"→ Starting backend on {bind}:8123...")
@@ -465,13 +440,7 @@ def main() -> None:
     (ROOT / ".backend.pid").write_text(str(backend.pid))
 
     def cleanup(*_):
-        print("\n→ Stopping backend + bridge...")
-        bridge.terminate()
-        try:
-            bridge.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            bridge.kill()
-        (ROOT / ".bridge.pid").unlink(missing_ok=True)
+        print("\n→ Stopping backend + frontend...")
         backend.terminate()
         try:
             backend.wait(timeout=5)

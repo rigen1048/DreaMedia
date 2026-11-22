@@ -1,21 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell as BellIcon, Check, Radio, X } from "lucide-react";
 import { useApp } from "../../app/state";
-import { listMessages, markMessagesSeen, openMessageStream } from "../../lib/bridge";
+import { listMessages, markMessagesSeen, NotificationApiError } from "../../lib/notifications";
 import { timeAgo } from "../../lib/format";
 import type { BellMessage } from "../../lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 /**
- * The bell only ever shows backend-originated messages delivered through the
- * frontend's REST receiver. It never reads the YouTube/Anime feed.
+ * The bell reads durable notification history and read state from PostgreSQL
+ * through the authenticated backend API. It never reads the YouTube/Anime feed.
  */
 export default function Bell() {
   const { viewer } = useApp();
   const [messages, setMessages] = useState<BellMessage[]>([]);
   const [open, setOpen] = useState(false);
   const [online, setOnline] = useState(false);
+  const [vaultLocked, setVaultLocked] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
 
@@ -24,30 +25,22 @@ export default function Bell() {
   const pull = useCallback(async () => {
     if (!userId) return;
     try {
-      const data = await listMessages(userId);
-      setMessages(data.messages);
+      setMessages(await listMessages());
       setOnline(true);
-    } catch {
+      setVaultLocked(false);
+    } catch (error) {
       setOnline(false);
+      const locked = error instanceof NotificationApiError && error.status === 423;
+      setVaultLocked(locked);
+      if (locked) setMessages([]);
     }
   }, [userId]);
 
   useEffect(() => {
     if (!userId) return;
     void pull();
-    const stop = openMessageStream(
-      userId,
-      (message) => {
-        setMessages((current) => {
-          if (current.some((item) => item.id === message.id)) return current;
-          return [{ ...message, seen: false }, ...current].slice(0, 200);
-        });
-      },
-      setOnline,
-    );
-    const poll = window.setInterval(() => void pull(), 30_000);
+    const poll = window.setInterval(() => void pull(), 15_000);
     return () => {
-      stop();
       window.clearInterval(poll);
     };
   }, [pull, userId]);
@@ -74,30 +67,27 @@ export default function Bell() {
 
   const unread = useMemo(() => messages.filter((message) => !message.seen), [messages]);
 
-  const acknowledge = async (message: BellMessage) => {
-    if (message.seen) return;
+  const setSeen = async (message: BellMessage, seen: boolean) => {
     setMessages((current) =>
-      current.map((item) => (item.id === message.id ? { ...item, seen: true } : item)),
+      current.map((item) => (item.id === message.id ? { ...item, seen } : item)),
     );
-    if (userId) {
-      try {
-        await markMessagesSeen(userId, [message.id]);
-      } catch {
-        /* keep local state */
-      }
+    try {
+      await markMessagesSeen([message.id], seen);
+    } catch {
+      void pull();
     }
   };
+
+  const acknowledge = async (message: BellMessage) => setSeen(message, !message.seen);
 
   const acknowledgeAll = async () => {
     const ids = unread.map((message) => message.id);
     if (!ids.length) return;
     setMessages((current) => current.map((item) => ({ ...item, seen: true })));
-    if (userId) {
-      try {
-        await markMessagesSeen(userId, ids);
-      } catch {
-        /* keep local state */
-      }
+    try {
+      await markMessagesSeen(ids, true);
+    } catch {
+      void pull();
     }
   };
 
@@ -140,7 +130,13 @@ export default function Bell() {
             >
               Mark all read
             </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Close" onClick={() => setOpen(false)}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              aria-label="Close"
+              onClick={() => setOpen(false)}
+            >
               <X size={14} />
             </Button>
           </div>
@@ -149,11 +145,15 @@ export default function Bell() {
             {messages.length === 0 && (
               <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
                 <Radio size={18} className="text-muted-foreground" />
-                <div className="text-sm">No backend messages yet.</div>
+                <div className="text-sm">
+                  {vaultLocked ? "Notifications are locked." : "No backend messages yet."}
+                </div>
                 <div className="text-xs text-muted-foreground">
-                  {online
-                    ? "The receiver is online and waiting."
-                    : "Notification receiver offline — is the bridge running?"}
+                  {vaultLocked
+                    ? "Sign in again to unlock your encrypted notifications."
+                    : online
+                      ? "No PostgreSQL notifications yet."
+                      : "PostgreSQL notifications are unavailable."}
                 </div>
               </div>
             )}
@@ -169,12 +169,20 @@ export default function Bell() {
                 )}
               >
                 <span className="mt-1 shrink-0 text-muted-foreground">
-                  {message.seen ? <Check size={13} /> : <span className="block h-1.5 w-1.5 rounded-full bg-sky-500" />}
+                  {message.seen ? (
+                    <Check size={13} />
+                  ) : (
+                    <span className="block h-1.5 w-1.5 rounded-full bg-sky-500" />
+                  )}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{message.title || message.kind}</span>
+                  <span className="block truncate text-sm font-medium">
+                    {message.title || message.kind}
+                  </span>
                   {message.message && (
-                    <span className="block truncate text-xs text-muted-foreground">{message.message}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {message.message}
+                    </span>
                   )}
                   <span className="mt-0.5 block text-xs text-muted-foreground">
                     {timeAgo(message.createdAt)} · {message.media === "yt" ? "YouTube" : "Anime"}
@@ -185,10 +193,19 @@ export default function Bell() {
           </div>
 
           <div className="flex items-center gap-1.5 border-t px-4 py-2 text-xs text-muted-foreground">
-            <span className={cn("h-1.5 w-1.5 rounded-full", online ? "bg-emerald-500" : "bg-destructive")} />
-            {online ? "REST receiver online" : "Receiver offline"}
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                online ? "bg-emerald-500" : "bg-destructive",
+              )}
+            />
+            {online
+              ? "PostgreSQL connected"
+              : vaultLocked
+                ? "Vault locked"
+                : "PostgreSQL unavailable"}
             <span className="grow" />
-            <span>backend push · /bridge</span>
+            <span>database-backed history</span>
           </div>
         </div>
       )}

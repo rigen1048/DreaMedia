@@ -59,7 +59,7 @@ Avoid changes that:
 ## Repository areas
 
 - `Backend/` — FastAPI, GraphQL, stores, encryption, workers, and tests.
-- `Frontend/` — React application and notification bridge.
+- `Frontend/` — React application; durable notification history and read state come from FastAPI/PostgreSQL.
 - `Extension/` — Chrome MV3 and Firefox MV2 extension.
 - `docs/` — UX documentation and screenshots.
 - `qa/` — browser checks and screenshot capture.
@@ -118,7 +118,7 @@ Browser E2E:
 python3 qa/e2e.py
 ```
 
-The browser suite covers login, categories, source management, anime state, Todo playlists, progress, notification bridge isolation, backups/restores, and admin authorization.
+The browser suite covers login, categories, source management, anime state, Todo playlists, progress, PostgreSQL-backed bell history/read state, backups/restores, and admin authorization.
 
 ## API and schema changes
 
@@ -153,7 +153,7 @@ If a change modifies a meaningful workflow, update the screenshots or browser ch
 
 ## Security-sensitive changes
 
-For authentication, encryption, extension tokens, backups, restore, cookies, CORS, or bridge behavior:
+For authentication, encryption, extension tokens, backups, restore, cookies, CORS, or notification persistence:
 
 - document the threat model;
 - add an ownership or authorization test;

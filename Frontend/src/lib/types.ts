@@ -178,8 +178,8 @@ export type Workspace = {
 };
 
 export type BellMessage = {
-  id: string;
-  rowId: number | null;
+  id: number;
+  rowId: number;
   userId: number;
   media: "yt" | "ani" | string;
   kind: string;

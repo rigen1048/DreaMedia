@@ -1,18 +1,16 @@
 # Backend notes
 
-The backend is the source of truth for Postgres, ingestion, encryption,
-notification production and durable writes. The frontend owns presentation and
-one small service: the notification receiver.
+The backend is the source of truth for PostgreSQL, ingestion, encryption,
+notification production and durable writes. The frontend owns presentation
+and calls the authenticated backend API for bell history and read state.
 
 ## Contract
 
-- **Data:** every read/write goes through one GraphQL endpoint
-  (`Backend/Graphql/children.py` + `supergraph.py`). Older REST management
-  routes still exist for compatibility and tooling, but the UI no longer uses
-  them.
-- **Messages:** `Utility.notify.notify()` writes the encrypted history row and
-  POSTs the same message to `FRONTEND_NOTIFY_URL` (the frontend bridge). Only
-  pushes that arrive through that receiver reach the bell.
+- **Data:** GraphQL is the frontend's primary application API. The header bell
+  uses authenticated `GET /notifications` and `POST /notifications/seen`.
+- **Messages:** `Utility.notify.notify()` writes each encrypted message once to
+  the PostgreSQL `notifications` table. The bell reads and updates that same
+  table; there is no bridge, JSON inbox, or duplicate notification store.
 - **Scope gates:** `notify_yt_video()` and `notify_ani_release()` call
   `PgStore.notify_enabled` / `AniStore.notify_enabled`, i.e.
   `domain.notify AND subdomain.notify AND channel/entry.notify AND label='none'`
@@ -23,7 +21,7 @@ one small service: the notification receiver.
 
 | Area | Decision |
 | --- | --- |
-| Sessions | In-memory, httpOnly cookie; restart re-authenticates and re-derives the vault key |
+| Sessions | DB-backed session records in an httpOnly cookie; the encryption vault key remains in memory and is re-derived on login |
 | Cursors | Forward-only anime cursor (season/episode/seconds) + watched seasons; no per-episode history |
 | Playlists | Links are inserted immediately; title/thumbnail enrichment runs in the background (oEmbed → yt-dlp → id stub) so a YouTube bot-wall can never lose a link |
 | Blocked / completed | Single `label` column (`none`/`completed`/`blocked`) shared by both media types; both labels suppress delivery |

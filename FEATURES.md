@@ -158,7 +158,7 @@ The extension talks to a separate token-authenticated GraphQL lane. It does not 
 - Personal categories, rules, progress, queues, and notification memory remain in the user-controlled instance.
 - User content is encrypted at rest with per-user keys.
 - Extension credentials are separate, hashed, revocable tokens.
-- The notification bridge authenticates browser reads through the backend session.
+- The bell reads encrypted notifications and seen state from PostgreSQL through the authenticated backend session.
 - Portable exports and database backups are available.
 
 DreaMedia still depends on external public sources and metadata providers. The important distinction is that a hosted third-party intermediary is not required to own the user’s personal media relationship.

@@ -292,7 +292,7 @@ async def main() -> None:
                     entry_id, str(hours_ago), kind,
                 )
 
-    await _push_demo_messages(user_id)
+    await _seed_demo_messages(user_id)
     await db.close()
     print("Seeded demo workspace for user 'demo' / 'demo1234'.")
 
@@ -300,52 +300,41 @@ async def main() -> None:
 COVER_COLORS = ["332a52", "243a44", "43303c", "2b3a2c", "2f3348", "3c2f28"]
 
 
-async def _push_demo_messages(user_id: int) -> None:
-    """Populate the bell through the frontend receiver (the only bell lane)."""
-    import os
+async def _seed_demo_messages(user_id: int) -> None:
+    """Populate the header bell through its PostgreSQL source of truth."""
+    from Utility.notify import notify
 
-    url = os.environ.get("FRONTEND_NOTIFY_URL")
-    if not url:
-        return
-    try:
-        import httpx
-
-        headers = {}
-        token = os.environ.get("FRONTEND_NOTIFY_TOKEN")
-        if token:
-            headers["X-Dreamedia-Token"] = token
-        samples = [
-            {
-                "media": "yt", "kind": "tracking_video",
-                "title": "The M5 MacBook Air is genuinely different",
-                "message": "Marques Brownlee · Track",
+    samples = [
+        {
+            "media": "yt", "kind": "tracking_video",
+            "title": "PostgreSQL bell smoke test",
+            "message": "Marques Brownlee · Track",
+            "url": "https://www.youtube.com/watch?v=S1VkZ4k9K2A",
+            "payload": {
+                "channel": "Marques Brownlee", "mode": "tracking",
+                "videoId": "S1VkZ4k9K2A", "title": "The M5 MacBook Air is genuinely different",
                 "url": "https://www.youtube.com/watch?v=S1VkZ4k9K2A",
             },
-            {
-                "media": "ani", "kind": "release_confirmed",
-                "title": "Frieren: Beyond Journey's End",
-                "message": "Release confirmed · Season 2", "level": "release",
-            },
-            {
-                "media": "ani", "kind": "next_episode_date",
-                "title": "Dandadan", "message": "New episode · Season 1 · in 3d",
-                "level": "release",
-            },
-        ]
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            for index, sample in enumerate(samples, start=1):
-                body = {
-                    "id": f"demo-{user_id}-{index}",
-                    "rowId": None,
-                    "userId": user_id,
-                    "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - index * 900)),
-                    "payload": {},
-                    **sample,
-                }
-                await client.post(url, json=body, headers=headers)
-        print("  ✓ demo bell messages pushed to the frontend receiver")
-    except Exception as exc:  # pragma: no cover - bridge optional
-        print(f"  ! could not push demo messages ({exc})")
+        },
+        {
+            "media": "ani", "kind": "release_confirmed",
+            "title": "Frieren: Beyond Journey's End",
+            "message": "Release confirmed · Season 2", "level": "release",
+            "payload": {"season": 2, "release": "2027-03-14"},
+        },
+        {
+            "media": "ani", "kind": "next_episode_date",
+            "title": "Dandadan", "message": "New episode · Season 1 · in 3d",
+            "level": "release", "payload": {"season": 1, "episode": 8},
+        },
+    ]
+    for sample in samples:
+        details = dict(sample)
+        media = details.pop("media")
+        kind = details.pop("kind")
+        payload = details.pop("payload")
+        await notify(user_id, media, kind, payload, **details)
+    print("  ✓ demo bell messages stored in PostgreSQL")
 
 
 def cover_for(title: str) -> str:

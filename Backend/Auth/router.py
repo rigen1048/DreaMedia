@@ -46,12 +46,7 @@ async def login(body: Credentials, response: Response):
 
 @router.get("/session")
 async def session(dreamedia: str | None = Cookie(default=None)):
-    """Who does this cookie belong to?
-
-    Used by the frontend's notification bridge: the bell hands the browser
-    cookie to this endpoint and only ever serves messages for that user, so
-    a guessed ?userId can no longer read somebody else's notifications.
-    """
+    """Return the account associated with the current browser session."""
     user_id = await auth.resolve_session(dreamedia or "")
     if not user_id:
         return JSONResponse(status_code=401, content={"ok": False, "error": "unauthenticated"})
