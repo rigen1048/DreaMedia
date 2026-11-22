@@ -324,7 +324,7 @@ async function pollImportJob(jobId) {
         status("importStatus", "Import job was not found for this account.", "err");
         break;
       }
-      const progress = `${job.processed}/${job.requested} processed · ${job.added} added · ${job.skipped} already present · ${job.failed} failed`;
+      const progress = `${job.resolved}/${job.requested} resolved · ${job.processed}/${job.requested} processed · ${job.added} added · ${job.skipped} already present · ${job.failed} failed`;
       if (job.status === "completed" || job.status === "partial") {
         activeImportJobId = null;
         await chrome.storage.local.remove("youtubeImportJobId");

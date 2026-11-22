@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS yt_import_jobs (
                  CHECK (status IN ('queued', 'running', 'completed', 'partial')),
     requested    INTEGER NOT NULL CHECK (requested >= 0),
     processed    INTEGER NOT NULL DEFAULT 0,
+    resolved     INTEGER NOT NULL DEFAULT 0,
     added        INTEGER NOT NULL DEFAULT 0,
     skipped      INTEGER NOT NULL DEFAULT 0,
     failed       INTEGER NOT NULL DEFAULT 0,
@@ -58,14 +59,65 @@ CREATE TABLE IF NOT EXISTS yt_import_items (
     ordinal      INTEGER NOT NULL,
     link_enc     BYTEA NOT NULL,
     status       TEXT NOT NULL DEFAULT 'queued'
-                 CHECK (status IN ('queued', 'running', 'added', 'skipped', 'failed')),
+                 CHECK (status IN ('queued', 'resolving', 'resolved', 'processing', 'running', 'added', 'skipped', 'failed')),
     error_enc    BYTEA,
+    resolved_enc BYTEA,
     claimed_at   TIMESTAMPTZ,
     claim_token  TEXT,
     UNIQUE (job_id, ordinal)
 );
 CREATE INDEX IF NOT EXISTS idx_yt_import_items_queue
     ON yt_import_items(job_id, status, ordinal);
+
+-- Two-stage bulk YouTube imports. These migrations also upgrade the earlier
+-- single-stage queue without losing work: old in-flight rows are re-queued
+-- for resolution (writes use skip-existing, so replay is idempotent).
+ALTER TABLE yt_import_jobs ADD COLUMN IF NOT EXISTS resolved INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE yt_import_items ADD COLUMN IF NOT EXISTS resolved_enc BYTEA;
+
+DO $$
+BEGIN
+    ALTER TABLE yt_import_items DROP CONSTRAINT IF EXISTS yt_import_items_status_check;
+    ALTER TABLE yt_import_items
+        ADD CONSTRAINT yt_import_items_status_check
+        CHECK (status IN (
+            'queued', 'resolving', 'resolved', 'processing', 'running',
+            'added', 'skipped', 'failed'
+        ));
+END $$;
+
+UPDATE yt_import_items
+SET status = 'queued', claimed_at = NULL, claim_token = NULL
+WHERE status = 'running';
+
+CREATE INDEX IF NOT EXISTS idx_yt_import_items_stage
+    ON yt_import_items(status, claimed_at, job_id, ordinal);
+
+-- A row is one globally enforced concurrency slot, shared by every backend
+-- process/container connected to this database. The resolver target is 8;
+-- source-write processing is capped separately at 16.
+CREATE TABLE IF NOT EXISTS yt_import_worker_slots (
+    stage        TEXT NOT NULL CHECK (stage IN ('resolve', 'process')),
+    slot_id      INTEGER NOT NULL CHECK (slot_id > 0),
+    available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    claimed_at   TIMESTAMPTZ,
+    claim_token  TEXT,
+    PRIMARY KEY (stage, slot_id),
+    CHECK ((claim_token IS NULL) = (claimed_at IS NULL))
+);
+
+INSERT INTO yt_import_worker_slots (stage, slot_id)
+SELECT 'resolve', slot_id FROM generate_series(1, 8) AS slots(slot_id)
+ON CONFLICT (stage, slot_id) DO NOTHING;
+INSERT INTO yt_import_worker_slots (stage, slot_id)
+SELECT 'process', slot_id FROM generate_series(1, 16) AS slots(slot_id)
+ON CONFLICT (stage, slot_id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS yt_import_dispatcher (
+    id             SMALLINT PRIMARY KEY CHECK (id = 1),
+    next_start_at  TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+INSERT INTO yt_import_dispatcher (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
 -- ============================ Yt plugin ============================
 CREATE TABLE IF NOT EXISTS yt_domains (

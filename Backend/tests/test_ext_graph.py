@@ -226,6 +226,7 @@ def test_extension_schema_exposes_category_and_withhold_contract():
     assert "importYoutubeChannels" in schema
     assert "startYoutubeImport" in schema
     assert "youtubeImportJob" in schema
+    assert "resolved: Int!" in schema
 
 
 @pytest.mark.asyncio
@@ -239,7 +240,7 @@ async def test_bulk_start_returns_queued_job_without_resolving_channels(monkeypa
         calls.append((user, links, options))
         return {
             "job_id": "job-123", "status": "queued", "requested": 2,
-            "processed": 0, "added": 0, "skipped": 0, "failed": 0,
+            "processed": 0, "resolved": 0, "added": 0, "skipped": 0, "failed": 0,
         }
 
     monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
@@ -256,6 +257,7 @@ async def test_bulk_start_returns_queued_job_without_resolving_channels(monkeypa
 
     assert result.job_id == "job-123" and result.status == "queued"
     assert result.requested == 2 and result.processed == 0
+    assert result.resolved == 0
     assert calls == [(
         12,
         ["https://youtube.com/@one", "https://youtube.com/@two"],
@@ -277,7 +279,7 @@ async def test_import_progress_query_uses_authenticated_owner(monkeypatch, exten
         calls.append((owner, job_id))
         return {
             "job_id": job_id, "status": "running", "requested": 4,
-            "processed": 2, "added": 1, "skipped": 1, "failed": 0,
+            "processed": 2, "resolved": 3, "added": 1, "skipped": 1, "failed": 0,
             "errors": [],
         }
 
@@ -287,7 +289,7 @@ async def test_import_progress_query_uses_authenticated_owner(monkeypatch, exten
     result = await ext_graph.ExtQuery().youtube_import_job(extension_info, "job-123")
 
     assert calls == [(12, "job-123")]
-    assert result.job_id == "job-123" and result.processed == 2
+    assert result.job_id == "job-123" and result.processed == 2 and result.resolved == 3
 
 
 @pytest.mark.asyncio

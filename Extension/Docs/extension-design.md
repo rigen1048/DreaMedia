@@ -155,13 +155,17 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
   scrolls to let lazy-loaded rows appear, deduplicates them, and returns a
   count plus a short preview to the popup.
 - The popup keeps the list in memory until the user explicitly selects
-  **Import all**. It submits bounded batches over the authenticated WebSocket;
-  no YouTube password, cookie, or OAuth token is requested or sent to DreaMedia.
-- The backend resolves each link with bounded concurrency. Each new channel,
-  mode, optional Withhold threshold, and optional category are committed in one
-  transaction. Existing channels are skipped so their current settings stay
-  unchanged. Individual resolution or write failures are reported in the
-  result rather than aborting successful channels.
+  **Add source**. It submits the links and source settings over the authenticated
+  WebSocket; no YouTube password, cookie, or OAuth token is requested or sent
+  to DreaMedia.
+- The backend durably resolves each link, encrypts resolved metadata, then
+  processes that metadata through the same Add Source write path. PostgreSQL
+  caps lookup at eight concurrent requests globally, staggers request starts by
+  250ms, and enforces a two-second cooldown per resolver slot; source processing
+  has a separate global limit of 16. Existing channels are skipped so their
+  current settings stay unchanged. The popup reports resolved channels
+  separately from completed writes, and individual failures do not abort other
+  channels.
 - Because the subscriptions page loads dynamically, the import button remains
   disabled unless the scan observes a stable end. If the list is still growing
   at the scan limit, the user must scroll/scan again.

@@ -17,9 +17,14 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
    options, and category apply to every channel. The scan reads links from the
    active page and scrolls to load more; nothing is sent to DreaMedia before the
    Add sources click. Existing DreaMedia sources are skipped without changing
-   their mode or category. A background job reports progress, and the popup can
-   be closed and reopened while processing continues. Scan again if the page
-   does not reach a stable end.
+   their mode or category. The backend first resolves channel metadata, then
+   separately writes each resolved source through the same Add Source path.
+   PostgreSQL globally caps resolution at eight concurrent requests (250ms
+   start spacing; each request slot cools down for two seconds before reuse)
+   and source processing at 16 concurrent operations across backend containers.
+   A background job reports resolved and fully processed counts separately,
+   and the popup can be closed and reopened while processing continues. Scan
+   again if the page does not reach a stable end.
 4. **Add the current video to a playlist card.**
 
 ## Setup

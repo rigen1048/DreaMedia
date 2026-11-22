@@ -1,16 +1,18 @@
-"""Encrypted PostgreSQL queue for bulk YouTube source additions.
+"""Encrypted two-stage PostgreSQL queue for bulk YouTube source additions.
 
-The extension's Add Source resolver and background import workers share the
-same channel resolution/write path. The request that starts a bulk import only
-validates/enqueues work; bounded workers resolve channels off the event loop.
+Resolver and source-write workers use separate durable stages and PostgreSQL
+global slots. Single Add Source uses the same resolver and resolved-metadata
+write helpers as bulk imports.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+import random
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import urlsplit
 
@@ -24,34 +26,57 @@ from Utility.logs import log
 
 MAX_IMPORT_CHANNELS = 2000
 MAX_STATUS_ERRORS = 10
-CLAIM_STALE_AFTER_MINUTES = 5
+CLAIM_STALE_AFTER_MINUTES = 10
 DEFAULT_IMPORT_WORKERS = 8
-MAX_IMPORT_WORKERS = 16
+DEFAULT_PROCESS_WORKERS = 16
+GLOBAL_RESOLVE_SLOTS = 8
+GLOBAL_PROCESS_SLOTS = 16
+MAX_IMPORT_WORKERS = GLOBAL_RESOLVE_SLOTS
+MAX_PROCESS_WORKERS = GLOBAL_PROCESS_SLOTS
+RESOLVE_START_SPACING_SECONDS = 0.25
+RESOLVE_WORKER_COOLDOWN_SECONDS = 2
 _CHANNEL_PATH = re.compile(r"^/(?:@[^/]+|channel/UC[A-Za-z0-9_-]{22})(?:/|$)", re.I)
 _CHANNEL_KINDS = {"tracking", "wordscan", "random", "withhold"}
 
 
-def import_worker_count() -> int:
-    """Configured per-process concurrency, bounded to avoid request bursts."""
-    raw = os.getenv("DREAMEDIA_YT_IMPORT_WORKERS", str(DEFAULT_IMPORT_WORKERS))
+def _bounded_worker_count(env_name: str, default: int, maximum: int) -> int:
+    raw = os.getenv(env_name, str(default))
     try:
         requested = int(raw)
     except (TypeError, ValueError):
         log.warning(
-            "Invalid DREAMEDIA_YT_IMPORT_WORKERS=%r; using %s",
+            "Invalid %s=%r; using %s",
+            env_name,
             raw,
-            DEFAULT_IMPORT_WORKERS,
+            default,
         )
-        return DEFAULT_IMPORT_WORKERS
-    bounded = min(MAX_IMPORT_WORKERS, max(1, requested))
+        return default
+    bounded = min(maximum, max(1, requested))
     if bounded != requested:
         log.warning(
-            "DREAMEDIA_YT_IMPORT_WORKERS=%s is outside 1..%s; using %s",
+            "%s=%s is outside 1..%s; using %s",
+            env_name,
             requested,
-            MAX_IMPORT_WORKERS,
+            maximum,
             bounded,
         )
     return bounded
+
+
+def import_worker_count() -> int:
+    """Per-process resolver workers; PostgreSQL slots cap global lookups at 8."""
+    return _bounded_worker_count(
+        "DREAMEDIA_YT_IMPORT_WORKERS", DEFAULT_IMPORT_WORKERS, MAX_IMPORT_WORKERS
+    )
+
+
+def process_worker_count() -> int:
+    """Per-process persistence workers; PostgreSQL slots cap global work at 16."""
+    return _bounded_worker_count(
+        "DREAMEDIA_YT_IMPORT_PROCESS_WORKERS",
+        DEFAULT_PROCESS_WORKERS,
+        MAX_PROCESS_WORKERS,
+    )
 
 
 def normalize_source_options(
@@ -83,6 +108,90 @@ def normalize_source_options(
     }
 
 
+async def resolve_youtube_channel(link: str) -> Dict[str, Any]:
+    """Resolve channel metadata in a thread; do not hold a DB connection."""
+    from Orchestrator.Yt.Fetch.convert import resolve_channel
+
+    clean_link = link.strip()
+    if not clean_link:
+        raise ValueError("source link is required")
+    thread_task = asyncio.create_task(asyncio.to_thread(resolve_channel, clean_link))
+    try:
+        resolved_result = await asyncio.shield(thread_task)
+    except asyncio.CancelledError:
+        # Cancelling to_thread does not stop its underlying thread. Wait for
+        # yt-dlp's configured socket timeout before releasing the queue claim.
+        try:
+            await asyncio.shield(thread_task)
+        except Exception:
+            pass
+        raise
+    if isinstance(resolved_result, Failure):
+        raise ValueError(resolved_result.failure())
+    resolved = resolved_result.unwrap()
+    return {
+        "rss_id": resolved.rss_id,
+        "name": resolved.name,
+        "url": resolved.url,
+        "logo": resolved.logo,
+    }
+
+
+async def _store_resolved_source(
+    user_id: int,
+    resolved: Dict[str, Any],
+    options: Dict[str, Any],
+    *,
+    skip_existing: bool,
+    store: Optional[PgStore],
+) -> Dict[str, Any]:
+    target_store = store or PgStore()
+    saved = await target_store.add_extension_subscription(
+        user_id,
+        rss_id=resolved["rss_id"],
+        channel_name=resolved["name"],
+        channel_url=resolved["url"],
+        kind=options["kind"],
+        words=options["words"],
+        rank=options["rank"],
+        withhold=options["withhold"],
+        domain=options["domain"],
+        subdomain=options["subdomain"],
+        logo=resolved.get("logo"),
+        skip_existing=skip_existing,
+    )
+    if isinstance(saved, Failure):
+        raise ValueError(saved.failure())
+    return saved.unwrap()
+
+
+async def add_resolved_youtube_channel_source(
+    user_id: int,
+    resolved: Dict[str, Any],
+    *,
+    kind: str,
+    words: Optional[List[str]] = None,
+    rank: Optional[str] = None,
+    withhold: Optional[int] = None,
+    domain: Optional[str] = None,
+    subdomain: Optional[str] = None,
+    skip_existing: bool = False,
+    store: Optional[PgStore] = None,
+) -> Dict[str, Any]:
+    """Persist resolved metadata through the same atomic Add Source path."""
+    options = normalize_source_options(
+        kind=kind,
+        words=words,
+        rank=rank,
+        withhold=withhold,
+        domain=domain,
+        subdomain=subdomain,
+    )
+    return await _store_resolved_source(
+        user_id, resolved, options, skip_existing=skip_existing, store=store
+    )
+
+
 async def add_youtube_channel_source(
     user_id: int,
     link: str,
@@ -96,9 +205,7 @@ async def add_youtube_channel_source(
     skip_existing: bool = False,
     store: Optional[PgStore] = None,
 ) -> Dict[str, Any]:
-    """Resolve and store one source using the same path for single and bulk adds."""
-    from Orchestrator.Yt.Fetch.convert import resolve_channel
-
+    """Resolve and store one source using the shared single-channel path."""
     options = normalize_source_options(
         kind=kind,
         words=words,
@@ -107,31 +214,10 @@ async def add_youtube_channel_source(
         domain=domain,
         subdomain=subdomain,
     )
-    clean_link = link.strip()
-    if not clean_link:
-        raise ValueError("source link is required")
-    resolved_result = await asyncio.to_thread(resolve_channel, clean_link)
-    if isinstance(resolved_result, Failure):
-        raise ValueError(resolved_result.failure())
-    resolved = resolved_result.unwrap()
-    target_store = store or PgStore()
-    saved = await target_store.add_extension_subscription(
-        user_id,
-        rss_id=resolved.rss_id,
-        channel_name=resolved.name,
-        channel_url=resolved.url,
-        kind=options["kind"],
-        words=options["words"],
-        rank=options["rank"],
-        withhold=options["withhold"],
-        domain=options["domain"],
-        subdomain=options["subdomain"],
-        logo=resolved.logo,
-        skip_existing=skip_existing,
+    resolved = await resolve_youtube_channel(link)
+    return await _store_resolved_source(
+        user_id, resolved, options, skip_existing=skip_existing, store=store
     )
-    if isinstance(saved, Failure):
-        raise ValueError(saved.failure())
-    return saved.unwrap()
 
 
 def _prepare_items(links: Sequence[str]) -> List[Dict[str, Any]]:
@@ -239,13 +325,14 @@ async def enqueue_youtube_import(
             )
             await con.execute(
                 "INSERT INTO yt_import_jobs "
-                "(job_id, user_id, status, requested, processed, skipped, failed, options_enc) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                "(job_id, user_id, status, requested, processed, resolved, skipped, failed, options_enc) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                 job_id,
                 user_id,
                 status,
                 len(items),
                 processed,
+                0,
                 skipped,
                 failed,
                 options_enc,
@@ -269,6 +356,7 @@ async def enqueue_youtube_import(
         "status": status,
         "requested": len(items),
         "processed": processed,
+        "resolved": 0,
         "added": 0,
         "skipped": skipped,
         "failed": failed,
@@ -279,7 +367,7 @@ async def get_youtube_import_status(user_id: int, job_id: str) -> Optional[Dict[
     pool = await get_pool()
     async with pool.acquire() as con:
         job = await con.fetchrow(
-            "SELECT job_id, status, requested, processed, added, skipped, failed "
+            "SELECT job_id, status, requested, processed, resolved, added, skipped, failed "
             "FROM yt_import_jobs WHERE job_id = $1 AND user_id = $2",
             job_id,
             user_id,
@@ -302,6 +390,7 @@ async def get_youtube_import_status(user_id: int, job_id: str) -> Optional[Dict[
         "status": job["status"],
         "requested": job["requested"],
         "processed": job["processed"],
+        "resolved": job["resolved"],
         "added": job["added"],
         "skipped": job["skipped"],
         "failed": job["failed"],
@@ -309,42 +398,86 @@ async def get_youtube_import_status(user_id: int, job_id: str) -> Optional[Dict[
     }
 
 
-async def _pending_user_ids() -> List[int]:
+async def _pending_user_ids(stage: str) -> List[int]:
+    if stage == "resolve":
+        predicate = (
+            "(i.status = 'queued' OR (i.status = 'resolving' AND "
+            "i.claimed_at < now() - make_interval(mins => $1)))"
+        )
+    elif stage == "process":
+        predicate = (
+            "(i.status = 'resolved' OR (i.status = 'processing' AND "
+            "i.claimed_at < now() - make_interval(mins => $1)))"
+        )
+    else:
+        raise ValueError(f"unknown import stage: {stage}")
     pool = await get_pool()
     async with pool.acquire() as con:
         rows = await con.fetch(
             "SELECT j.user_id FROM yt_import_jobs j "
             "JOIN yt_import_items i ON i.job_id = j.job_id "
-            "WHERE j.status IN ('queued', 'running') AND (i.status = 'queued' OR "
-            "(i.status = 'running' AND i.claimed_at < now() - "
-            "make_interval(mins => $1))) "
+            f"WHERE j.status IN ('queued', 'running') AND {predicate} "
             "GROUP BY j.user_id ORDER BY MIN(j.created_at)",
             CLAIM_STALE_AFTER_MINUTES,
         )
     return [row["user_id"] for row in rows]
 
 
-async def _claim_one(user_id: int) -> Optional[Dict[str, Any]]:
+async def _claim_stage_item(user_id: int, stage: str) -> Optional[Dict[str, Any]]:
+    """Claim a durable item and one DB-global capacity slot atomically."""
+    if stage == "resolve":
+        predicate = (
+            "(i.status = 'queued' OR (i.status = 'resolving' AND "
+            "i.claimed_at < now() - make_interval(mins => $2)))"
+        )
+        item_status = "resolving"
+    elif stage == "process":
+        predicate = (
+            "(i.status = 'resolved' OR (i.status = 'processing' AND "
+            "i.claimed_at < now() - make_interval(mins => $2)))"
+        )
+        item_status = "processing"
+    else:
+        raise ValueError(f"unknown import stage: {stage}")
+
     claim_token = uuid.uuid4().hex
     pool = await get_pool()
     async with pool.acquire() as con:
         async with con.transaction():
-            row = await con.fetchrow(
-                "SELECT i.id, i.job_id, i.link_enc, j.options_enc "
-                "FROM yt_import_items i JOIN yt_import_jobs j ON j.job_id = i.job_id "
-                "WHERE j.user_id = $1 AND j.status IN ('queued', 'running') AND "
-                "(i.status = 'queued' OR (i.status = 'running' AND i.claimed_at < "
+            slot = await con.fetchrow(
+                "SELECT slot_id FROM yt_import_worker_slots WHERE stage = $1 AND "
+                "((claim_token IS NULL AND available_at <= now()) OR "
+                "(claim_token IS NOT NULL AND claimed_at < "
                 "now() - make_interval(mins => $2))) "
+                "ORDER BY available_at, slot_id LIMIT 1 FOR UPDATE SKIP LOCKED",
+                stage,
+                CLAIM_STALE_AFTER_MINUTES,
+            )
+            if slot is None:
+                return None
+            row = await con.fetchrow(
+                "SELECT i.id, i.job_id, i.link_enc, i.options_enc, i.resolved_enc "
+                "FROM yt_import_items i JOIN yt_import_jobs j ON j.job_id = i.job_id "
+                f"WHERE j.user_id = $1 AND j.status IN ('queued', 'running') AND {predicate} "
                 "ORDER BY j.created_at, i.ordinal LIMIT 1 FOR UPDATE OF i SKIP LOCKED",
                 user_id,
                 CLAIM_STALE_AFTER_MINUTES,
             )
             if row is None:
                 return None
+
             await con.execute(
-                "UPDATE yt_import_items SET status = 'running', claimed_at = now(), "
-                "claim_token = $2 WHERE id = $1",
+                "UPDATE yt_import_items SET status = $2, claimed_at = now(), "
+                "claim_token = $3 WHERE id = $1",
                 row["id"],
+                item_status,
+                claim_token,
+            )
+            await con.execute(
+                "UPDATE yt_import_worker_slots SET claim_token = $3, claimed_at = now() "
+                "WHERE stage = $1 AND slot_id = $2",
+                stage,
+                slot["slot_id"],
                 claim_token,
             )
             await con.execute(
@@ -352,10 +485,128 @@ async def _claim_one(user_id: int) -> Optional[Dict[str, Any]]:
                 "WHERE job_id = $1 AND status = 'queued'",
                 row["job_id"],
             )
-            return {**dict(row), "claim_token": claim_token}
+
+            start_at = None
+            if stage == "resolve":
+                scheduled = await con.fetchrow(
+                    "UPDATE yt_import_dispatcher SET next_start_at = "
+                    "GREATEST(next_start_at, clock_timestamp()) + "
+                    "make_interval(secs => $1::double precision) WHERE id = 1 "
+                    "RETURNING next_start_at - "
+                    "make_interval(secs => $1::double precision) AS start_at",
+                    RESOLVE_START_SPACING_SECONDS,
+                )
+                if scheduled is None:
+                    raise RuntimeError("YouTube import request dispatcher is not initialized")
+                start_at = scheduled["start_at"]
+
+            return {
+                **dict(row),
+                "user_id": user_id,
+                "stage": stage,
+                "slot_id": slot["slot_id"],
+                "claim_token": claim_token,
+                "start_at": start_at,
+            }
 
 
-async def _complete_item(
+async def _release_slot(
+    con: Any,
+    item: Dict[str, Any],
+    *,
+    cooldown_seconds: float = 0,
+) -> None:
+    if cooldown_seconds:
+        await con.execute(
+            "UPDATE yt_import_worker_slots SET claim_token = NULL, claimed_at = NULL, "
+            "available_at = clock_timestamp() + "
+            "make_interval(secs => $4::double precision) "
+            "WHERE stage = $1 AND slot_id = $2 AND claim_token = $3",
+            item["stage"],
+            item["slot_id"],
+            item["claim_token"],
+            cooldown_seconds,
+        )
+    else:
+        await con.execute(
+            "UPDATE yt_import_worker_slots SET claim_token = NULL, claimed_at = NULL, "
+            "available_at = clock_timestamp() "
+            "WHERE stage = $1 AND slot_id = $2 AND claim_token = $3",
+            item["stage"],
+            item["slot_id"],
+            item["claim_token"],
+        )
+
+
+async def _requeue_claim_for_retry(
+    item: Dict[str, Any],
+    next_status: str,
+    *,
+    cooldown_seconds: float = 0,
+) -> None:
+    """Return a canceled claim to its stage queue without counting progress."""
+    claimed_status = {"queued": "resolving", "resolved": "processing"}.get(next_status)
+    if claimed_status is None:
+        raise ValueError(f"invalid retry status: {next_status}")
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        async with con.transaction():
+            await con.execute(
+                "UPDATE yt_import_items SET status = $2, claimed_at = NULL, claim_token = NULL "
+                "WHERE id = $1 AND status = $3 AND claim_token = $4",
+                item["id"],
+                next_status,
+                claimed_status,
+                item["claim_token"],
+            )
+            await _release_slot(con, item, cooldown_seconds=cooldown_seconds)
+
+
+async def _complete_resolution(
+    item: Dict[str, Any],
+    key: bytes,
+    resolved: Optional[Dict[str, Any]],
+    error: Optional[str] = None,
+) -> None:
+    resolved_enc = encrypt(key, json.dumps(resolved, separators=(",", ":"))) if resolved else None
+    error_enc = encrypt(key, error[:1200]) if error else None
+    final_status = "resolved" if resolved else "failed"
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        async with con.transaction():
+            updated = await con.execute(
+                "UPDATE yt_import_items SET status = $2, resolved_enc = $3, error_enc = $4, "
+                "claimed_at = NULL, claim_token = NULL "
+                "WHERE id = $1 AND status = 'resolving' AND claim_token = $5",
+                item["id"],
+                final_status,
+                resolved_enc,
+                error_enc,
+                item["claim_token"],
+            )
+            if updated != "UPDATE 0":
+                if resolved:
+                    await con.execute(
+                        "UPDATE yt_import_jobs SET resolved = resolved + 1, "
+                        "status = 'running', updated_at = now() WHERE job_id = $1",
+                        item["job_id"],
+                    )
+                else:
+                    await con.execute(
+                        "UPDATE yt_import_jobs SET processed = processed + 1, "
+                        "failed = failed + 1, status = CASE "
+                        "WHEN processed + 1 >= requested THEN 'partial' ELSE 'running' END, "
+                        "updated_at = now() WHERE job_id = $1",
+                        item["job_id"],
+                    )
+            await _release_slot(
+                con,
+                item,
+                cooldown_seconds=RESOLVE_WORKER_COOLDOWN_SECONDS,
+            )
+
+
+async def _complete_processing(
     item: Dict[str, Any],
     key: bytes,
     status: str,
@@ -366,36 +617,65 @@ async def _complete_item(
     async with pool.acquire() as con:
         async with con.transaction():
             updated = await con.execute(
-                "UPDATE yt_import_items SET status = $2, error_enc = $3, "
+                "UPDATE yt_import_items SET status = $2, error_enc = $3, resolved_enc = NULL, "
                 "claimed_at = NULL, claim_token = NULL "
-                "WHERE id = $1 AND status = 'running' AND claim_token = $4",
+                "WHERE id = $1 AND status = 'processing' AND claim_token = $4",
                 item["id"],
                 status,
                 error_enc,
                 item["claim_token"],
             )
-            if updated == "UPDATE 0":
-                return
-            await con.execute(
-                "UPDATE yt_import_jobs SET processed = processed + 1, "
-                "added = added + $2, skipped = skipped + $3, failed = failed + $4, "
-                "status = CASE WHEN processed + 1 >= requested THEN "
-                "CASE WHEN failed + $4 > 0 THEN 'partial' ELSE 'completed' END "
-                "ELSE 'running' END, updated_at = now() WHERE job_id = $1",
-                item["job_id"],
-                1 if status == "added" else 0,
-                1 if status == "skipped" else 0,
-                1 if status == "failed" else 0,
+            if updated != "UPDATE 0":
+                await con.execute(
+                    "UPDATE yt_import_jobs SET processed = processed + 1, "
+                    "added = added + $2, skipped = skipped + $3, failed = failed + $4, "
+                    "status = CASE WHEN processed + 1 >= requested THEN "
+                    "CASE WHEN failed + $4 > 0 THEN 'partial' ELSE 'completed' END "
+                    "ELSE 'running' END, updated_at = now() WHERE job_id = $1",
+                    item["job_id"],
+                    1 if status == "added" else 0,
+                    1 if status == "skipped" else 0,
+                    1 if status == "failed" else 0,
+                )
+            await _release_slot(con, item)
+
+
+async def _resolve_claim(item: Dict[str, Any], key: bytes) -> None:
+    start_at = item.get("start_at")
+    link = ""
+    try:
+        if start_at is not None:
+            delay = (start_at - datetime.now(timezone.utc)).total_seconds()
+            if delay > 0:
+                await asyncio.sleep(delay)
+        link = decrypt(key, item["link_enc"]) or ""
+        resolved = await resolve_youtube_channel(link)
+        error = None
+    except asyncio.CancelledError:
+        try:
+            await _requeue_claim_for_retry(
+                item,
+                "queued",
+                cooldown_seconds=RESOLVE_WORKER_COOLDOWN_SECONDS,
             )
+        except Exception:
+            log.exception("Could not safely requeue canceled YouTube resolution claim")
+        raise
+    except Exception as exc:
+        resolved = None
+        error = f"{link}: {str(exc) or 'channel resolution failed'}"
+    await _complete_resolution(item, key, resolved, error)
 
 
 async def _process_claim(item: Dict[str, Any], key: bytes, store: PgStore) -> None:
-    link = decrypt(key, item["link_enc"]) or ""
+    link = ""
     try:
+        link = decrypt(key, item["link_enc"]) or ""
         options = json.loads(decrypt(key, item["options_enc"]) or "{}")
-        result = await add_youtube_channel_source(
-            item.get("user_id") or 0,
-            link,
+        resolved = json.loads(decrypt(key, item["resolved_enc"]) or "{}")
+        result = await add_resolved_youtube_channel_source(
+            item["user_id"],
+            resolved,
             **options,
             skip_existing=True,
             store=store,
@@ -403,34 +683,49 @@ async def _process_claim(item: Dict[str, Any], key: bytes, store: PgStore) -> No
         status = "added" if result.get("created", True) else "skipped"
         error = None
     except asyncio.CancelledError:
+        try:
+            await _requeue_claim_for_retry(item, "resolved")
+        except Exception:
+            log.exception("Could not safely requeue canceled YouTube processing claim")
         raise
     except Exception as exc:
         status = "failed"
-        error = f"{link}: {str(exc) or 'source resolution failed'}"
-    await _complete_item(item, key, status, error)
+        error = f"{link}: {str(exc) or 'source could not be added'}"
+    await _complete_processing(item, key, status, error)
 
 
-async def run_youtube_import_worker() -> None:
-    """Claim durable items; network resolution is bounded by app worker count."""
+async def _run_stage_worker(stage: str) -> None:
     store = PgStore()
     while True:
         try:
             did_work = False
-            for user_id in await _pending_user_ids():
+            for user_id in await _pending_user_ids(stage):
                 key = await vault.get(user_id)
                 if key is None:
                     continue
-                item = await _claim_one(user_id)
+                item = await _claim_stage_item(user_id, stage)
                 if item is None:
                     continue
-                item["user_id"] = user_id
-                await _process_claim(item, key, store)
+                if stage == "resolve":
+                    await _resolve_claim(item, key)
+                else:
+                    await _process_claim(item, key, store)
                 did_work = True
                 break
             if not did_work:
-                await asyncio.sleep(0.75)
+                await asyncio.sleep(0.75 + random.random() * 0.5)
         except asyncio.CancelledError:
             raise
         except Exception:
-            log.exception("YouTube subscription import worker failed")
+            log.exception("YouTube subscription import %s worker failed", stage)
             await asyncio.sleep(2)
+
+
+async def run_youtube_import_resolver_worker() -> None:
+    """Resolve channel metadata with globally slotted, staggered requests."""
+    await _run_stage_worker("resolve")
+
+
+async def run_youtube_import_processor_worker() -> None:
+    """Apply the shared Add Source write path, independently capped at 16."""
+    await _run_stage_worker("process")

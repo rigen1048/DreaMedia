@@ -757,7 +757,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case "dreamedia:startYoutubeImport": {
           const data = await gqlWs(
             `mutation StartYouTubeImport($links: [String!]!, $kind: String!, $words: [String!], $rank: String, $withhold: Int, $domain: String, $subdomain: String) {
-              startYoutubeImport(links: $links, kind: $kind, words: $words, rank: $rank, withhold: $withhold, domain: $domain, subdomain: $subdomain) { jobId status requested processed added skipped failed }
+              startYoutubeImport(links: $links, kind: $kind, words: $words, rank: $rank, withhold: $withhold, domain: $domain, subdomain: $subdomain) { jobId status requested processed resolved added skipped failed }
             }`,
             {
               links: msg.links,
@@ -775,7 +775,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case "dreamedia:youtubeImportStatus": {
           const data = await gqlWs(
             `query YoutubeImportJob($jobId: String!) {
-              youtubeImportJob(jobId: $jobId) { jobId status requested processed added skipped failed errors }
+              youtubeImportJob(jobId: $jobId) { jobId status requested processed resolved added skipped failed errors }
             }`,
             { jobId: msg.jobId },
           );

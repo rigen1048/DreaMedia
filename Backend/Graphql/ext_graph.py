@@ -212,6 +212,7 @@ class YoutubeImportStarted:
     status: str
     requested: int
     processed: int
+    resolved: int
     added: int
     skipped: int
     failed: int
@@ -223,6 +224,7 @@ class YoutubeImportStatus:
     status: str
     requested: int
     processed: int
+    resolved: int
     added: int
     skipped: int
     failed: int
