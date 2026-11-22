@@ -25,15 +25,21 @@ _NS = {
 }
 
 
-def parse_youtube_feed(xml_content: str) -> List[Video]:
-    """Parse a YouTube channel RSS XML into Video objects (stdlib only)."""
+class FeedFormatError(ValueError):
+    """The HTTP response was not a parseable YouTube Atom feed."""
+
+
+def _parse_feed(xml_content: str) -> tuple[List[Video], int]:
     try:
         root = ET.fromstring(xml_content)
-    except ET.ParseError:
-        return []
+    except ET.ParseError as exc:
+        raise FeedFormatError("malformed XML") from exc
+    if root.tag != f"{{{_NS['atom']}}}feed":
+        raise FeedFormatError(f"unexpected XML root {str(root.tag)[:120]!r}")
 
+    entries = root.findall("atom:entry", _NS)
     videos: List[Video] = []
-    for entry in root.findall("atom:entry", _NS):
+    for entry in entries:
         vid_el = entry.find("yt:videoId", _NS)
         vid = (vid_el.text or "").strip() if vid_el is not None else ""
         if not vid:
@@ -41,10 +47,8 @@ def parse_youtube_feed(xml_content: str) -> List[Video]:
             vid = entry_id.split(":")[-1] if ":" in entry_id else entry_id
         if not vid:
             continue
-
-        title = entry.findtext("atom:title", "No title", _NS).strip() or "No title"
-        published = entry.findtext("atom:published", "", _NS).strip()
-
+        title = (entry.findtext("atom:title", "No title", _NS) or "No title").strip() or "No title"
+        published = (entry.findtext("atom:published", "", _NS) or "").strip()
         url = None
         for link in entry.findall("atom:link", _NS):
             if link.get("rel") == "alternate" and link.get("href"):
@@ -52,17 +56,24 @@ def parse_youtube_feed(xml_content: str) -> List[Video]:
                 break
         if not url:
             url = f"https://www.youtube.com/watch?v={vid}"
-
         thumbnail = None
         media_group = entry.find("media:group", _NS)
         if media_group is not None:
             thumb_el = media_group.find("media:thumbnail", _NS)
             if thumb_el is not None:
                 thumbnail = thumb_el.get("url")
-
         videos.append(
             Video(id=vid, title=title, url=url, published=published, thumbnail=thumbnail)
         )
+    return videos, len(entries)
+
+
+def parse_youtube_feed(xml_content: str) -> List[Video]:
+    """Parse a YouTube channel RSS XML into Video objects (stdlib only)."""
+    try:
+        videos, _entry_count = _parse_feed(xml_content)
+    except FeedFormatError:
+        return []
     return videos
 
 
@@ -97,15 +108,35 @@ async def yt_rss(rss_id: str) -> Result[FetchPayload, str]:
         log.error("HTTP error fetching feed %s: %s", rss_id, err)
         return Failure("HTTP Error")
 
+    content_type = response.headers.get("content-type", "unknown")
     try:
-        videos = parse_youtube_feed(response.text)
-        if not videos:
-            log.info("No valid videos parsed for channel %s", rss_id)
-            return Failure("Empty Feed")
-        return Success(_to_payload(videos))
-    except Exception as e:
-        log.error("Error parsing XML for channel %s: %s", rss_id, e)
+        videos, entry_count = _parse_feed(response.text)
+    except FeedFormatError as exc:
+        log.warning(
+            "Invalid YouTube feed for channel %s (content-type=%r): %s",
+            rss_id,
+            content_type,
+            exc,
+        )
+        return Failure("Invalid Feed")
+    except Exception:
+        log.exception("Unexpected YouTube feed parser error for channel %s", rss_id)
         return Failure("Parsing Error")
+    if not videos:
+        if entry_count == 0:
+            log.info(
+                "Valid YouTube Atom feed contains no entries for channel %s",
+                rss_id,
+            )
+            return Failure("Empty Feed")
+        log.warning(
+            "YouTube Atom feed for channel %s had %s entries but no usable video IDs (content-type=%r)",
+            rss_id,
+            entry_count,
+            content_type,
+        )
+        return Failure("Invalid Feed")
+    return Success(_to_payload(videos))
 
 
 if __name__ == "__main__":

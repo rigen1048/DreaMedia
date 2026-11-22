@@ -474,3 +474,56 @@ async def test_shared_resolver_extracts_youtube_metadata(monkeypatch):
     assert result == {
         "rss_id": "UCx", "name": "Channel", "url": "https://youtube.com/@x", "logo": None,
     }
+
+
+def test_import_worker_retry_delay_grows_with_jitter_and_is_capped(monkeypatch):
+    monkeypatch.setattr(youtube_imports.random, "uniform", lambda low, high: high)
+
+    assert youtube_imports._worker_retry_delay(1) == pytest.approx(2.4)
+    assert youtube_imports._worker_retry_delay(2) == pytest.approx(4.8)
+    assert youtube_imports._worker_retry_delay(20) == 60.0
+
+
+@pytest.mark.asyncio
+async def test_idle_stage_workers_share_one_pending_scan(monkeypatch):
+    scans = 0
+
+    async def no_pending_work(stage):
+        nonlocal scans
+        assert stage == "process"
+        scans += 1
+        await asyncio.sleep(0.01)
+        return []
+
+    monkeypatch.setattr(youtube_imports, "_pending_user_ids", no_pending_work)
+
+    results = await asyncio.gather(
+        *(youtube_imports._claim_next_stage_item("process") for _ in range(16))
+    )
+
+    assert scans == 1
+    assert all(item is None and key is None and delay > 0 for item, key, delay in results)
+
+
+@pytest.mark.asyncio
+async def test_stage_poll_recovers_after_a_transient_database_timeout(monkeypatch):
+    scans = 0
+
+    async def timeout_once(stage):
+        nonlocal scans
+        assert stage == "resolve"
+        scans += 1
+        if scans == 1:
+            raise TimeoutError("injected database connect timeout")
+        return []
+
+    monkeypatch.setattr(youtube_imports, "_pending_user_ids", timeout_once)
+    monkeypatch.setattr(youtube_imports, "_worker_retry_delay", lambda _attempt: 0.0)
+
+    with pytest.raises(TimeoutError):
+        await youtube_imports._claim_next_stage_item("resolve")
+    item, key, delay = await youtube_imports._claim_next_stage_item("resolve")
+
+    assert scans == 2
+    assert item is None and key is None
+    assert delay > 0

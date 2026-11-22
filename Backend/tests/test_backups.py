@@ -255,7 +255,11 @@ async def test_backup_pg_dump_verified(admin_client, tmp_path):
     import os
 
     env = dict(os.environ)
-    lib_dir = Path(pg_restore).parents[3] / "x86_64-linux-gnu"
+    restore_parents = Path(pg_restore).parents
+    lib_dir = (
+        restore_parents[3] / "x86_64-linux-gnu"
+        if len(restore_parents) > 3 else Path("/usr/lib")
+    )
     if lib_dir.is_dir():
         env["LD_LIBRARY_PATH"] = f"{lib_dir}:{env.get('LD_LIBRARY_PATH', '')}"
     proc = await asyncio.create_subprocess_exec(

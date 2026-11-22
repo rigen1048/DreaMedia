@@ -47,6 +47,10 @@ export function fetchWorkspace(): Promise<Workspace> {
   return gql<Workspace>(WORKSPACE_QUERY);
 }
 
+export function fetchViewer(): Promise<Pick<Workspace, "viewer">> {
+  return gql<Pick<Workspace, "viewer">>(`query Viewer { viewer { id username role } }`);
+}
+
 /* ------------------------------------------------------------------ auth */
 export const login = (username: string, password: string) =>
   gql<{ login: { id: number; username: string } }>(

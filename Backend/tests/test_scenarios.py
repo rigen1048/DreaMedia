@@ -258,6 +258,10 @@ async def test_muted_channel_still_stores_but_never_notifies(api):
         {"id": sub_id},
     )
     assert data["ytSetNotify"] is True
+    channels = await gql(api, "{ ytChannels { id label notify } }")
+    muted = next(channel for channel in channels["ytChannels"] if channel["id"] == sub_id)
+    assert muted["label"] == "none"
+    assert muted["notify"] is False
 
     with provider_mock([("v5", "Kept quiet one", "2026-11-14"), ("v4", "Kept quiet two", "2026-11-13"),
                         ("v3seen", "Anchor", "2026-11-12")]):

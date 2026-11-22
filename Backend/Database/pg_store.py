@@ -1206,12 +1206,11 @@ class PgStore:
     async def set_channel_notify(
         self, user_id: int, channel_id: int, notify: bool
     ) -> Result[Dict[str, Any], str]:
-        """Compatibility mutation for the single channel muted/receiving state."""
+        """Change only notification delivery; keep fetch/label state unchanged."""
         pool = await get_pool()
         async with pool.acquire() as con:
             result = await con.execute(
-                "UPDATE yt_channels SET notify = $3, "
-                "label = CASE WHEN $3 THEN 'none' ELSE 'reserved' END "
+                "UPDATE yt_channels SET notify = $3 "
                 "WHERE id = $1 AND user_id = $2 AND label != 'blocked'",
                 channel_id, user_id, notify,
             )

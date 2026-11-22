@@ -64,21 +64,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
 
+  const sessionQuery = useQuery({
+    queryKey: ["viewer"],
+    queryFn: api.fetchViewer,
+    refetchInterval: (query) => (query.state.data?.viewer ? 45_000 : false),
+    retry: false,
+  });
+  const sessionViewer = sessionQuery.data?.viewer ?? null;
+
   const query = useQuery({
     queryKey: ["workspace"],
     queryFn: api.fetchWorkspace,
-    refetchInterval: 45_000,
+    enabled: Boolean(sessionViewer),
+    refetchInterval: (query) =>
+      sessionViewer && !isAuthError(query.state.error) ? 45_000 : false,
     retry: false,
   });
 
   const refresh = useCallback(async () => {
     setManualRefreshing(true);
     try {
+      if (!sessionViewer || isAuthError(query.error)) return await sessionQuery.refetch();
       return await query.refetch();
     } finally {
       setManualRefreshing(false);
     }
-  }, [query]);
+  }, [query, query.error, sessionQuery, sessionViewer]);
 
   const act = useCallback(
     async (operation: () => Promise<unknown>, success?: string) => {
@@ -131,13 +142,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AppState>(() => {
     const workspace = query.data ?? null;
-    const unauthorized = isAuthError(query.error) || (workspace && !workspace.viewer);
+    const unauthorized = isAuthError(query.error);
+    const viewer = unauthorized ? null : sessionViewer ?? workspace?.viewer ?? null;
+    const authError = unauthorized
+      ? null
+      : !viewer && sessionQuery.error instanceof Error
+        ? sessionQuery.error.message
+        : viewer && query.error instanceof Error
+          ? query.error.message
+          : null;
     return {
-      viewer: workspace?.viewer ?? null,
+      viewer,
       workspace,
-      loading: query.isPending && !query.data,
+      loading: sessionQuery.isPending || Boolean(viewer && query.isPending && !query.data),
       refreshing: manualRefreshing || query.isFetching,
-      authError: unauthorized ? null : query.error instanceof Error ? query.error.message : null,
+      authError,
       refresh,
       login,
       signup,
@@ -157,6 +176,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     query.error,
     query.isFetching,
     query.isPending,
+    sessionQuery.error,
+    sessionQuery.isPending,
+    sessionViewer,
     pushToast,
     refresh,
     signup,

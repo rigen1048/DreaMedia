@@ -35,6 +35,13 @@ MAX_IMPORT_WORKERS = GLOBAL_RESOLVE_SLOTS
 MAX_PROCESS_WORKERS = GLOBAL_PROCESS_SLOTS
 RESOLVE_START_SPACING_SECONDS = 0.25
 RESOLVE_WORKER_COOLDOWN_SECONDS = 2
+IMPORT_IDLE_POLL_SECONDS = 1.0
+IMPORT_ERROR_BACKOFF_BASE_SECONDS = 2.0
+IMPORT_ERROR_BACKOFF_MAX_SECONDS = 60.0
+_STAGE_POLL_LOOP: asyncio.AbstractEventLoop | None = None
+_STAGE_POLL_LOCKS: Dict[str, asyncio.Lock] = {}
+_STAGE_POLL_NOT_BEFORE: Dict[str, float] = {}
+_STAGE_POLL_FAILURES: Dict[str, int] = {}
 _CHANNEL_PATH = re.compile(r"^/(?:@[^/]+|channel/UC[A-Za-z0-9_-]{22})(?:/|$)", re.I)
 _CHANNEL_KINDS = {"tracking", "wordscan", "random", "withhold"}
 
@@ -398,6 +405,32 @@ async def get_youtube_import_status(user_id: int, job_id: str) -> Optional[Dict[
     }
 
 
+def _stage_poll_lock(stage: str) -> asyncio.Lock:
+    """Get the local scan/claim mutex, resetting state on a new event loop."""
+    global _STAGE_POLL_LOOP, _STAGE_POLL_LOCKS
+    loop = asyncio.get_running_loop()
+    if _STAGE_POLL_LOOP is not loop:
+        _STAGE_POLL_LOOP = loop
+        _STAGE_POLL_LOCKS = {name: asyncio.Lock() for name in ("resolve", "process")}
+        _STAGE_POLL_NOT_BEFORE.clear()
+        _STAGE_POLL_FAILURES.clear()
+    if stage not in _STAGE_POLL_LOCKS:
+        raise ValueError(f"unknown import stage: {stage}")
+    _STAGE_POLL_NOT_BEFORE.setdefault(stage, 0.0)
+    _STAGE_POLL_FAILURES.setdefault(stage, 0)
+    return _STAGE_POLL_LOCKS[stage]
+
+
+def _worker_retry_delay(attempt: int) -> float:
+    """Capped exponential backoff with jitter for transient DB/worker faults."""
+    exponent = min(max(int(attempt) - 1, 0), 8)
+    delay = IMPORT_ERROR_BACKOFF_BASE_SECONDS * (2 ** exponent)
+    return min(
+        IMPORT_ERROR_BACKOFF_MAX_SECONDS,
+        delay * random.uniform(0.8, 1.2),
+    )
+
+
 async def _pending_user_ids(stage: str) -> List[int]:
     if stage == "resolve":
         predicate = (
@@ -421,6 +454,36 @@ async def _pending_user_ids(stage: str) -> List[int]:
             CLAIM_STALE_AFTER_MINUTES,
         )
     return [row["user_id"] for row in rows]
+
+
+async def _claim_next_stage_item(stage: str):
+    """Serialize pending scans and claims locally; PostgreSQL slots stay global."""
+    lock = _stage_poll_lock(stage)
+    loop = asyncio.get_running_loop()
+    async with lock:
+        wait_seconds = _STAGE_POLL_NOT_BEFORE[stage] - loop.time()
+        if wait_seconds > 0:
+            return None, None, wait_seconds
+        try:
+            for user_id in await _pending_user_ids(stage):
+                key = await vault.get(user_id)
+                if key is None:
+                    continue
+                item = await _claim_stage_item(user_id, stage)
+                if item is not None:
+                    _STAGE_POLL_FAILURES[stage] = 0
+                    _STAGE_POLL_NOT_BEFORE[stage] = 0.0
+                    return item, key, 0.0
+            _STAGE_POLL_FAILURES[stage] = 0
+            wait_seconds = IMPORT_IDLE_POLL_SECONDS * random.uniform(0.8, 1.2)
+            _STAGE_POLL_NOT_BEFORE[stage] = loop.time() + wait_seconds
+            return None, None, wait_seconds
+        except Exception:
+            _STAGE_POLL_FAILURES[stage] += 1
+            _STAGE_POLL_NOT_BEFORE[stage] = (
+                loop.time() + _worker_retry_delay(_STAGE_POLL_FAILURES[stage])
+            )
+            raise
 
 
 async def _claim_stage_item(user_id: int, stage: str) -> Optional[Dict[str, Any]]:
@@ -694,31 +757,37 @@ async def _process_claim(item: Dict[str, Any], key: bytes, store: PgStore) -> No
     await _complete_processing(item, key, status, error)
 
 
+async def _worker_sleep(seconds: float) -> None:
+    await asyncio.sleep(seconds)
+
+
 async def _run_stage_worker(stage: str) -> None:
     store = PgStore()
+    consecutive_failures = 0
     while True:
         try:
-            did_work = False
-            for user_id in await _pending_user_ids(stage):
-                key = await vault.get(user_id)
-                if key is None:
-                    continue
-                item = await _claim_stage_item(user_id, stage)
-                if item is None:
-                    continue
-                if stage == "resolve":
-                    await _resolve_claim(item, key)
-                else:
-                    await _process_claim(item, key, store)
-                did_work = True
-                break
-            if not did_work:
-                await asyncio.sleep(0.75 + random.random() * 0.5)
+            item, key, wait_seconds = await _claim_next_stage_item(stage)
+            if item is None:
+                consecutive_failures = 0
+                await _worker_sleep(wait_seconds + random.random() * 0.15)
+                continue
+            consecutive_failures = 0
+            if stage == "resolve":
+                await _resolve_claim(item, key)
+            else:
+                await _process_claim(item, key, store)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            log.exception("YouTube subscription import %s worker failed", stage)
-            await asyncio.sleep(2)
+        except Exception as exc:
+            consecutive_failures += 1
+            delay = _worker_retry_delay(consecutive_failures)
+            log.exception(
+                "YouTube subscription import %s worker failed; retrying in %.1fs: %s",
+                stage,
+                delay,
+                exc,
+            )
+            await _worker_sleep(delay)
 
 
 async def run_youtube_import_resolver_worker() -> None:
