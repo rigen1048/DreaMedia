@@ -183,8 +183,8 @@ async def test_extension_subscribe_creates_withhold_source_and_category(monkeypa
         "add_extension_subscription", (12,), {
             "rss_id": "UCextension", "channel_name": "Example channel",
             "channel_url": "https://www.youtube.com/@example", "kind": "withhold",
-            "words": None, "withhold": 3, "domain": "Media",
-            "subdomain": "Animation", "logo": None,
+            "words": None, "rank": None, "withhold": 3, "domain": "Media",
+            "subdomain": "Animation", "logo": None, "skip_existing": False,
         }
     )
 
@@ -224,6 +224,85 @@ def test_extension_schema_exposes_category_and_withhold_contract():
     assert "subdomain: String" in schema
     assert "eventTimeMs: String" in schema
     assert "importYoutubeChannels" in schema
+    assert "startYoutubeImport" in schema
+    assert "youtubeImportJob" in schema
+
+
+@pytest.mark.asyncio
+async def test_bulk_start_returns_queued_job_without_resolving_channels(monkeypatch, extension_info):
+    calls = []
+
+    async def user_id(_info):
+        return 12
+
+    async def enqueue(user, links, **options):
+        calls.append((user, links, options))
+        return {
+            "job_id": "job-123", "status": "queued", "requested": 2,
+            "processed": 0, "added": 0, "skipped": 0, "failed": 0,
+        }
+
+    monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
+    monkeypatch.setattr(ext_graph, "enqueue_youtube_import", enqueue)
+
+    result = await ext_graph.ExtMutation().start_youtube_import(
+        extension_info,
+        links=["https://youtube.com/@one", "https://youtube.com/@two"],
+        kind="wordscan",
+        words=["trailer"],
+        domain="Media",
+        subdomain="Animation",
+    )
+
+    assert result.job_id == "job-123" and result.status == "queued"
+    assert result.requested == 2 and result.processed == 0
+    assert calls == [(
+        12,
+        ["https://youtube.com/@one", "https://youtube.com/@two"],
+        {
+            "kind": "wordscan", "words": ["trailer"], "rank": None,
+            "withhold": None, "domain": "Media", "subdomain": "Animation",
+        },
+    )]
+
+
+@pytest.mark.asyncio
+async def test_import_progress_query_uses_authenticated_owner(monkeypatch, extension_info):
+    calls = []
+
+    async def user_id(_info):
+        return 12
+
+    async def get_status(owner, job_id):
+        calls.append((owner, job_id))
+        return {
+            "job_id": job_id, "status": "running", "requested": 4,
+            "processed": 2, "added": 1, "skipped": 1, "failed": 0,
+            "errors": [],
+        }
+
+    monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
+    monkeypatch.setattr(ext_graph, "get_youtube_import_status", get_status)
+
+    result = await ext_graph.ExtQuery().youtube_import_job(extension_info, "job-123")
+
+    assert calls == [(12, "job-123")]
+    assert result.job_id == "job-123" and result.processed == 2
+
+
+@pytest.mark.asyncio
+async def test_import_progress_query_returns_null_for_unknown_or_other_owner(monkeypatch, extension_info):
+    async def user_id(_info):
+        return 12
+
+    async def get_status(owner, job_id):
+        assert owner == 12 and job_id == "hidden-job"
+        return None
+
+    monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
+    monkeypatch.setattr(ext_graph, "get_youtube_import_status", get_status)
+
+    assert await ext_graph.ExtQuery().youtube_import_job(extension_info, "hidden-job") is None
 
 
 @pytest.mark.asyncio

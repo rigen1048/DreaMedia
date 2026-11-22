@@ -11,12 +11,15 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
 2. **Subscribe from the page (HydraTracker model)** — add a YouTube channel or
    playlist to your feed without opening DreaMedia. The backend resolves the
    active tab’s URL.
-3. **Import YouTube subscriptions** — open `youtube.com/feed/channels`, choose
-   **Scan subscriptions**, review the channel count and preview, then explicitly
-   choose **Import all**. The scan reads channel links from the active page and
-   scrolls to load more; nothing is sent to DreaMedia before the import click.
-   Existing DreaMedia sources are skipped without changing their mode or
-   category. If the page does not reach a stable end, importing stays disabled.
+3. **Add scanned YouTube subscriptions** — open `youtube.com/feed/channels`,
+   choose **Scan subscriptions**, review the channel count and preview, then use
+   the same **Add source** action as a single channel. The selected source type,
+   options, and category apply to every channel. The scan reads links from the
+   active page and scrolls to load more; nothing is sent to DreaMedia before the
+   Add sources click. Existing DreaMedia sources are skipped without changing
+   their mode or category. A background job reports progress, and the popup can
+   be closed and reopened while processing continues. Scan again if the page
+   does not reach a stable end.
 4. **Add the current video to a playlist card.**
 
 ## Setup
@@ -48,9 +51,11 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
 - **Categories** are optional. Existing YouTube domains and their own
   subdomains are suggested from DreaMedia; choose both names or neither.
   Entering a new domain/subdomain pair creates it when the source is added.
-- **Import YouTube subscriptions** is visible in the **Source** tab. Open
-  YouTube’s channel subscriptions page to scan, preview, and explicitly import
-  channels not already in DreaMedia.
+- **Scan subscriptions** is available in the **Source** tab. Open YouTube’s
+  channel subscriptions page to scan and preview; the **Add source** button
+  then queues those channels using the selected notification type, settings,
+  and category. Processing continues in the backend and progress is restored
+  the next time the popup is opened.
 - **Save video** adds the active YouTube video to a custom playlist in Todo.
 - **Bind anime** lets you manually link the tab to a tracked anime and set the
   season and episode. It does not replace automatic matching on enabled sites.

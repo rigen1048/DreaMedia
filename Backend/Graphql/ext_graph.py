@@ -19,6 +19,12 @@ from Database.card_store import CardStore
 from Database.pg_store import PgStore
 from Extension import anchor, live, store
 from Extension.tokens import user_for_token
+from Extension.youtube_imports import (
+    add_youtube_channel_source,
+    enqueue_youtube_import,
+    get_youtube_import_status,
+    normalize_source_options,
+)
 
 _ani = AniStore()
 _cards = CardStore()
@@ -116,6 +122,12 @@ class ExtQuery:
             for domain in tree.get("domains", [])
         ]
 
+    @strawberry.field
+    async def youtube_import_job(self, info: Info, job_id: str) -> Optional[YoutubeImportStatus]:
+        """Owner-scoped progress for a queued bulk Add Source operation."""
+        status = await get_youtube_import_status(await _ext_uid(info), job_id)
+        return YoutubeImportStatus(**status) if status else None
+
 
 @strawberry.type
 class AnchorMatch:
@@ -195,6 +207,29 @@ class BatchImportResult:
 
 
 @strawberry.type
+class YoutubeImportStarted:
+    job_id: str
+    status: str
+    requested: int
+    processed: int
+    added: int
+    skipped: int
+    failed: int
+
+
+@strawberry.type
+class YoutubeImportStatus:
+    job_id: str
+    status: str
+    requested: int
+    processed: int
+    added: int
+    skipped: int
+    failed: int
+    errors: List[str]
+
+
+@strawberry.type
 class ExtMutation:
     @strawberry.field
     async def anchor_match(
@@ -263,32 +298,41 @@ class ExtMutation:
                 playlist_id=playlist_id, rank=rank, domain=category_domain,
                 subdomain=category_subdomain, logo=logo,
             )
-        elif kind in ("tracking", "wordscan", "withhold"):
-            info_r = await asyncio.to_thread(resolve_channel, link)
-            if isinstance(info_r, Failure):
-                raise ValueError(info_r.failure())
-            resolved = info_r.unwrap()
-            result = await _yt.add_extension_subscription(
-                user_id, rss_id=resolved.rss_id, channel_name=resolved.name,
-                channel_url=resolved.url, kind=kind,
-                words=words if kind == "wordscan" else None,
-                withhold=withhold if kind == "withhold" else None,
-                domain=category_domain, subdomain=category_subdomain, logo=resolved.logo,
-            )
-        elif kind == "random":
-            info_r = await asyncio.to_thread(resolve_channel, link)
-            if isinstance(info_r, Failure):
-                raise ValueError(info_r.failure())
-            resolved = info_r.unwrap()
-            result = await _yt.add_extension_subscription(
-                user_id, channel_name=resolved.name, channel_url=resolved.url,
-                kind=kind, rank=rank or "week", domain=category_domain,
-                subdomain=category_subdomain, logo=resolved.logo,
-            )
+            channel_id = _unwrap(result)["channel_id"]
         else:
-            raise ValueError(f"unknown kind: {kind}")
-        channel_id = _unwrap(result)["channel_id"]
+            added = await add_youtube_channel_source(
+                user_id,
+                link,
+                kind=kind,
+                words=words,
+                rank=rank,
+                withhold=withhold,
+                domain=category_domain,
+                subdomain=category_subdomain,
+                store=_yt,
+            )
+            channel_id = added["channel_id"]
         return SubscribeResult(ok=True, channel_id=channel_id)
+
+    @strawberry.field
+    async def start_youtube_import(
+        self, info: Info, links: List[str], kind: str = "tracking",
+        words: Optional[List[str]] = None, rank: Optional[str] = None,
+        withhold: Optional[int] = None, domain: Optional[str] = None,
+        subdomain: Optional[str] = None,
+    ) -> YoutubeImportStarted:
+        """Queue a bulk Add Source job and return without resolving channels."""
+        result = await enqueue_youtube_import(
+            await _ext_uid(info),
+            links,
+            kind=kind,
+            words=words,
+            rank=rank,
+            withhold=withhold,
+            domain=domain,
+            subdomain=subdomain,
+        )
+        return YoutubeImportStarted(**result)
 
     @strawberry.field
     async def import_youtube_channels(
@@ -297,28 +341,17 @@ class ExtMutation:
         withhold: Optional[int] = None, domain: Optional[str] = None,
         subdomain: Optional[str] = None,
     ) -> BatchImportResult:
-        """Import a user-confirmed batch of YouTube channel links.
-
-        Each source write is atomic and existing channels are left untouched.
-        The extension sends small batches so progress and individual errors
-        remain visible rather than holding one large database transaction.
-        """
+        """Compatibility API: add a small batch through the Add Source path."""
         import asyncio
         import re
         from urllib.parse import urlsplit
 
-        from Orchestrator.Yt.Fetch.convert import resolve_channel
-
         if len(links) > 50:
             raise ValueError("batch size cannot exceed 50 channels")
-        if kind not in ("tracking", "wordscan", "random", "withhold"):
-            raise ValueError("batch import supports tracking, wordscan, random, or withhold")
-        if kind == "withhold" and (withhold is None or withhold < 1):
-            raise ValueError("withhold threshold must be >= 1")
-        category_domain = domain.strip() if domain and domain.strip() else None
-        category_subdomain = subdomain.strip() if subdomain and subdomain.strip() else None
-        if bool(category_domain) != bool(category_subdomain):
-            raise ValueError("choose both a domain and subdomain, or leave both empty")
+        options = normalize_source_options(
+            kind=kind, words=words, rank=rank, withhold=withhold,
+            domain=domain, subdomain=subdomain,
+        )
 
         channel_path = re.compile(r"^/(?:@[^/]+|channel/UC[A-Za-z0-9_-]{22})(?:/|$)")
         unique_links: List[str] = []
@@ -338,7 +371,8 @@ class ExtMutation:
             ) or not channel_path.match(parsed.path):
                 errors.append(f"{raw_link}: not a supported YouTube channel link")
                 continue
-            key = f"{host}{parsed.path.rstrip('/')}".casefold()
+            path = parsed.path.rstrip("/")
+            key = f"{host}{path.casefold() if path.startswith('/@') else path}"
             if key in seen_links:
                 duplicate_links += 1
                 continue
@@ -348,48 +382,27 @@ class ExtMutation:
         user_id = await _ext_uid(info)
         semaphore = asyncio.Semaphore(4)
 
-        async def resolve_one(link: str):
+        async def add_one(link: str):
             async with semaphore:
                 try:
-                    resolved_result = await asyncio.to_thread(resolve_channel, link)
-                except Exception:
-                    return ("error", f"{link}: channel lookup failed")
-                if isinstance(resolved_result, Failure):
-                    return ("error", f"{link}: {resolved_result.failure()}")
-                return ("resolved", link, resolved_result.unwrap())
+                    saved = await add_youtube_channel_source(
+                        user_id,
+                        link,
+                        **options,
+                        skip_existing=True,
+                        store=_yt,
+                    )
+                    return ("added" if saved.get("created", True) else "skipped", None)
+                except Exception as exc:
+                    return ("error", f"{link}: {str(exc) or 'source could not be added'}")
 
-        resolved_results = await asyncio.gather(*(resolve_one(link) for link in unique_links))
+        results = await asyncio.gather(*(add_one(link) for link in unique_links))
         added = 0
         skipped = duplicate_links
-        seen_channels = set()
-        for result in resolved_results:
-            if result[0] == "error":
-                errors.append(result[1])
-                continue
-            _status, link, resolved = result
-            canonical_url = resolved.url.rstrip("/").casefold()
-            if canonical_url in seen_channels:
-                skipped += 1
-                continue
-            seen_channels.add(canonical_url)
-            try:
-                stored = await _yt.add_extension_subscription(
-                    user_id, rss_id=resolved.rss_id,
-                    channel_name=resolved.name, channel_url=resolved.url,
-                    kind=kind, words=words if kind == "wordscan" else None,
-                    rank=rank or "week", withhold=withhold if kind == "withhold" else None,
-                    domain=category_domain, subdomain=category_subdomain,
-                    logo=resolved.logo, skip_existing=True,
-                )
-            except Exception:
-                seen_channels.discard(canonical_url)
-                errors.append(f"{link}: database write failed")
-                continue
-            if isinstance(stored, Failure):
-                seen_channels.discard(canonical_url)
-                errors.append(f"{link}: {stored.failure()}")
-                continue
-            if stored.unwrap()["created"]:
+        for result, detail in results:
+            if result == "error":
+                errors.append(detail)
+            elif result == "added":
                 added += 1
             else:
                 skipped += 1

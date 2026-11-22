@@ -754,10 +754,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, data: result });
           break;
         }
-        case "dreamedia:importYoutubeSubscriptions": {
+        case "dreamedia:startYoutubeImport": {
           const data = await gqlWs(
-            `mutation ImportYouTubeChannels($links: [String!]!, $kind: String!, $words: [String!], $rank: String, $withhold: Int, $domain: String, $subdomain: String) {
-              importYoutubeChannels(links: $links, kind: $kind, words: $words, rank: $rank, withhold: $withhold, domain: $domain, subdomain: $subdomain) { added skipped requested errors }
+            `mutation StartYouTubeImport($links: [String!]!, $kind: String!, $words: [String!], $rank: String, $withhold: Int, $domain: String, $subdomain: String) {
+              startYoutubeImport(links: $links, kind: $kind, words: $words, rank: $rank, withhold: $withhold, domain: $domain, subdomain: $subdomain) { jobId status requested processed added skipped failed }
             }`,
             {
               links: msg.links,
@@ -769,7 +769,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               subdomain: msg.subdomain ?? null,
             },
           );
-          sendResponse({ ok: true, data: data.importYoutubeChannels });
+          sendResponse({ ok: true, data: data.startYoutubeImport });
+          break;
+        }
+        case "dreamedia:youtubeImportStatus": {
+          const data = await gqlWs(
+            `query YoutubeImportJob($jobId: String!) {
+              youtubeImportJob(jobId: $jobId) { jobId status requested processed added skipped failed errors }
+            }`,
+            { jobId: msg.jobId },
+          );
+          sendResponse({ ok: true, data: data.youtubeImportJob });
           break;
         }
         case "dreamedia:cards":

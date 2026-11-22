@@ -268,6 +268,32 @@ $("domain").addEventListener("input", updateCategorySuggestions);
 
 let scannedSubscriptions = [];
 let subscriptionScanComplete = false;
+let activeImportJobId = null;
+let pollingImportJobId = null;
+
+function setAddSourceLabel(text) {
+  $("subscribeLabel").textContent = text;
+}
+
+function selectedSourceOptions(forBulk = false) {
+  const kind = $("kind").value;
+  if (forBulk && kind === "playlist") throw new Error("Choose a channel mode, not Playlist, for scanned channels.");
+  const domain = $("domain").value.trim();
+  const subdomain = $("subdomain").value.trim();
+  if (Boolean(domain) !== Boolean(subdomain)) {
+    throw new Error("Choose both a domain and subdomain, or leave both empty.");
+  }
+  return {
+    kind,
+    words: kind === "wordscan"
+      ? $("words").value.split(",").map((word) => word.trim()).filter(Boolean)
+      : null,
+    rank: kind === "random" ? $("rank").value : null,
+    withhold: kind === "withhold" ? Math.max(1, Math.round(Number($("withhold").value) || 2)) : null,
+    domain: domain || null,
+    subdomain: subdomain || null,
+  };
+}
 
 function renderSubscriptionPreview() {
   const list = $("importPreview");
@@ -280,11 +306,54 @@ function renderSubscriptionPreview() {
   list.hidden = scannedSubscriptions.length === 0;
 }
 
+async function pollImportJob(jobId) {
+  if (pollingImportJobId === jobId) return;
+  pollingImportJobId = jobId;
+  try {
+    while (activeImportJobId === jobId) {
+      const response = await send("dreamedia:youtubeImportStatus", { jobId });
+      if (!response.ok) {
+        status("importStatus", `Import is still running. Progress unavailable: ${response.error}; retrying…`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        continue;
+      }
+      const job = response.data;
+      if (!job) {
+        activeImportJobId = null;
+        await chrome.storage.local.remove("youtubeImportJobId");
+        status("importStatus", "Import job was not found for this account.", "err");
+        break;
+      }
+      const progress = `${job.processed}/${job.requested} processed · ${job.added} added · ${job.skipped} already present · ${job.failed} failed`;
+      if (job.status === "completed" || job.status === "partial") {
+        activeImportJobId = null;
+        await chrome.storage.local.remove("youtubeImportJobId");
+        const summary = `Import ${job.status === "completed" ? "complete" : "finished with errors"}: ${progress}.`;
+        status("importStatus", job.errors?.length ? `${summary} ${job.errors[0]}` : summary, job.failed ? "err" : "ok");
+        setAddSourceLabel("Add source");
+        break;
+      }
+      status("importStatus", `${job.status === "queued" ? "Queued" : "Importing"}: ${progress}.`);
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
+  } finally {
+    if (pollingImportJobId === jobId) pollingImportJobId = null;
+  }
+}
+
+async function resumeImportJob() {
+  const stored = await chrome.storage.local.get("youtubeImportJobId");
+  if (!stored.youtubeImportJobId) return;
+  activeImportJobId = stored.youtubeImportJobId;
+  setAddSourceLabel("Import in progress");
+  void pollImportJob(activeImportJobId);
+}
+
 action("scanSubscriptions", "importStatus", async () => {
+  if (activeImportJobId) throw new Error("Wait for the current import to finish before scanning again.");
   scannedSubscriptions = [];
   subscriptionScanComplete = false;
-  $("importSubscriptions").hidden = true;
-  $("importSubscriptions").disabled = true;
+  setAddSourceLabel("Add source");
   $("importPreview").hidden = true;
   const tab = await currentTab();
   if (!tab?.id) throw new Error("Open YouTube's channel subscriptions page first.");
@@ -298,74 +367,44 @@ action("scanSubscriptions", "importStatus", async () => {
     status("importStatus", "No channel links found. Check that this is the channel subscriptions page and you are signed in.", "err");
     return;
   }
-  const importButton = $("importSubscriptions");
-  importButton.hidden = false;
-  importButton.disabled = !subscriptionScanComplete;
-  importButton.textContent = `Import all ${scannedSubscriptions.length}`;
   if (subscriptionScanComplete) {
-    status("importStatus", `${scannedSubscriptions.length} unique channel(s) found. Review the preview, then choose Import all.`, "ok");
+    const count = scannedSubscriptions.length;
+    setAddSourceLabel(`Add ${count} ${count === 1 ? "source" : "sources"}`);
+    status("importStatus", `${scannedSubscriptions.length} unique channel(s) found. Review the preview, then choose Add sources.`, "ok");
   } else {
-    status("importStatus", `Found ${scannedSubscriptions.length}, but the page did not reach a stable end. Scroll through the page and scan again before importing.`, "err");
+    status("importStatus", `Found ${scannedSubscriptions.length}, but the page did not reach a stable end. Scroll through the page and scan again before adding sources.`, "err");
   }
-});
-
-action("importSubscriptions", "importStatus", async () => {
-  if (!subscriptionScanComplete || !scannedSubscriptions.length) {
-    throw new Error("Scan the complete channel list before importing.");
-  }
-  const kind = $("kind").value;
-  if (kind === "playlist") throw new Error("Choose a channel mode, not Playlist, for this import.");
-  const domain = $("domain").value.trim();
-  const subdomain = $("subdomain").value.trim();
-  if (Boolean(domain) !== Boolean(subdomain)) {
-    throw new Error("Choose both a domain and subdomain, or leave both empty.");
-  }
-  const options = {
-    kind,
-    words: kind === "wordscan"
-      ? $("words").value.split(",").map((word) => word.trim()).filter(Boolean)
-      : null,
-    rank: kind === "random" ? $("rank").value : null,
-    withhold: kind === "withhold" ? Math.max(1, Math.round(Number($("withhold").value) || 2)) : null,
-    domain: domain || null,
-    subdomain: subdomain || null,
-  };
-  const links = scannedSubscriptions.map((channel) => channel.url);
-  const chunkSize = 25;
-  const totalBatches = Math.ceil(links.length / chunkSize);
-  let added = 0;
-  let skipped = 0;
-  const errors = [];
-  for (let offset = 0, batch = 1; offset < links.length; offset += chunkSize, batch += 1) {
-    status("importStatus", `Importing batch ${batch} of ${totalBatches}…`);
-    const response = await send("dreamedia:importYoutubeSubscriptions", {
-      links: links.slice(offset, offset + chunkSize),
-      ...options,
-    });
-    if (!response.ok) throw new Error(response.error || `Batch ${batch} failed.`);
-    added += Number(response.data?.added || 0);
-    skipped += Number(response.data?.skipped || 0);
-    errors.push(...(response.data?.errors || []));
-  }
-  const summary = `Import complete: ${added} added, ${skipped} already present, ${errors.length} failed.`;
-  status("importStatus", errors.length ? `${summary} ${errors[0]}` : summary, errors.length ? "err" : "ok");
 });
 
 // ---- subscribe ----
 action("subscribe", "subStatus", async () => {
+  if (activeImportJobId) throw new Error("A scanned-channel import is already running.");
+  if (page.subscriptionChannels && !subscriptionScanComplete) {
+    throw new Error("Scan the complete channel list first; Add Source will add each scanned channel.");
+  }
+  if (subscriptionScanComplete) {
+    if (!scannedSubscriptions.length) throw new Error("Scan the channel list before adding sources.");
+    const options = selectedSourceOptions(true);
+    const response = await send("dreamedia:startYoutubeImport", {
+      links: scannedSubscriptions.map((channel) => channel.url),
+      ...options,
+    });
+    if (!response.ok) throw new Error(response.error || "Could not queue the channel import.");
+    activeImportJobId = response.data?.jobId;
+    if (!activeImportJobId) throw new Error("The backend did not return an import job ID.");
+    await chrome.storage.local.set({ youtubeImportJobId: activeImportJobId });
+    const count = scannedSubscriptions.length;
+    scannedSubscriptions = [];
+    subscriptionScanComplete = false;
+    renderSubscriptionPreview();
+    setAddSourceLabel("Import in progress");
+    status("importStatus", `Queued ${count} sources. You can close this popup; progress will resume when you open it again.`, "ok");
+    void pollImportJob(activeImportJobId);
+    return;
+  }
   const tab = await currentTab();
   if (!tab?.url) return status("subStatus", "Open a YouTube page first", "err");
-  const kind = $("kind").value;
-  const domain = $("domain").value.trim();
-  const subdomain = $("subdomain").value.trim();
-  if (Boolean(domain) !== Boolean(subdomain)) {
-    return status("subStatus", "Choose both a domain and subdomain, or leave both empty.", "err");
-  }
-  const body = { kind, link: tab.url };
-  if (kind === "wordscan") body.words = $("words").value.split(",").map((w) => w.trim()).filter(Boolean);
-  if (kind === "random") body.rank = $("rank").value;
-  if (kind === "withhold") body.withhold = Math.max(1, Math.round(Number($("withhold").value) || 2));
-  if (domain && subdomain) Object.assign(body, { domain, subdomain });
+  const body = { ...selectedSourceOptions(), link: tab.url };
   status("subStatus", "Subscribing…");
   const r = await send("dreamedia:subscribe", { body });
   const subscribed = r.ok && r.data?.ok;
@@ -469,5 +508,6 @@ async function initializePopup() {
     status("siteStatus", error.message, "err");
   }
   await loadLists(configured);
+  if (configured) await resumeImportJob();
 }
 void initializePopup();

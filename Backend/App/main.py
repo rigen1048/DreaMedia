@@ -27,6 +27,7 @@ from Orchestrator.Ani.Access.router import router as ani_access_router
 from Orchestrator.Ani.Feed.router import router as ani_feed_router
 from Extension import live as ext_live
 from Extension.tokens import user_for_token
+from Extension.youtube_imports import run_youtube_import_worker
 from Extension.ws_router import ExtensionGraphQLRouter
 from Graphql.ext_graph import ext_context, ext_schema
 from Orchestrator.Yt import manager as yt_manager
@@ -61,6 +62,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(yt_manager.run_forever()),
         asyncio.create_task(ani_manager.run_forever()),
         asyncio.create_task(scheduler.run_forever()),
+        *(asyncio.create_task(run_youtube_import_worker()) for _ in range(4)),
     ]
     yield
     for task in managers:

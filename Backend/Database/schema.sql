@@ -33,6 +33,40 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, seen);
 
+-- Bulk extension imports are durable jobs. Links, selected source settings,
+-- and per-channel errors are encrypted with the owning user's vault key.
+CREATE TABLE IF NOT EXISTS yt_import_jobs (
+    job_id       TEXT PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status       TEXT NOT NULL DEFAULT 'queued'
+                 CHECK (status IN ('queued', 'running', 'completed', 'partial')),
+    requested    INTEGER NOT NULL CHECK (requested >= 0),
+    processed    INTEGER NOT NULL DEFAULT 0,
+    added        INTEGER NOT NULL DEFAULT 0,
+    skipped      INTEGER NOT NULL DEFAULT 0,
+    failed       INTEGER NOT NULL DEFAULT 0,
+    options_enc  BYTEA NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_yt_import_jobs_user ON yt_import_jobs(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_yt_import_jobs_queue ON yt_import_jobs(status, created_at);
+
+CREATE TABLE IF NOT EXISTS yt_import_items (
+    id           BIGSERIAL PRIMARY KEY,
+    job_id       TEXT NOT NULL REFERENCES yt_import_jobs(job_id) ON DELETE CASCADE,
+    ordinal      INTEGER NOT NULL,
+    link_enc     BYTEA NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'queued'
+                 CHECK (status IN ('queued', 'running', 'added', 'skipped', 'failed')),
+    error_enc    BYTEA,
+    claimed_at   TIMESTAMPTZ,
+    claim_token  TEXT,
+    UNIQUE (job_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_yt_import_items_queue
+    ON yt_import_items(job_id, status, ordinal);
+
 -- ============================ Yt plugin ============================
 CREATE TABLE IF NOT EXISTS yt_domains (
     id            SERIAL PRIMARY KEY,
