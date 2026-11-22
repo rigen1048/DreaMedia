@@ -4,10 +4,12 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
 
 ## What it does
 
-1. **Watch tracking (SyncNwatch model)** — the content script finds the playing
-   `<video>` on enabled sites, and reports the timestamp to DreaMedia every 5s
-   (and on pause/ended). Bind the tab to a tracked anime from the popup; an
-   ended video advances the episode.
+1. **Watch tracking (SyncNwatch model)** — the content script reads the page
+   title for anime matching and infers the episode from explicit URL episode
+   fields/segments, then reports the attached `<video>` timestamp every 5s
+   (and on pause/ended). The popup shows the matched anime, estimated season/
+   episode, and playback time. When a URL has no episode hint, title/cursor
+   matching is used and an ended video advances the estimate.
 2. **Subscribe from the page (HydraTracker model)** — add a YouTube channel or
    playlist to your feed without opening DreaMedia. The backend resolves the
    active tab’s URL.

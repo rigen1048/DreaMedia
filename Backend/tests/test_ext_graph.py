@@ -49,6 +49,49 @@ def extension_info():
 
 
 @pytest.mark.asyncio
+async def test_anchor_match_graphql_hints_are_optional_and_forwarded(monkeypatch):
+    calls = []
+
+    async def user_id(_info):
+        return 12
+
+    async def match(user, candidates, page_url="", season_hint=None, episode_hint=None):
+        calls.append((user, candidates, page_url, season_hint, episode_hint))
+        return Success({
+            "entry_id": 22,
+            "title": "One Piece",
+            "season": season_hint or 1,
+            "episode": episode_hint or 185,
+            "cursor_season": 1,
+            "cursor_episode": 184,
+            "blocked": False,
+            "reason": None,
+        })
+
+    monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
+    monkeypatch.setattr(ext_graph.anchor, "anchor_match", match)
+
+    # An extension build without hint variables remains schema-compatible.
+    legacy = await ext_graph.ext_schema.execute(
+        'mutation { anchorMatch(candidates: ["One Piece"], pageUrl: "https://anime.example/watch/21") '
+        '{ entryId title season episode } }'
+    )
+    assert legacy.errors is None
+    assert legacy.data["anchorMatch"]["episode"] == 185
+    assert calls[-1] == (12, ["One Piece"], "https://anime.example/watch/21", None, None)
+
+    hinted = await ext_graph.ext_schema.execute(
+        'mutation { anchorMatch(candidates: ["One Piece"], pageUrl: "https://anime.example/watch/21", '
+        'seasonHint: 2, episodeHint: 29) { entryId title season episode } }'
+    )
+    assert hinted.errors is None
+    assert hinted.data["anchorMatch"] == {
+        "entryId": 22, "title": "One Piece", "season": 2, "episode": 29,
+    }
+    assert calls[-1] == (12, ["One Piece"], "https://anime.example/watch/21", 2, 29)
+
+
+@pytest.mark.asyncio
 async def test_extension_category_query_returns_parent_child_combinations(monkeypatch, extension_info):
     store = FakeYtStore()
     async def user_id(_info):

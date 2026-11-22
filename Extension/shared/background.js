@@ -4,7 +4,7 @@
  * the user's allowlist (ext_domains), never on arbitrary pages. */
 const DEFAULT_BACKEND = "http://127.0.0.1:8123";
 const MEDIA_JS = {
-  ani: ["core.js", "modules/anime.js"],
+  ani: ["core.js", "modules/anime-url.js", "modules/anime.js"],
   yt: ["core.js", "modules/youtube.js"],
 };
 const DEFAULT_DOMAINS = [{ id: 0, domain: "youtube.com", media: "yt", enabled: true }];
@@ -635,14 +635,19 @@ chrome.storage.onChanged?.addListener((changes, area) => {
     reconnectAfterConfigurationChange();
   }
 });
-const M_ANCHOR = `mutation Anchor($candidates: [String!]!, $pageUrl: String!) {
-  anchorMatch(candidates: $candidates, pageUrl: $pageUrl) {
-    entryId season episode cursorSeason cursorEpisode blocked reason
+const M_ANCHOR = `mutation Anchor($candidates: [String!]!, $pageUrl: String!, $seasonHint: Int, $episodeHint: Int) {
+  anchorMatch(candidates: $candidates, pageUrl: $pageUrl, seasonHint: $seasonHint, episodeHint: $episodeHint) {
+    entryId title season episode cursorSeason cursorEpisode blocked reason
   }
 }`;
 
-async function anchorBind(tabId, candidates, pageUrl) {
-  const data = await gqlWs(M_ANCHOR, { candidates, pageUrl });
+async function anchorBind(tabId, candidates, pageUrl, urlHint = {}) {
+  const data = await gqlWs(M_ANCHOR, {
+    candidates,
+    pageUrl,
+    seasonHint: urlHint.season ?? null,
+    episodeHint: urlHint.episode ?? null,
+  });
   const match = data?.anchorMatch;
   if (!match?.entryId || !tabId) return false;
   // Phase 4: a blocked entry shows the disclaimer instead of binding.
@@ -654,8 +659,11 @@ async function anchorBind(tabId, candidates, pageUrl) {
   }
   const binding = {
     entryId: match.entryId,
+    title: match.title || "",
     season: match.season || match.cursorSeason || 1,
     episode: match.episode || match.cursorEpisode || 1,
+    seasonSource: urlHint.season != null ? "url" : match.season != null ? "title" : "cursor",
+    episodeSource: urlHint.episode != null ? "url" : match.episode != null ? "title" : "cursor",
   };
   await (chrome.storage.session || chrome.storage.local).set({ dreamediaBinding: binding });
   await chrome.tabs.sendMessage(tabId, { type: "dreamedia:bind", binding }).catch(() => {});
@@ -823,8 +831,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, data: await liveGql(M_END, msg.payload) });
           break;
         case "dreamedia:anchor":
-          sendResponse({ ok: true, data: await anchorBind(sender.tab?.id, msg.candidates, msg.url) });
+          sendResponse({ ok: true, data: await anchorBind(
+            sender.tab?.id, msg.candidates, msg.url, msg.urlHint || {},
+          ) });
           break;
+        case "dreamedia:trackingStatus": {
+          const tabId = Number(msg.tabId);
+          if (!Number.isInteger(tabId)) throw new Error("No active tab to inspect");
+          try {
+            const data = await chrome.tabs.sendMessage(tabId, { type: "dreamedia:getTrackingStatus" });
+            sendResponse({ ok: true, data: data || null });
+          } catch (_error) {
+            sendResponse({ ok: true, data: null });
+          }
+          break;
+        }
         case "dreamedia:domainStatus": {
           const host = normalizeDomain(msg.url);
           const hit = (await cachedDomains()).find(

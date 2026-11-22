@@ -58,6 +58,15 @@
       <p id="siteStatus" class="status" role="status"></p>
     </section>
 
+    <section id="trackingCard" class="tracking-card" data-state="idle" aria-live="polite" aria-label="Anime tracking status">
+      <span id="trackingDot" class="tracking-dot" aria-hidden="true"></span>
+      <div class="tracking-copy">
+        <strong id="trackingTitle">Not tracking anime</strong>
+        <span id="trackingDetail">Open an enabled anime tab</span>
+      </div>
+      <span id="trackingTime" class="tracking-time">—:—</span>
+    </section>
+
     <div class="tabs" role="tablist" aria-label="Page actions">
       <button id="subscribeTab" type="button" role="tab" aria-selected="true" aria-controls="subscribePanel"><svg aria-hidden="true"><use href="#bell"/></svg>Source</button>
       <button id="playlistTab" type="button" role="tab" aria-selected="false" aria-controls="playlistPanel" tabindex="-1"><svg aria-hidden="true"><use href="#list"/></svg>Save video</button>
@@ -180,6 +189,7 @@
     <span id="connection" class="connection" data-state="loading" role="status"><span class="connection-dot"></span><span id="connectionText">Checking connection…</span></span>
     <span class="version">v<span id="version">1.0.0</span></span>
   </footer>
+  <script src="modules/anime-url.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

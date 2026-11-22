@@ -67,6 +67,7 @@
     activePauseHandler = () => handlers.onPause(video);
     video.addEventListener("ended", activeEndedHandler);
     video.addEventListener("pause", activePauseHandler);
+    handlers.onAttach?.(video);
     activeInterval = setInterval(() => {
       if (!video.isConnected) {
         if (activeVideo === video) detachActiveVideo();

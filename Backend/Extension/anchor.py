@@ -11,6 +11,7 @@ manual binding always wins because the module only anchors when unbound.
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
 
 from returns.result import Failure, Result, Success
@@ -98,6 +99,24 @@ def _title_hits(key: str, title: str) -> int:
     return 0
 
 
+def _fuzzy_title_score(key: str, title: str) -> Optional[float]:
+    """Typo-tolerant fallback for title-sized token windows only.
+
+    Exact/containment matches remain stronger. Requiring a reasonably long
+    title and a high ratio keeps common short words from binding unrelated
+    pages; cross-entry near-ties are rejected by _best_match.
+    """
+    title_tokens = title.split()
+    key_tokens = key.split()
+    if len(title) < 6 or not title_tokens or len(key_tokens) < len(title_tokens):
+        return None
+    width = len(title_tokens)
+    windows = [" ".join(key_tokens[i:i + width]) for i in range(len(key_tokens) - width + 1)]
+    score = max(SequenceMatcher(None, title, window).ratio() for window in windows)
+    threshold = 0.82 if width > 1 else 0.83
+    return score if score >= threshold else None
+
+
 def _best_match(
     candidates: List[str], entries: List[Dict[str, Any]]
 ) -> Optional[Dict[str, Any]]:
@@ -105,8 +124,8 @@ def _best_match(
     Ambiguity (two entries scoring the same) returns None — never bind
     wrong."""
     best: Optional[Dict[str, Any]] = None
-    best_score = 0
-    ambiguous = False
+    best_rank: Optional[tuple[int, float, int]] = None
+    ranks: List[tuple[tuple[int, float, int], int]] = []
     for candidate in candidates:
         for segment in _segments(candidate):
             parsed = _parse(segment)
@@ -116,12 +135,15 @@ def _best_match(
             for entry in entries:
                 for title, season_no in entry["titles"]:
                     score = _title_hits(str(key), title)
-                    if score == 0:
-                        continue
-                    # Longer title wins ties: "naruto shippuden" over "naruto".
-                    rank = (score, len(title))
-                    if best is None or rank > (best_score, len(best["matched"])):
-                        ambiguous = False  # strictly better — old ties are beaten
+                    if score:
+                        rank = (2, float(score), len(title))
+                    else:
+                        fuzzy = _fuzzy_title_score(str(key), title)
+                        if fuzzy is None:
+                            continue
+                        rank = (1, fuzzy, len(title))
+                    ranks.append((rank, entry["id"]))
+                    if best is None or rank > best_rank:
                         best = {
                             "entry_id": entry["id"],
                             "season": parsed["season"],
@@ -133,12 +155,18 @@ def _best_match(
                             "blocked": entry.get("blocked", False),
                             "reason": entry.get("reason"),
                             "seasons": entry["seasons"],
+                            "title": entry.get("title") or title,
                         }
-                        best_score = score
-                    elif (score, len(title)) == (best_score, len(best["matched"])) and best["entry_id"] != entry["id"]:
-                        ambiguous = True
-    if best is None or ambiguous:
+                        best_rank = rank
+    if best is None or best_rank is None:
         return None
+    for rank, entry_id in ranks:
+        if entry_id == best["entry_id"] or rank[0] != best_rank[0]:
+            continue
+        if rank[0] == 2 and rank == best_rank:
+            return None
+        if rank[0] == 1 and best_rank[1] - rank[1] <= 0.04:
+            return None
     # The page gave no season, but the title it matched belongs to a known
     # season of the chain — 'naruto shippuden' implies S2.
     if best["season"] is None and best.get("matched_season"):
@@ -164,7 +192,8 @@ def _resolve_absolute(best: Dict[str, Any]) -> None:
 
 
 async def anchor_match(
-    user_id: int, candidates: List[str], page_url: str = ""
+    user_id: int, candidates: List[str], page_url: str = "",
+    season_hint: Optional[int] = None, episode_hint: Optional[int] = None,
 ) -> Result[Optional[Dict[str, Any]], str]:
     """Match page candidates against the user's tracked entries. None means
     'nothing tracked here' — the module stays unbound, no error."""
@@ -191,6 +220,7 @@ async def anchor_match(
     for r in rows:
         entry = {
             "id": r["id"],
+            "title": decrypt(key, r["title_enc"]) or "",
             # (normalized title, season it names) — season titles know their
             # season; the entry title implies none (absolute numbers walk the
             # chain instead, so 'naruto ep 300' lands in S2, not S1E300).
@@ -217,7 +247,25 @@ async def anchor_match(
     best = _best_match(candidates, entries)
     if best is None:
         return Success(None)
-    _resolve_absolute(best)
+    # URL evidence is independent of anime identity. The extension supplies
+    # its parsed hints; parsing again here keeps older extension packages
+    # compatible and lets the learned-link row retain the same episode.
+    url_hint = sites.parse_episode_url(page_url) if page_url else {}
+    if isinstance(season_hint, int) and not isinstance(season_hint, bool) and season_hint > 0:
+        best["season"] = season_hint
+    elif url_hint.get("season") is not None:
+        best["season"] = url_hint["season"]
+    chosen_episode = episode_hint if (
+        isinstance(episode_hint, int) and not isinstance(episode_hint, bool) and episode_hint > 0
+    ) else url_hint.get("episode")
+    if chosen_episode is not None:
+        best["episode"] = chosen_episode
+        # URL episode numbers are normally season-local; do not interpret a
+        # route's /2 as absolute episode two-hundred-something in a chain.
+        if best["season"] is None:
+            best["season"] = best["cursor_season"] or 1
+    else:
+        _resolve_absolute(best)
     best.pop("matched", None)
     best.pop("matched_season", None)
     best.pop("seasons", None)

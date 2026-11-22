@@ -132,6 +132,7 @@ class ExtQuery:
 @strawberry.type
 class AnchorMatch:
     entry_id: int
+    title: str
     season: Optional[int]       # parsed from the page; None = not stated there
     episode: Optional[int]      # parsed (absolute numbers resolved via the chain)
     cursor_season: Optional[int]    # fallbacks for the binding
@@ -235,11 +236,14 @@ class YoutubeImportStatus:
 class ExtMutation:
     @strawberry.field
     async def anchor_match(
-        self, info: Info, candidates: List[str], page_url: str = ""
+        self, info: Info, candidates: List[str], page_url: str = "",
+        season_hint: Optional[int] = None, episode_hint: Optional[int] = None,
     ) -> Optional[AnchorMatch]:
         """Phase 3: 'what anime is this page?' — null when nothing tracked
         matches. page_url rides along for phase 5 watch-site learning."""
-        match = _unwrap(await anchor.anchor_match(await _ext_uid(info), candidates, page_url))
+        match = _unwrap(await anchor.anchor_match(
+            await _ext_uid(info), candidates, page_url, season_hint, episode_hint
+        ))
         return AnchorMatch(**match) if match else None
 
     @strawberry.field

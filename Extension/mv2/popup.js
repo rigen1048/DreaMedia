@@ -21,6 +21,82 @@ async function currentTab() {
   return tab;
 }
 
+let animeTitleById = new Map();
+let trackingRequestInFlight = false;
+
+function formatClock(value) {
+  if (!Number.isFinite(value) || value < 0) return "—:—";
+  const seconds = Math.floor(value);
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes >= 60) {
+    return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+  }
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
+function renderTracking(data) {
+  const card = $("trackingCard");
+  const title = $("trackingTitle");
+  const detail = $("trackingDetail");
+  const clock = $("trackingTime");
+  if (!data) {
+    card.dataset.state = "idle";
+    title.textContent = "Not tracking anime";
+    detail.textContent = "Open or reload an enabled anime tab";
+    clock.textContent = "—:—";
+    return;
+  }
+  if (!data.bound || !data.entryId) {
+    card.dataset.state = "idle";
+    title.textContent = "No anime matched";
+    detail.textContent = data.urlEpisode != null
+      ? `URL suggests episode ${data.urlEpisode}`
+      : "Choose Bind anime to link this tab";
+    clock.textContent = "—:—";
+    return;
+  }
+
+  const animeTitle = data.title || animeTitleById.get(Number(data.entryId)) || `Anime ${data.entryId}`;
+  const season = Number(data.season) > 0 ? `S${data.season} · ` : "";
+  const episode = data.episode != null ? `Episode ${data.episode}` : "Episode unknown";
+  const sources = { url: "URL", title: "title", cursor: "saved cursor", manual: "manual", ended: "ended +1" };
+  const source = sources[data.episodeSource] || data.episodeSource || "estimate";
+  const stateText = {
+    playing: "Tracking",
+    paused: "Paused",
+    waiting: "Waiting for video",
+    ended: data.episodeSource === "ended" ? "Next episode estimate" : "Episode ended",
+    unmatched: "Not matched",
+  }[data.state] || "Tracking";
+  card.dataset.state = data.state === "playing" || data.state === "paused" || data.state === "ended"
+    ? data.state : "idle";
+  title.textContent = animeTitle;
+  detail.textContent = `${stateText} · ${season}${episode} · ${source}`;
+  const current = formatClock(data.positionSeconds);
+  const total = formatClock(data.durationSeconds);
+  clock.textContent = data.durationSeconds != null && total !== "—:—"
+    ? `${current} / ${total}` : current;
+}
+
+async function refreshTrackingStatus() {
+  if (trackingRequestInFlight) return;
+  trackingRequestInFlight = true;
+  try {
+    const tab = await currentTab();
+    if (!tab?.id) {
+      renderTracking(null);
+      return;
+    }
+    const response = await send("dreamedia:trackingStatus", { tabId: tab.id });
+    renderTracking(response.ok ? response.data : null);
+  } catch (_error) {
+    renderTracking(null);
+  } finally {
+    trackingRequestInFlight = false;
+  }
+}
+
 function setConnection(state, text) {
   $("connection").dataset.state = state;
   $("connectionText").textContent = text;
@@ -431,10 +507,21 @@ action("bind", "bindStatus", async () => {
   if (!tab?.id) return status("bindStatus", "Open a tab to track first", "err");
   const entryId = Number($("entry").value);
   if (!entryId) return status("bindStatus", "Pick an entry first", "err");
-  const binding = { entryId, season: Number($("season").value) || 1, episode: Number($("episode").value) || 1 };
+  const hint = window.DreaMediaAnimeUrl?.parse(tab.url || "") || {};
+  const title = $("entry").selectedOptions?.[0]?.textContent || "";
+  const binding = {
+    entryId,
+    title,
+    manual: true,
+    season: hint.season || Number($("season").value) || 1,
+    episode: hint.episode || Number($("episode").value) || 1,
+    seasonSource: hint.season != null ? "url" : "manual",
+    episodeSource: hint.episode != null ? "url" : "manual",
+  };
   await (chrome.storage.session || chrome.storage.local).set({ dreamediaBinding: binding });
   const delivered = await chrome.tabs.sendMessage(tab.id, { type: "dreamedia:bind", binding }).then(() => true, () => false);
   status("bindStatus", delivered ? "Binding saved. Progress syncs every 5 seconds during playback." : "Binding saved. Reload an enabled anime tab to start syncing.", "ok");
+  await refreshTrackingStatus();
 });
 
 // ---- lists ----
@@ -473,6 +560,7 @@ async function loadLists(configured, updateConnection = true) {
   }
   const entries = await send("dreamedia:aniEntries");
   if (entries.ok) {
+    animeTitleById = new Map((entries.data.entries || []).map((entry) => [Number(entry.id), String(entry.title ?? "")]));
     fillOptions(
       $("entry"),
       (entries.data.entries || []).map((e) => ({ value: String(e.id), label: String(e.title ?? "") })),
@@ -509,5 +597,7 @@ async function initializePopup() {
   }
   await loadLists(configured);
   if (configured) await resumeImportJob();
+  await refreshTrackingStatus();
+  setInterval(() => void refreshTrackingStatus(), 1000);
 }
 void initializePopup();

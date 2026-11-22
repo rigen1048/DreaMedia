@@ -542,6 +542,15 @@ def test_anchor_best_match_and_ambiguity():
     best = anchor._best_match(["Watch Naruto Shippuden Episode 5 online"], romaji)
     assert best is not None and best["entry_id"] == 1 and best["season"] == 2
 
+    # A small spelling error can still match a distinctive multi-word title.
+    typo = [_entry(7, ["One Piece"])]
+    best = anchor._best_match(["Watch One Peice Episode 2"], typo)
+    assert best is not None and best["entry_id"] == 7
+
+    # Near-equal fuzzy results stay unbound rather than guessing the entry.
+    near_dupes = [_entry(8, ["Naruto"]), _entry(9, ["Narotu"])]
+    assert anchor._best_match(["Naroto Episode 5"], near_dupes) is None
+
 
 def test_anchor_absolute_episode_resolution():
     """'One Piece 1230' style: absolute numbers map into the chain."""
@@ -575,6 +584,19 @@ async def test_anchor_match_against_db():
     assert match["season"] == 2
     # cursor fallbacks present for the binding
     assert "cursor_season" in match and "cursor_episode" in match
+
+    # A URL episode hint is stronger than the page-title suffix and is kept
+    # season-local instead of being remapped as an absolute chain number.
+    result = await anchor.anchor_match(
+        user_id,
+        ["Watch Naruto Shippuden Episode 5 online - SiteName"],
+        page_url="https://anime.example/watch/21",
+        season_hint=2,
+        episode_hint=29,
+    )
+    hinted = result.unwrap()
+    assert hinted is not None and hinted["title"]
+    assert (hinted["season"], hinted["episode"]) == (2, 29)
 
     # nothing tracked on the page -> None, not an error
     result = await anchor.anchor_match(user_id, ["Some cooking tutorial site"])
@@ -637,9 +659,46 @@ def test_watch_site_retarget():
     assert sites._retarget("https://site.example/naruto", 1, 5, 1, 6) is None
     # too many lookalike tokens -> None rather than corrupt
     assert sites._retarget("https://site.example/5/5/5/naruto-5", 1, 5, 1, 6) is None
-    # digits inside bigger numbers never rewrite (1080 stays put)
-    assert sites._retarget("https://site.example/watch-1080/naruto-5", 1, 5, 1, 6) == \
-        "https://site.example/watch-1080/naruto-6"
+    # A nearby larger number is untouched when the episode marker is clear.
+    assert sites._retarget("https://site.example/watch-1080/naruto-episode-5", 1, 5, 1, 6) == \
+        "https://site.example/watch-1080/naruto-episode-6"
+    assert sites.parse_episode_url("https://site.example/watch/63801")["episode"] is None
+
+    # Query and watch-route path locators change only the episode, not anime
+    # IDs, audio modes, slugs, or unrelated numeric values.
+    assert sites._retarget("https://site.example/watch/one-piece-81553/ep-29", 1, 29, 1, 30) == \
+        "https://site.example/watch/one-piece-81553/ep-30"
+    assert sites._retarget("https://site.example/watch/one-piece?ep=185&type=sub", 1, 185, 1, 186) == \
+        "https://site.example/watch/one-piece?ep=186&type=sub"
+    assert sites._retarget("https://site.example/episode?anime=63801&ep_num=2", 1, 2, 1, 3) == \
+        "https://site.example/episode?anime=63801&ep_num=3"
+    assert sites._retarget("https://site.example/watch/one-piece-21/518", 1, 518, 1, 519) == \
+        "https://site.example/watch/one-piece-21/519"
+    assert sites._retarget("https://site.example/watch/21/2?audio=sub", 1, 2, 1, 3) == \
+        "https://site.example/watch/21/3?audio=sub"
+    assert sites._retarget("https://site.example/watch/21/2/?audio=sub", 1, 2, 1, 3) == \
+        "https://site.example/watch/21/3/?audio=sub"
+
+
+def test_watch_site_episode_url_parser():
+    cases = [
+        ("https://site.example/watch/one-piece-81553/ep-29", 29, "path:episode-marker"),
+        ("https://site.example/watch/one-piece?ep=185&type=sub", 185, "query:ep"),
+        ("https://site.example/episode?anime=63801&ep_num=2", 2, "query:ep_num"),
+        ("https://site.example/watch/one-piece-21/518", 518, "path:trailing-number"),
+        ("https://site.example/watch/21/2?audio=sub", 2, "path:trailing-number"),
+        ("https://site.example/watch/one-piece-21/518/", 518, "path:trailing-number"),
+    ]
+    for url, episode, source in cases:
+        result = sites.parse_episode_url(url)
+        assert result["episode"] == episode, url
+        assert result["source"] == source, url
+    assert sites.parse_episode_url("https://site.example/anime/63801")["episode"] is None
+    assert sites.parse_episode_url("https://site.example/watch/21/2?ep=2&ep=3")["episode"] is None
+    ambiguous_season = sites.parse_episode_url(
+        "https://site.example/watch/show?season=2&season=3&ep=5"
+    )
+    assert ambiguous_season["season"] is None and ambiguous_season["episode"] == 5
 
 
 async def test_watch_sites_learn_and_resolve():

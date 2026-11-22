@@ -1,15 +1,25 @@
-/* DreaMedia anime module (ext v2): watch tracking for allowlisted 'ani'
- * domains. Bound by the popup (manual override today; anchor-detection
- * auto-bind is design phase 3). Live-session upserts stream every 5s over
- * the websocket lane; pause/ended merge the final position into the real
- * cursor. Requires core.js. */
+/* Site-agnostic anime watch tracking for allowlisted 'ani' domains.
+ * Titles identify the tracked entry on the backend; URL hints identify the
+ * episode; the attached video supplies the playback position. */
 (() => {
   const LIVE_INTERVAL_MS = 5000;
   let lastEventTimeMs = 0;
+  let activeVideo = null;
+  let activeEpisode = null;
+  let anchorAttempts = 0;
+  let anchorRetryTimer = null;
+  let bindingReady = false;
+  const bindingStore = chrome.storage.session || chrome.storage.local;
+
+  function urlHint() {
+    return window.DreaMediaAnimeUrl?.parse(location.href) || {
+      season: null, episode: null, source: "", confidence: "none",
+    };
+  }
 
   function payload(video) {
     const binding = window.__dreamediaBinding;
-    if (!binding || !binding.entryId) return null; // popup binds this tab first
+    if (!binding || !binding.entryId) return null;
     lastEventTimeMs = Math.max(Date.now(), lastEventTimeMs + 1);
     return {
       entry_id: binding.entryId,
@@ -20,12 +30,42 @@
     };
   }
 
-  function send(type, body) {
+  function send(type, body = {}) {
     chrome.runtime.sendMessage({ type, ...body }, () => void chrome.runtime.lastError);
   }
 
-  // ---- anchor detection (phase 3): when unbound, ask the backend what
-  // anime this page is; it auto-binds via dreamedia:bind on a match.
+  function trackingSnapshot(video = activeVideo, forcedState = "") {
+    const binding = window.__dreamediaBinding;
+    const liveVideo = video?.isConnected ? video : null;
+    const hint = urlHint();
+    let state = forcedState;
+    if (!state) {
+      if (!binding?.entryId) state = "unmatched";
+      else if (!liveVideo) state = "waiting";
+      else if (liveVideo.ended) state = "ended";
+      else if (liveVideo.paused) state = "paused";
+      else state = "playing";
+    }
+    return {
+      bound: Boolean(binding?.entryId),
+      entryId: binding?.entryId ?? null,
+      title: binding?.title || "",
+      season: binding?.season ?? null,
+      episode: binding?.episode ?? null,
+      episodeSource: binding?.episodeSource || "",
+      positionSeconds: liveVideo ? Math.floor(liveVideo.currentTime || 0) : null,
+      durationSeconds: liveVideo && Number.isFinite(liveVideo.duration)
+        ? Math.floor(liveVideo.duration) : null,
+      playing: Boolean(liveVideo && !liveVideo.paused && !liveVideo.ended),
+      state,
+      urlEpisode: hint.episode,
+      urlSeason: hint.season,
+      urlEpisodeSource: hint.source,
+      url: location.href,
+      sampledAt: Date.now(),
+    };
+  }
+
   function pageCandidates() {
     const list = [document.title];
     const og = document.querySelector('meta[property="og:title"]');
@@ -35,58 +75,99 @@
     return list.filter(Boolean);
   }
 
-  let anchorAttempts = 0;
-  let anchorRetryTimer = null;
-  function tryAnchor() {
-    if (window.__dreamediaBinding?.entryId || anchorAttempts >= 6) return;
+  function tryAnchor(force = false) {
+    if (!bindingReady || window.__dreamediaBinding?.manual ||
+        (!force && window.__dreamediaBinding?.entryId) || anchorAttempts >= 6) return;
     anchorAttempts += 1;
-    send("dreamedia:anchor", { candidates: pageCandidates(), url: location.href });
+    send("dreamedia:anchor", {
+      candidates: pageCandidates(),
+      url: location.href,
+      urlHint: urlHint(),
+    });
   }
-  // Titles settle late on some players and change on SPA navigation.
-  setTimeout(tryAnchor, 3000);
-  setInterval(tryAnchor, 10000);
 
-  // Receive the popup's binding / the backend's block verdict for this tab.
-  chrome.runtime.onMessage.addListener((msg) => {
+  // Page/player titles can settle late; retries stop after an automatic bind.
+  setTimeout(() => tryAnchor(), 3000);
+  setInterval(() => tryAnchor(), 10000);
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "dreamedia:bind") {
       window.__dreamediaBinding = msg.binding;
+      activeEpisode = msg.binding?.episode ?? null;
+      void bindingStore.set({ dreamediaBinding: msg.binding });
       console.debug("[DreaMedia] bound to entry", msg.binding);
     } else if (msg.type === "dreamedia:blocked") {
       window.DreaMediaCore.showBlocked(msg.title || "This anime is on your blocked list.", msg.reason);
+    } else if (msg.type === "dreamedia:getTrackingStatus") {
+      sendResponse(trackingSnapshot());
     }
   });
-  // Restore a binding for this tab (survives reloads within the session).
-  // MV2 (Firefox) has no storage.session — fall back to storage.local.
-  const store = chrome.storage.session || chrome.storage.local;
-  store.get("dreamediaBinding").then((r) => {
-    if (r?.dreamediaBinding) window.__dreamediaBinding = r.dreamediaBinding;
-  }).catch(() => {});
+
+  // Restore a binding for this browser session, including Firefox's MV2 path.
+  bindingStore.get("dreamediaBinding").then((result) => {
+    if (result?.dreamediaBinding) {
+      window.__dreamediaBinding = result.dreamediaBinding;
+    }
+    bindingReady = true;
+    if (!window.__dreamediaBinding?.entryId) tryAnchor();
+  }).catch(() => {
+    bindingReady = true;
+    tryAnchor();
+  });
 
   window.DreaMediaCore.start({
+    onAttach: (video) => {
+      activeVideo = video;
+      activeEpisode = window.__dreamediaBinding?.episode ?? urlHint().episode;
+    },
     onNavigate: () => {
       anchorAttempts = 0;
+      const hint = urlHint();
+      const binding = window.__dreamediaBinding;
+      // A URL change on an already-bound SPA tab is new episode evidence.
+      if (binding?.entryId && hint.episode != null) {
+        binding.episode = hint.episode;
+        if (hint.season != null) binding.season = hint.season;
+        binding.episodeSource = "url";
+        activeEpisode = hint.episode;
+        void bindingStore.set({ dreamediaBinding: binding });
+      }
       if (anchorRetryTimer) clearTimeout(anchorRetryTimer);
       anchorRetryTimer = setTimeout(() => {
         anchorRetryTimer = null;
-        tryAnchor();
+        tryAnchor(true);
       }, 1500);
     },
     onInterval: (video) => {
+      activeVideo = video;
       const p = payload(video);
       if (p) send("dreamedia:progress", { payload: p });
     },
     onPause: (video) => {
+      activeVideo = video;
       const p = payload(video);
       if (p) send("dreamedia:liveEnd", { payload: p });
     },
-    // Episode advances when a video ends (site-agnostic approximation).
     onEnded: (video) => {
+      activeVideo = video;
       const binding = window.__dreamediaBinding;
       if (!binding) return;
-      const p = payload(video); // final position of the finished episode
-      binding.episode = (binding.episode || 0) + 1;
-      (chrome.storage.session || chrome.storage.local).set({ dreamediaBinding: binding });
+      const p = payload(video);
       if (p) send("dreamedia:liveEnd", { payload: p });
+      // If navigation already exposed the next route, trust it. Otherwise the
+      // finished video is the attached episode and the popup should advance
+      // even when the site leaves its URL unchanged after playback.
+      const routeEpisode = urlHint().episode;
+      const finishedEpisode = Number(activeEpisode ?? binding.episode) || 0;
+      if (routeEpisode != null && routeEpisode > finishedEpisode) {
+        binding.episode = routeEpisode;
+        binding.episodeSource = "url";
+      } else {
+        binding.episode = finishedEpisode + 1;
+        binding.episodeSource = "ended";
+      }
+      activeEpisode = binding.episode;
+      void bindingStore.set({ dreamediaBinding: binding });
     },
   }, LIVE_INTERVAL_MS);
 })();

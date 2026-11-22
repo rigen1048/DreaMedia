@@ -46,6 +46,17 @@ svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width:
 .site-enable select, .secondary { min-height: 2rem; }
 .secondary { background: var(--secondary); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0 .75rem; font-weight: 550; font-size: .75rem; }
 
+.tracking-card { display: flex; align-items: center; gap: .55rem; min-width: 0; margin-top: .5rem; padding: .5rem .625rem; background: var(--background); border: 1px solid var(--border); border-radius: var(--radius); }
+.tracking-dot { width: .45rem; height: .45rem; flex: none; border-radius: 50%; background: var(--muted-foreground); }
+.tracking-card[data-state="playing"] .tracking-dot { background: var(--success); box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 16%, transparent); }
+.tracking-card[data-state="paused"] .tracking-dot { background: var(--warning, #eab308); }
+.tracking-card[data-state="ended"] .tracking-dot { background: var(--muted-foreground); }
+.tracking-card[data-state="error"] .tracking-dot { background: var(--destructive); }
+.tracking-copy { display: grid; flex: 1; min-width: 0; gap: .06rem; }
+.tracking-copy strong { overflow: hidden; font-size: .75rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.tracking-copy span { overflow: hidden; color: var(--muted-foreground); font-size: .6875rem; text-overflow: ellipsis; white-space: nowrap; }
+.tracking-time { flex: none; color: var(--muted-foreground); font-family: var(--font-code); font-size: .6875rem; font-variant-numeric: tabular-nums; }
+
 .tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .125rem; margin-top: .875rem; padding: .1875rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--background); }
 .tabs button { display: flex; justify-content: center; align-items: center; gap: .375rem; min-width: 0; min-height: 1.875rem; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); padding: .25rem .125rem; color: var(--muted-foreground); font-size: .75rem; font-weight: 550; }
 .tabs svg { width: .875rem; height: .875rem; }
