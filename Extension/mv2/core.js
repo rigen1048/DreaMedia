@@ -4,6 +4,8 @@
  * ONLY (dynamic registration from ext_domains), before the media module.
  * Exposes window.DreaMediaCore.start(handlers). */
 (() => {
+  if (window.__dreamediaCoreStarted) return;
+  window.__dreamediaCoreStarted = true;
   const REPORT_INTERVAL_MS = 15000;
 
   function generateSelector(video) {

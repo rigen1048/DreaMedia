@@ -48,7 +48,8 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
 ## Popup
 
 - **Current site** shows whether the site is enabled, paused, or not enabled.
-  Add a new site as Anime or YouTube, then reload its tab. Manage paused
+  Add a new site as Anime or YouTube; tracking activates automatically on open
+  matching tabs and future navigations. Manage paused
   sites in **Ext → Sites** in DreaMedia. Changes sync on connection and every
   five minutes while an enabled site is open; open an enabled site (YouTube by
   default) to sync when no allowed tab is currently open.
@@ -64,8 +65,9 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
   and category. Processing continues in the backend and progress is restored
   the next time the popup is opened.
 - **Save video** adds the active YouTube video to a custom playlist in Todo.
-- **Bind anime** lets you manually link the tab to a tracked anime and set the
-  season and episode. It does not replace automatic matching on enabled sites.
+- On enabled Anime sites, the extension automatically matches the page title
+  to a tracked anime, estimates its episode from the URL, and shows the attached
+  video's live time. Matching and progress state are isolated per tab.
 
 This directory replaces `Extension/` in DreaMedia. `mv2/` and `mv3/` are
 ready to load without a frontend build. The surrounding Make project is a

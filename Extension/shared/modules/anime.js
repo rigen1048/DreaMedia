@@ -2,14 +2,17 @@
  * Titles identify the tracked entry on the backend; URL hints identify the
  * episode; the attached video supplies the playback position. */
 (() => {
+  if (window.__dreamediaAnimeStarted) return;
+  window.__dreamediaAnimeStarted = true;
+  // Each tab owns its binding in this isolated content-script world. Never
+  // restore the old global storage key, which leaked one tab's anime into all.
+  window.__dreamediaBinding = null;
   const LIVE_INTERVAL_MS = 5000;
   let lastEventTimeMs = 0;
   let activeVideo = null;
   let activeEpisode = null;
   let anchorAttempts = 0;
   let anchorRetryTimer = null;
-  let bindingReady = false;
-  const bindingStore = chrome.storage.session || chrome.storage.local;
 
   function urlHint() {
     return window.DreaMediaAnimeUrl?.parse(location.href) || {
@@ -36,11 +39,13 @@
 
   function trackingSnapshot(video = activeVideo, forcedState = "") {
     const binding = window.__dreamediaBinding;
-    const liveVideo = video?.isConnected ? video : null;
+    const liveVideo = video?.isConnected
+      ? video
+      : document.querySelector('video[data-dreamedia="true"]');
     const hint = urlHint();
     let state = forcedState;
     if (!state) {
-      if (!binding?.entryId) state = "unmatched";
+      if (!binding?.entryId) state = anchorAttempts < 6 ? "matching" : "unmatched";
       else if (!liveVideo) state = "waiting";
       else if (liveVideo.ended) state = "ended";
       else if (liveVideo.paused) state = "paused";
@@ -58,6 +63,7 @@
         ? Math.floor(liveVideo.duration) : null,
       playing: Boolean(liveVideo && !liveVideo.paused && !liveVideo.ended),
       state,
+      pageTitle: document.title || "",
       urlEpisode: hint.episode,
       urlSeason: hint.season,
       urlEpisodeSource: hint.source,
@@ -76,8 +82,7 @@
   }
 
   function tryAnchor(force = false) {
-    if (!bindingReady || window.__dreamediaBinding?.manual ||
-        (!force && window.__dreamediaBinding?.entryId) || anchorAttempts >= 6) return;
+    if ((!force && window.__dreamediaBinding?.entryId) || anchorAttempts >= 6) return;
     anchorAttempts += 1;
     send("dreamedia:anchor", {
       candidates: pageCandidates(),
@@ -86,33 +91,21 @@
     });
   }
 
-  // Page/player titles can settle late; retries stop after an automatic bind.
-  setTimeout(() => tryAnchor(), 3000);
-  setInterval(() => tryAnchor(), 10000);
+  // Match as soon as the enabled content script starts; retry while a title
+  // settles, stopping after a match or six unanswered attempts.
+  setTimeout(() => tryAnchor(), 500);
+  setInterval(() => tryAnchor(), 5000);
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "dreamedia:bind") {
       window.__dreamediaBinding = msg.binding;
       activeEpisode = msg.binding?.episode ?? null;
-      void bindingStore.set({ dreamediaBinding: msg.binding });
       console.debug("[DreaMedia] bound to entry", msg.binding);
     } else if (msg.type === "dreamedia:blocked") {
       window.DreaMediaCore.showBlocked(msg.title || "This anime is on your blocked list.", msg.reason);
     } else if (msg.type === "dreamedia:getTrackingStatus") {
       sendResponse(trackingSnapshot());
     }
-  });
-
-  // Restore a binding for this browser session, including Firefox's MV2 path.
-  bindingStore.get("dreamediaBinding").then((result) => {
-    if (result?.dreamediaBinding) {
-      window.__dreamediaBinding = result.dreamediaBinding;
-    }
-    bindingReady = true;
-    if (!window.__dreamediaBinding?.entryId) tryAnchor();
-  }).catch(() => {
-    bindingReady = true;
-    tryAnchor();
   });
 
   window.DreaMediaCore.start({
@@ -130,7 +123,6 @@
         if (hint.season != null) binding.season = hint.season;
         binding.episodeSource = "url";
         activeEpisode = hint.episode;
-        void bindingStore.set({ dreamediaBinding: binding });
       }
       if (anchorRetryTimer) clearTimeout(anchorRetryTimer);
       anchorRetryTimer = setTimeout(() => {
@@ -167,7 +159,6 @@
         binding.episodeSource = "ended";
       }
       activeEpisode = binding.episode;
-      void bindingStore.set({ dreamediaBinding: binding });
     },
   }, LIVE_INTERVAL_MS);
 })();

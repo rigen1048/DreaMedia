@@ -58,7 +58,7 @@
       <p id="siteStatus" class="status" role="status"></p>
     </section>
 
-    <section id="trackingCard" class="tracking-card" data-state="idle" aria-live="polite" aria-label="Anime tracking status">
+    <section id="trackingCard" class="tracking-card" data-state="idle" aria-live="polite" aria-label="Anime tracking status" hidden>
       <span id="trackingDot" class="tracking-dot" aria-hidden="true"></span>
       <div class="tracking-copy">
         <strong id="trackingTitle">Not tracking anime</strong>
@@ -67,10 +67,9 @@
       <span id="trackingTime" class="tracking-time">—:—</span>
     </section>
 
-    <div class="tabs" role="tablist" aria-label="Page actions">
+    <div id="pageActions" class="tabs" role="tablist" aria-label="Page actions">
       <button id="subscribeTab" type="button" role="tab" aria-selected="true" aria-controls="subscribePanel"><svg aria-hidden="true"><use href="#bell"/></svg>Source</button>
       <button id="playlistTab" type="button" role="tab" aria-selected="false" aria-controls="playlistPanel" tabindex="-1"><svg aria-hidden="true"><use href="#list"/></svg>Save video</button>
-      <button id="trackTab" type="button" role="tab" aria-selected="false" aria-controls="trackPanel" tabindex="-1"><svg aria-hidden="true"><use href="#clock"/></svg>Bind anime</button>
     </div>
 
     <section id="subscribePanel" class="panel" role="tabpanel" aria-labelledby="subscribeTab">
@@ -146,23 +145,6 @@
       </div>
     </section>
 
-    <section id="trackPanel" class="panel" role="tabpanel" aria-labelledby="trackTab" hidden>
-      <h1>Bind tab to anime</h1>
-      <div class="fields">
-        <div class="field">
-          <label for="entry">Anime</label>
-          <div class="select-wrap"><select id="entry"><option value="">Loading anime…</option></select><svg><use href="#chevron"/></svg></div>
-        </div>
-        <div class="pair">
-          <div class="field"><label for="season">Season</label><input id="season" type="number" min="1" value="1"></div>
-          <div class="field"><label for="episode">Episode</label><input id="episode" type="number" min="0" value="1"></div>
-        </div>
-      </div>
-      <div class="panel-actions">
-        <p id="bindStatus" class="status" role="status"></p>
-        <button id="bind" class="primary" type="button"><svg aria-hidden="true"><use href="#link"/></svg>Bind tab</button>
-      </div>
-    </section>
   </main>
 
   <main id="setup" class="popup-content setup" hidden>
@@ -189,7 +171,6 @@
     <span id="connection" class="connection" data-state="loading" role="status"><span class="connection-dot"></span><span id="connectionText">Checking connection…</span></span>
     <span class="version">v<span id="version">1.0.0</span></span>
   </footer>
-  <script src="modules/anime-url.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

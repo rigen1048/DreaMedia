@@ -9,6 +9,11 @@ const MEDIA_JS = {
 };
 const DEFAULT_DOMAINS = [{ id: 0, domain: "youtube.com", media: "yt", enabled: true }];
 const pendingSiteDomains = new Set();
+// Remove the old shared binding key: each tab now owns its own in-memory match.
+void chrome.storage.local.remove("dreamediaBinding").catch(() => {});
+if (chrome.storage.session?.remove) {
+  void chrome.storage.session.remove("dreamediaBinding").catch(() => {});
+}
 
 async function backend() {
   const r = await chrome.storage.local.get(["backendUrl", "token"]);
@@ -126,10 +131,45 @@ async function registerDomains(domains) {
   }
 }
 
+async function injectAnimeIntoTab(tabId, tabUrl, domains = null) {
+  if (!Number.isInteger(tabId) || !/^https?:/i.test(tabUrl || "")) return false;
+  const rows = domains || await cachedDomains();
+  const allowed = rows.some((row) => row?.media === "ani" && row.enabled &&
+    urlMatchesDomain(tabUrl, row.domain));
+  if (!allowed) return false;
+  try {
+    if (chrome.scripting?.executeScript) {
+      await chrome.scripting.executeScript({ target: { tabId }, files: MEDIA_JS.ani });
+    } else if (chrome.tabs?.executeScript) {
+      const api = typeof browser !== "undefined" ? browser : chrome;
+      for (const file of MEDIA_JS.ani) await api.tabs.executeScript(tabId, { file });
+    } else {
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.debug("[DreaMedia] could not activate anime tracking in tab", tabId, error);
+    return false;
+  }
+}
+
+async function injectAnimeIntoOpenTabs(domains) {
+  const animeDomains = domains.filter((row) => row?.media === "ani" && row.enabled);
+  if (!animeDomains.length) return;
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({}); } catch (_error) { return; }
+  for (const tab of tabs || []) {
+    if (animeDomains.some((row) => urlMatchesDomain(tab.url || "", row.domain))) {
+      await injectAnimeIntoTab(tab.id, tab.url, animeDomains);
+    }
+  }
+}
+
 async function refreshDomains() {
   try {
     const domains = await fetchDomains();
     await registerDomains(domains);
+    await injectAnimeIntoOpenTabs(domains);
   } catch (e) {
     console.debug("[DreaMedia] domain refresh failed", e);
   }
@@ -665,7 +705,6 @@ async function anchorBind(tabId, candidates, pageUrl, urlHint = {}) {
     seasonSource: urlHint.season != null ? "url" : match.season != null ? "title" : "cursor",
     episodeSource: urlHint.episode != null ? "url" : match.episode != null ? "title" : "cursor",
   };
-  await (chrome.storage.session || chrome.storage.local).set({ dreamediaBinding: binding });
   await chrome.tabs.sendMessage(tabId, { type: "dreamedia:bind", binding }).catch(() => {});
   return true;
 }
@@ -838,12 +877,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case "dreamedia:trackingStatus": {
           const tabId = Number(msg.tabId);
           if (!Number.isInteger(tabId)) throw new Error("No active tab to inspect");
-          try {
-            const data = await chrome.tabs.sendMessage(tabId, { type: "dreamedia:getTrackingStatus" });
-            sendResponse({ ok: true, data: data || null });
-          } catch (_error) {
-            sendResponse({ ok: true, data: null });
+          let data = null;
+          try { data = await chrome.tabs.sendMessage(tabId, { type: "dreamedia:getTrackingStatus" }); }
+          catch (_error) { /* the current page may predate allowlist activation */ }
+          if (!data) {
+            let tab = null;
+            try { tab = await chrome.tabs.get(tabId); } catch (_error) { /* tab closed */ }
+            if (tab?.url && await injectAnimeIntoTab(tabId, tab.url)) {
+              try { data = await chrome.tabs.sendMessage(tabId, { type: "dreamedia:getTrackingStatus" }); }
+              catch (_error) { /* page lifecycle or injection may still be settling */ }
+            }
           }
+          sendResponse({ ok: true, data: data || null });
           break;
         }
         case "dreamedia:domainStatus": {

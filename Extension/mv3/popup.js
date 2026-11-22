@@ -21,8 +21,9 @@ async function currentTab() {
   return tab;
 }
 
-let animeTitleById = new Map();
 let trackingRequestInFlight = false;
+let animeTrackingSite = false;
+let animeTrackingEnabled = false;
 
 function formatClock(value) {
   if (!Number.isFinite(value) || value < 0) return "—:—";
@@ -42,25 +43,34 @@ function renderTracking(data) {
   const clock = $("trackingTime");
   if (!data) {
     card.dataset.state = "idle";
-    title.textContent = "Not tracking anime";
-    detail.textContent = "Open or reload an enabled anime tab";
+    title.textContent = !animeTrackingEnabled ? "Anime tracking paused" : "Starting anime tracking…";
+    detail.textContent = !animeTrackingEnabled
+      ? "Enable this domain to match the page and video"
+      : "Matching the page title and locating the video";
     clock.textContent = "—:—";
     return;
   }
   if (!data.bound || !data.entryId) {
     card.dataset.state = "idle";
-    title.textContent = "No anime matched";
-    detail.textContent = data.urlEpisode != null
-      ? `URL suggests episode ${data.urlEpisode}`
-      : "Choose Bind anime to link this tab";
+    const pageTitle = String(data.pageTitle || "").trim();
+    title.textContent = data.state === "matching"
+      ? (pageTitle || "Matching page title…")
+      : "No tracked anime match";
+    detail.textContent = data.state === "matching"
+      ? (data.urlEpisode != null
+        ? `Matching tracked titles · URL suggests episode ${data.urlEpisode}`
+        : "Matching this page title against tracked anime")
+      : (data.urlEpisode != null
+        ? `Page: ${pageTitle || "unknown title"} · URL suggests episode ${data.urlEpisode}`
+        : `Page: ${pageTitle || "unknown title"}`);
     clock.textContent = "—:—";
     return;
   }
 
-  const animeTitle = data.title || animeTitleById.get(Number(data.entryId)) || `Anime ${data.entryId}`;
+  const animeTitle = data.title || `Anime ${data.entryId}`;
   const season = Number(data.season) > 0 ? `S${data.season} · ` : "";
   const episode = data.episode != null ? `Episode ${data.episode}` : "Episode unknown";
-  const sources = { url: "URL", title: "title", cursor: "saved cursor", manual: "manual", ended: "ended +1" };
+  const sources = { url: "URL", title: "title", cursor: "saved cursor", ended: "ended +1" };
   const source = sources[data.episodeSource] || data.episodeSource || "estimate";
   const stateText = {
     playing: "Tracking",
@@ -85,6 +95,10 @@ async function refreshTrackingStatus() {
   try {
     const tab = await currentTab();
     if (!tab?.id) {
+      renderTracking(null);
+      return;
+    }
+    if (!animeTrackingSite) {
       renderTracking(null);
       return;
     }
@@ -265,10 +279,15 @@ async function checkSite() {
   $("siteHost").textContent = host;
   const videoSite = r.registered?.media === "yt" || ["youtube", "video", "channel"].includes(page.kind);
   $("siteIcon").querySelector("use").setAttribute("href", videoSite ? "#video" : "#globe");
-  if (chooseInitialTab) {
+  animeTrackingSite = r.registered?.media === "ani";
+  animeTrackingEnabled = animeTrackingSite && r.registered.enabled !== false;
+  $("trackingCard").hidden = !animeTrackingSite;
+  $("pageActions").hidden = animeTrackingSite;
+  $("subscribePanel").hidden = animeTrackingSite;
+  $("playlistPanel").hidden = animeTrackingSite;
+  if (chooseInitialTab && !animeTrackingSite) {
     chooseInitialTab = false;
-    const initialTab = r.registered?.media === "ani" || (page.kind === "other" && !videoSite) ? "trackTab"
-      : page.kind === "video" ? "playlistTab" : "subscribeTab";
+    const initialTab = page.kind === "video" ? "playlistTab" : "subscribeTab";
     selectTab($(initialTab));
     if (initialTab === "subscribeTab" && page.kind === "youtube" && page.playlist) $("kind").value = "playlist";
   }
@@ -301,7 +320,7 @@ action("enableSite", "siteStatus", async () => {
     domain: pageUrl,
     media: $("siteMedia").value,
   });
-  status("siteStatus", r.ok ? "Site added. Reload the tab to activate tracking." : `Failed: ${r.error}`, r.ok ? "ok" : "err");
+  status("siteStatus", r.ok ? "Site added. Anime matching and video tracking start automatically." : `Failed: ${r.error}`, r.ok ? "ok" : "err");
   if (r.ok) {
     await checkSite();
     $("siteHost").focus();
@@ -501,29 +520,6 @@ action("addVideo", "cardStatus", async () => {
   status("cardStatus", added ? "Video added" : duplicate ? "Already in this playlist" : reason || "No video was added", added || duplicate ? "ok" : "err");
 });
 
-// ---- anime binding ----
-action("bind", "bindStatus", async () => {
-  const tab = await currentTab();
-  if (!tab?.id) return status("bindStatus", "Open a tab to track first", "err");
-  const entryId = Number($("entry").value);
-  if (!entryId) return status("bindStatus", "Pick an entry first", "err");
-  const hint = window.DreaMediaAnimeUrl?.parse(tab.url || "") || {};
-  const title = $("entry").selectedOptions?.[0]?.textContent || "";
-  const binding = {
-    entryId,
-    title,
-    manual: true,
-    season: hint.season || Number($("season").value) || 1,
-    episode: hint.episode || Number($("episode").value) || 1,
-    seasonSource: hint.season != null ? "url" : "manual",
-    episodeSource: hint.episode != null ? "url" : "manual",
-  };
-  await (chrome.storage.session || chrome.storage.local).set({ dreamediaBinding: binding });
-  const delivered = await chrome.tabs.sendMessage(tab.id, { type: "dreamedia:bind", binding }).then(() => true, () => false);
-  status("bindStatus", delivered ? "Binding saved. Progress syncs every 5 seconds during playback." : "Binding saved. Reload an enabled anime tab to start syncing.", "ok");
-  await refreshTrackingStatus();
-});
-
 // ---- lists ----
 function fillOptions(select, rows, emptyLabel) {
   // DOM APIs only — server-derived names are textContent, never innerHTML
@@ -557,17 +553,6 @@ async function loadLists(configured, updateConnection = true) {
     );
   } else {
     fillOptions($("card"), [], configured ? "Couldn’t load playlists" : "Connect DreaMedia to load playlists");
-  }
-  const entries = await send("dreamedia:aniEntries");
-  if (entries.ok) {
-    animeTitleById = new Map((entries.data.entries || []).map((entry) => [Number(entry.id), String(entry.title ?? "")]));
-    fillOptions(
-      $("entry"),
-      (entries.data.entries || []).map((e) => ({ value: String(e.id), label: String(e.title ?? "") })),
-      "No anime tracked yet",
-    );
-  } else {
-    fillOptions($("entry"), [], configured ? "Couldn’t load anime" : "Connect DreaMedia to load anime");
   }
   const categoryResult = await send("dreamedia:categories");
   if (categoryResult.ok) {
