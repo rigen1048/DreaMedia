@@ -278,6 +278,8 @@ async def test_claim_reserves_a_global_slot_and_staggered_start(monkeypatch):
     queries = [call[1] for call in connection.calls if call[0] == "fetchrow"]
     assert "FOR UPDATE SKIP LOCKED" in queries[0]
     assert "FOR UPDATE OF i SKIP LOCKED" in queries[1]
+    assert "j.options_enc" in queries[1]
+    assert "i.options_enc" not in queries[1]
     assert "GREATEST(next_start_at, clock_timestamp())" in queries[2]
     slot_update = next(call for call in connection.calls if "UPDATE yt_import_worker_slots SET claim_token" in call[1])
     assert slot_update[2][0:2] == ("resolve", 3)

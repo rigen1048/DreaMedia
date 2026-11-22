@@ -456,7 +456,7 @@ async def _claim_stage_item(user_id: int, stage: str) -> Optional[Dict[str, Any]
             if slot is None:
                 return None
             row = await con.fetchrow(
-                "SELECT i.id, i.job_id, i.link_enc, i.options_enc, i.resolved_enc "
+                "SELECT i.id, i.job_id, i.link_enc, j.options_enc, i.resolved_enc "
                 "FROM yt_import_items i JOIN yt_import_jobs j ON j.job_id = i.job_id "
                 f"WHERE j.user_id = $1 AND j.status IN ('queued', 'running') AND {predicate} "
                 "ORDER BY j.created_at, i.ordinal LIMIT 1 FOR UPDATE OF i SKIP LOCKED",
