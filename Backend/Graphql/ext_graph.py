@@ -23,6 +23,7 @@ from Extension.youtube_imports import (
     add_youtube_channel_source,
     enqueue_youtube_import,
     get_youtube_import_status,
+    retry_youtube_import as retry_youtube_import_job,
 )
 from Utility.media_executor import run_youtube_network
 
@@ -126,7 +127,17 @@ class ExtQuery:
     async def youtube_import_job(self, info: Info, job_id: str) -> Optional[YoutubeImportStatus]:
         """Owner-scoped progress for a queued bulk Add Source operation."""
         status = await get_youtube_import_status(await _ext_uid(info), job_id)
-        return YoutubeImportStatus(**status) if status else None
+        if not status:
+            return None
+        return YoutubeImportStatus(
+            **{
+                **status,
+                "failed_items": [
+                    YoutubeImportFailure(**failure)
+                    for failure in (status.get("failed_items") or [])
+                ],
+            }
+        )
 
 
 @strawberry.type
@@ -212,6 +223,13 @@ class YoutubeImportStarted:
 
 
 @strawberry.type
+class YoutubeImportFailure:
+    link: str
+    error: str
+    retryable: bool
+
+
+@strawberry.type
 class YoutubeImportStatus:
     job_id: str
     status: str
@@ -222,6 +240,7 @@ class YoutubeImportStatus:
     skipped: int
     failed: int
     errors: List[str]
+    failed_items: List[YoutubeImportFailure]
 
 
 @strawberry.type
@@ -330,6 +349,12 @@ class ExtMutation:
             domain=domain,
             subdomain=subdomain,
         )
+        return YoutubeImportStarted(**result)
+
+    @strawberry.field
+    async def retry_youtube_import(self, info: Info, job_id: str) -> YoutubeImportStarted:
+        """Queue the valid failed links from a prior import with its saved options."""
+        result = await retry_youtube_import_job(await _ext_uid(info), job_id)
         return YoutubeImportStarted(**result)
 
     @strawberry.field

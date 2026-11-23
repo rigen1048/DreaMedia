@@ -364,6 +364,7 @@ $("domain").addEventListener("input", updateCategorySuggestions);
 let scannedSubscriptions = [];
 let subscriptionScanComplete = false;
 const activeImportJobs = new Map();
+const failedImportJobs = new Map();
 const pollingImportJobs = new Set();
 let importJobsStorageWrite = Promise.resolve();
 let scanStatusMessage = "";
@@ -401,10 +402,86 @@ function setImportJobStatus(text, cls = "") {
 
 function persistImportJobIds() {
   const jobIds = Array.from(activeImportJobs.keys());
+  const failedJobIds = Array.from(failedImportJobs.keys());
   importJobsStorageWrite = importJobsStorageWrite
     .catch(() => {})
-    .then(() => chrome.storage.local.set({ youtubeImportJobIds: jobIds }));
+    .then(() => chrome.storage.local.set({
+      youtubeImportJobIds: jobIds,
+      youtubeFailedImportJobIds: failedJobIds,
+    }));
   return importJobsStorageWrite;
+}
+
+function renderFailedImportJobs() {
+  const details = $("failedImports");
+  const list = $("failedImportList");
+  list.replaceChildren();
+  let total = 0;
+  for (const job of failedImportJobs.values()) total += job.items.length;
+  details.hidden = total === 0;
+  $("failedImportSummary").textContent = `Failed channels (${total})`;
+
+  for (const job of failedImportJobs.values()) {
+    if (!job.items.length) continue;
+    const retryableCount = job.items.filter((item) => item.retryable).length;
+    const jobRow = document.createElement("li");
+    jobRow.className = "failed-import-job";
+    const heading = document.createElement("div");
+    heading.className = "failed-import-job-heading";
+    const label = document.createElement("span");
+    label.textContent = `Import ${job.jobId.slice(0, 8)} · ${job.items.length} failed`;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "secondary failed-import-retry";
+    retry.textContent = retryableCount ? `Retry ${retryableCount}` : "No retryable links";
+    retry.disabled = retryableCount === 0;
+    retry.addEventListener("click", () => void retryFailedImportJob(job.jobId, retry));
+    heading.append(label, retry);
+
+    const itemList = document.createElement("ul");
+    itemList.className = "failed-import-items";
+    for (const failure of job.items) {
+      const item = document.createElement("li");
+      const link = document.createElement("span");
+      link.textContent = failure.link || "Unknown channel link";
+      const error = document.createElement("span");
+      error.className = "failed-import-error";
+      const detail = failure.error || "Import failed";
+      error.textContent = failure.link && detail.startsWith(`${failure.link}: `)
+        ? detail.slice(failure.link.length + 2)
+        : detail;
+      item.append(link, error);
+      itemList.append(item);
+    }
+    jobRow.append(heading, itemList);
+    list.append(jobRow);
+  }
+}
+
+async function retryFailedImportJob(jobId, button) {
+  button.disabled = true;
+  let response;
+  try {
+    response = await send("dreamedia:retryYoutubeImport", { jobId });
+  } catch (error) {
+    button.disabled = false;
+    setImportScanStatus(`Retry failed: ${error.message || "Could not queue failed channels."}`, "err");
+    return;
+  }
+  if (!response.ok) {
+    button.disabled = false;
+    setImportScanStatus(`Retry failed: ${response.error || "Could not queue failed channels."}`, "err");
+    return;
+  }
+  const retryJob = response.data;
+  if (!retryJob?.jobId) {
+    button.disabled = false;
+    setImportScanStatus("Retry failed: the backend did not return a job ID.", "err");
+    return;
+  }
+  failedImportJobs.delete(jobId);
+  renderFailedImportJobs();
+  await trackImportJob(retryJob.jobId, retryJob.requested || 0);
 }
 
 async function trackImportJob(jobId, requested) {
@@ -475,6 +552,11 @@ async function pollImportJob(jobId) {
       const progress = `${job.resolved}/${job.requested} resolved · ${job.processed}/${job.requested} processed · ${job.added} added · ${job.skipped} already present · ${job.failed} failed`;
       if (job.status === "completed" || job.status === "partial") {
         activeImportJobs.delete(jobId);
+        const failures = Array.isArray(job.failedItems) ? job.failedItems : [];
+        if (failures.length) failedImportJobs.set(jobId, { jobId, items: failures });
+        else if (!job.failed) failedImportJobs.delete(jobId);
+        else failedImportJobs.set(jobId, { jobId, items: [] });
+        renderFailedImportJobs();
         await persistImportJobIds();
         const summary = `Import ${job.status === "completed" ? "complete" : "finished with errors"} (${jobId.slice(0, 8)}): ${progress}.`;
         setImportJobStatus(job.errors?.length ? `${summary} ${job.errors[0]}` : summary, job.failed ? "err" : "ok");
@@ -490,18 +572,44 @@ async function pollImportJob(jobId) {
   }
 }
 
+async function refreshFailedImportJob(jobId) {
+  const response = await send("dreamedia:youtubeImportStatus", { jobId });
+  if (!response.ok) return;
+  const job = response.data;
+  if (!job) {
+    failedImportJobs.delete(jobId);
+  } else if (job.failedItems?.length) {
+    failedImportJobs.set(jobId, { jobId, items: job.failedItems });
+  } else if (!job.failed) {
+    failedImportJobs.delete(jobId);
+  } else {
+    failedImportJobs.set(jobId, { jobId, items: [] });
+  }
+}
+
 async function resumeImportJobs() {
-  const stored = await chrome.storage.local.get(["youtubeImportJobIds", "youtubeImportJobId"]);
+  const stored = await chrome.storage.local.get([
+    "youtubeImportJobIds", "youtubeImportJobId", "youtubeFailedImportJobIds",
+  ]);
   const savedIds = Array.isArray(stored.youtubeImportJobIds) ? stored.youtubeImportJobIds : [];
+  const savedFailedIds = Array.isArray(stored.youtubeFailedImportJobIds)
+    ? stored.youtubeFailedImportJobIds : [];
   const jobIds = [...new Set([...savedIds, stored.youtubeImportJobId]
     .filter((jobId) => typeof jobId === "string" && jobId))];
+  const failedIds = [...new Set(savedFailedIds.filter((jobId) => typeof jobId === "string" && jobId))];
   for (const jobId of jobIds) {
     activeImportJobs.set(jobId, { message: `Job ${jobId.slice(0, 8)} · restoring backend progress…` });
+  }
+  for (const jobId of failedIds) {
+    if (!failedImportJobs.has(jobId)) failedImportJobs.set(jobId, { jobId, items: [] });
   }
   if (stored.youtubeImportJobId || !Array.isArray(stored.youtubeImportJobIds) || jobIds.length !== savedIds.length) {
     await persistImportJobIds();
     if (stored.youtubeImportJobId) await chrome.storage.local.remove("youtubeImportJobId");
   }
+  for (const jobId of failedIds) await refreshFailedImportJob(jobId);
+  renderFailedImportJobs();
+  await persistImportJobIds();
   renderImportStatus();
   for (const jobId of jobIds) void pollImportJob(jobId);
 }

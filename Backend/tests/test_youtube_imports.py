@@ -117,7 +117,7 @@ async def test_status_is_owner_scoped_and_reports_progress(monkeypatch):
     assert result == {
         "job_id": "job-1", "status": "running", "requested": 4,
         "processed": 2, "resolved": 3, "added": 1, "skipped": 1,
-        "failed": 0, "errors": [],
+        "failed": 0, "errors": [], "failed_items": [],
     }
     query = next(call for call in connection.calls if call[0] == "fetchrow")
     assert "WHERE job_id = $1 AND user_id = $2" in query[1]
@@ -154,6 +154,8 @@ async def test_claim_uses_durable_row_lock_without_global_slot(monkeypatch):
     assert item["id"] == 99 and item["claim_token"]
     fetch = next(call for call in connection.calls if call[0] == "fetchrow")
     assert "FOR UPDATE OF i SKIP LOCKED" in fetch[1]
+    assert "make_interval(mins => $2)" in fetch[1]
+    assert fetch[2][1] == youtube_imports.CLAIM_STALE_AFTER_MINUTES == 2
     assert "j.options_enc" in fetch[1]
     assert "yt_import_worker_slots" not in fetch[1]
     updates = [call for call in connection.calls if call[0] == "execute"]
@@ -389,10 +391,122 @@ def test_channel_link_validation_deduplicates_handles_without_folding_channel_id
         f"https://youtube.com/channel/{upper_id}",
         f"https://youtube.com/channel/{distinct_lower_id}",
         "http://youtube.com:443/@bad-port",
+        "https://music.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa",
+        "https://www.youtube.com/feed/channels",
     ])
     assert [item["status"] for item in items] == [
-        "queued", "skipped", "queued", "queued", "failed",
+        "queued", "skipped", "queued", "queued", "failed", "failed", "failed",
     ]
+
+
+@pytest.mark.asyncio
+async def test_status_returns_owner_scoped_failed_links_and_retryability(monkeypatch):
+    connection = FakeConnection(
+        job={
+            "job_id": "job-1", "status": "partial", "requested": 2,
+            "processed": 2, "resolved": 1, "added": 0, "skipped": 0, "failed": 2,
+        },
+        errors=[
+            {"link_enc": b"valid-link", "error_enc": b"valid-error"},
+            {"link_enc": b"music-link", "error_enc": b"music-error"},
+        ],
+    )
+
+    async def get_pool():
+        return FakePool(connection)
+
+    async def vault_key(_user_id):
+        return b"test-vault-key"
+
+    cleartext = {
+        b"valid-link": "https://youtube.com/@channel",
+        b"valid-error": "https://youtube.com/@channel: timed out",
+        b"music-link": "https://music.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa",
+        b"music-error": "unsupported host",
+    }
+    monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
+    monkeypatch.setattr(youtube_imports.vault, "get", vault_key)
+    monkeypatch.setattr(youtube_imports, "decrypt", lambda _key, value: cleartext[value])
+
+    status = await youtube_imports.get_youtube_import_status(12, "job-1")
+
+    assert status["failed_items"] == [
+        {
+            "link": "https://youtube.com/@channel",
+            "error": "https://youtube.com/@channel: timed out",
+            "retryable": True,
+        },
+        {
+            "link": "https://music.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa",
+            "error": "unsupported host",
+            "retryable": False,
+        },
+    ]
+    assert status["errors"] == [item["error"] for item in status["failed_items"]]
+
+
+@pytest.mark.asyncio
+async def test_retry_creates_separate_job_with_only_valid_failed_links_and_original_options(monkeypatch):
+    connection = FakeConnection(
+        job={"status": "partial", "options_enc": b"options"},
+        errors=[
+            {"link_enc": b"valid-link", "error_enc": None},
+            {"link_enc": b"music-link", "error_enc": None},
+        ],
+    )
+
+    async def get_pool():
+        return FakePool(connection)
+
+    async def vault_key(_user_id):
+        return b"test-vault-key"
+
+    options = {
+        "kind": "withhold", "words": None, "rank": None, "withhold": 3,
+        "domain": "Media", "subdomain": "Animation",
+    }
+    cleartext = {
+        b"options": json.dumps(options),
+        b"valid-link": "https://www.youtube.com/@channel",
+        b"music-link": "https://music.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa",
+    }
+    monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
+    monkeypatch.setattr(youtube_imports.vault, "get", vault_key)
+    monkeypatch.setattr(youtube_imports, "decrypt", lambda _key, value: cleartext[value])
+    monkeypatch.setattr(youtube_imports, "encrypt", lambda _key, value: f"cipher:{value}".encode())
+
+    result = await youtube_imports.retry_youtube_import(12, "job-1")
+
+    assert result["job_id"] and result["job_id"] != "job-1"
+    assert result["requested"] == 1 and result["failed"] == 0
+    lookup = next(call for call in connection.calls if call[0] == "fetchrow")
+    assert "WHERE job_id = $1 AND user_id = $2" in lookup[1]
+    assert lookup[2] == ("job-1", 12)
+    inserted = next(call for call in connection.calls if call[0] == "executemany")
+    assert len(inserted[2]) == 1
+    assert inserted[2][0][2] == b"cipher:https://www.youtube.com/@channel"
+    insert_job = next(
+        call for call in connection.calls
+        if call[0] == "execute" and "INSERT INTO yt_import_jobs" in call[1]
+    )
+    assert json.loads(insert_job[2][8].decode().removeprefix("cipher:")) == options
+
+
+@pytest.mark.asyncio
+async def test_claim_lease_refresh_is_token_checked_and_frequent(monkeypatch):
+    connection = FakeConnection()
+
+    async def get_pool():
+        return FakePool(connection)
+
+    monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
+    item = {"id": 9, "stage": "resolve", "claim_token": "lease-token"}
+
+    assert await youtube_imports._refresh_claim_lease(item) is True
+    assert youtube_imports.CLAIM_LEASE_REFRESH_SECONDS < youtube_imports.CLAIM_STALE_AFTER_MINUTES * 60
+    update = next(call for call in connection.calls if call[0] == "execute")
+    assert "WHERE id = $1 AND status = $2 AND claim_token = $3" in update[1]
+    assert update[2] == (9, "resolving", "lease-token")
 
 
 def test_stage_poll_backoff_grows_with_jitter_and_is_capped(monkeypatch):

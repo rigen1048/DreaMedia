@@ -8,6 +8,7 @@ const MEDIA_JS = {
   yt: ["core.js", "modules/youtube.js"],
 };
 const DEFAULT_DOMAINS = [{ id: 0, domain: "youtube.com", media: "yt", enabled: true }];
+const YOUTUBE_IMPORT_HOSTS = new Set(["youtube.com", "www.youtube.com"]);
 const pendingSiteDomains = new Set();
 // Remove the old shared binding key: each tab now owns its own in-memory match.
 void chrome.storage.local.remove("dreamediaBinding").catch(() => {});
@@ -733,7 +734,7 @@ async function scanYoutubeSubscriptions(tabId) {
   const tab = await chrome.tabs.get(tabId);
   let url;
   try { url = new URL(tab.url || ""); } catch (_e) { throw new Error("Open YouTube's channel subscriptions page first."); }
-  if (!/(^|\.)youtube\.com$/i.test(url.hostname) || url.pathname !== "/feed/channels") {
+  if (!YOUTUBE_IMPORT_HOSTS.has(url.hostname.toLowerCase()) || url.pathname !== "/feed/channels") {
     throw new Error("Open YouTube's channel subscriptions page (/feed/channels) first.");
   }
   if (chrome.scripting?.executeScript) {
@@ -822,11 +823,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case "dreamedia:youtubeImportStatus": {
           const data = await gqlWs(
             `query YoutubeImportJob($jobId: String!) {
-              youtubeImportJob(jobId: $jobId) { jobId status requested processed resolved added skipped failed errors }
+              youtubeImportJob(jobId: $jobId) {
+                jobId status requested processed resolved added skipped failed errors
+                failedItems { link error retryable }
+              }
             }`,
             { jobId: msg.jobId },
           );
           sendResponse({ ok: true, data: data.youtubeImportJob });
+          break;
+        }
+        case "dreamedia:retryYoutubeImport": {
+          const data = await gqlWs(
+            `mutation RetryYouTubeImport($jobId: String!) {
+              retryYoutubeImport(jobId: $jobId) { jobId status requested processed resolved added skipped failed }
+            }`,
+            { jobId: msg.jobId },
+          );
+          sendResponse({ ok: true, data: data.retryYoutubeImport });
           break;
         }
         case "dreamedia:cards":

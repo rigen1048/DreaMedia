@@ -25,7 +25,8 @@ from Utility.media_executor import run_youtube_network
 
 MAX_IMPORT_CHANNELS = 2000
 MAX_STATUS_ERRORS = 10
-CLAIM_STALE_AFTER_MINUTES = 10
+CLAIM_STALE_AFTER_MINUTES = 2
+CLAIM_LEASE_REFRESH_SECONDS = 30
 DEFAULT_IMPORT_WORKERS = 64
 DEFAULT_PROCESS_WORKERS = 16
 MAX_IMPORT_WORKERS = 64
@@ -245,7 +246,7 @@ def _prepare_items(links: Sequence[str]) -> List[Dict[str, Any]]:
             parsed = None
             host = ""
             port = None
-        valid_host = host == "youtube.com" or host.endswith(".youtube.com")
+        valid_host = host in {"youtube.com", "www.youtube.com"}
         valid_port = port is None or (
             (parsed.scheme == "http" and port == 80)
             or (parsed.scheme == "https" and port == 443)
@@ -380,15 +381,19 @@ async def get_youtube_import_status(user_id: int, job_id: str) -> Optional[Dict[
             return None
         key = await vault.get(user_id)
         errors: List[str] = []
+        failures: List[Dict[str, Any]] = []
         if key is not None:
             rows = await con.fetch(
-                "SELECT error_enc FROM yt_import_items "
-                "WHERE job_id = $1 AND status = 'failed' AND error_enc IS NOT NULL "
-                "ORDER BY ordinal LIMIT $2",
+                "SELECT link_enc, error_enc FROM yt_import_items "
+                "WHERE job_id = $1 AND status = 'failed' ORDER BY ordinal",
                 job_id,
-                MAX_STATUS_ERRORS,
             )
-            errors = [decrypt(key, row["error_enc"]) or "" for row in rows]
+            for row in rows:
+                link = decrypt(key, row["link_enc"]) or ""
+                error = decrypt(key, row["error_enc"]) or "Import failed"
+                retryable = bool(link and _prepare_items([link])[0]["status"] == "queued")
+                failures.append({"link": link, "error": error, "retryable": retryable})
+            errors = [failure["error"] for failure in failures[:MAX_STATUS_ERRORS]]
     return {
         "job_id": job["job_id"],
         "status": job["status"],
@@ -399,7 +404,41 @@ async def get_youtube_import_status(user_id: int, job_id: str) -> Optional[Dict[
         "skipped": job["skipped"],
         "failed": job["failed"],
         "errors": errors,
+        "failed_items": failures,
     }
+
+
+async def retry_youtube_import(user_id: int, job_id: str) -> Dict[str, Any]:
+    """Queue only valid failed links again, preserving the original options."""
+    key = await vault.get(user_id)
+    if key is None:
+        raise ValueError("vault locked; sign in again before retrying failed channels")
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        job = await con.fetchrow(
+            "SELECT status, options_enc FROM yt_import_jobs "
+            "WHERE job_id = $1 AND user_id = $2",
+            job_id,
+            user_id,
+        )
+        if job is None:
+            raise ValueError("import job was not found for this account")
+        if job["status"] not in {"partial", "completed"}:
+            raise ValueError("wait for the import to finish before retrying failures")
+        rows = await con.fetch(
+            "SELECT link_enc FROM yt_import_items "
+            "WHERE job_id = $1 AND status = 'failed' ORDER BY ordinal",
+            job_id,
+        )
+    links = [decrypt(key, row["link_enc"]) or "" for row in rows]
+    retry_links = [
+        link for link in links
+        if link and _prepare_items([link])[0]["status"] == "queued"
+    ]
+    if not retry_links:
+        raise ValueError("this import has no retryable failed channel links")
+    options = json.loads(decrypt(key, job["options_enc"]) or "{}")
+    return await enqueue_youtube_import(user_id, retry_links, **options)
 
 
 def _stage_poll_lock(stage: str) -> asyncio.Lock:
@@ -677,6 +716,32 @@ async def _worker_sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
 
 
+async def _refresh_claim_lease(item: Dict[str, Any]) -> bool:
+    claimed_status = "resolving" if item["stage"] == "resolve" else "processing"
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        result = await con.execute(
+            "UPDATE yt_import_items SET claimed_at = now() "
+            "WHERE id = $1 AND status = $2 AND claim_token = $3",
+            item["id"],
+            claimed_status,
+            item["claim_token"],
+        )
+    return result != "UPDATE 0"
+
+
+async def _keep_claim_alive(item: Dict[str, Any]) -> None:
+    while True:
+        await asyncio.sleep(CLAIM_LEASE_REFRESH_SECONDS)
+        try:
+            if not await _refresh_claim_lease(item):
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Could not refresh YouTube import claim lease for item %s", item["id"])
+
+
 async def _run_stage_worker(stage: str) -> None:
     store = PgStore()
     consecutive_failures = 0
@@ -688,10 +753,15 @@ async def _run_stage_worker(stage: str) -> None:
                 await _worker_sleep(wait_seconds + random.random() * 0.15)
                 continue
             consecutive_failures = 0
-            if stage == "resolve":
-                await _resolve_claim(item, key)
-            else:
-                await _process_claim(item, key, store)
+            lease_task = asyncio.create_task(_keep_claim_alive(item))
+            try:
+                if stage == "resolve":
+                    await _resolve_claim(item, key)
+                else:
+                    await _process_claim(item, key, store)
+            finally:
+                lease_task.cancel()
+                await asyncio.gather(lease_task, return_exceptions=True)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

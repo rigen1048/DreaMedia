@@ -6,7 +6,8 @@
   window.__dreamediaSubscriptionImportInstalled = true;
 
   const CHANNEL_PATH = /^\/(?:@[^/]+|channel\/UC[A-Za-z0-9_-]{22})(?:\/|$)/i;
-  const SELECTORS = "ytd-channel-renderer, ytd-grid-channel-renderer, ytd-guide-entry-renderer";
+  const CHANNEL_HOSTS = new Set(["youtube.com", "www.youtube.com"]);
+  const SELECTORS = "ytd-channel-renderer, ytd-grid-channel-renderer";
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   function visible(anchor) {
@@ -18,7 +19,7 @@
     if (!visible(anchor)) return null;
     let url;
     try { url = new URL(anchor.getAttribute("href") || "", location.href); } catch (_e) { return null; }
-    if (!/(^|\.)youtube\.com$/i.test(url.hostname) || !CHANNEL_PATH.test(url.pathname)) return null;
+    if (!CHANNEL_HOSTS.has(url.hostname.toLowerCase()) || !CHANNEL_PATH.test(url.pathname)) return null;
     const path = url.pathname.replace(/\/+$/, "") || url.pathname;
     const canonicalUrl = `https://www.youtube.com${path}`;
     const row = anchor.closest(SELECTORS);
@@ -42,7 +43,7 @@
   }
 
   async function scan() {
-    if (!/(^|\.)youtube\.com$/i.test(location.hostname) || location.pathname !== "/feed/channels") {
+    if (!CHANNEL_HOSTS.has(location.hostname.toLowerCase()) || location.pathname !== "/feed/channels") {
       return { ok: false, error: "Open YouTube's channel subscriptions page (/feed/channels) first." };
     }
     const scroller = document.scrollingElement || document.documentElement;

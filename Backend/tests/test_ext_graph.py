@@ -269,6 +269,9 @@ def test_extension_schema_exposes_category_and_withhold_contract():
     assert "importYoutubeChannels" not in schema
     assert "startYoutubeImport" in schema
     assert "youtubeImportJob" in schema
+    assert "retryYoutubeImport" in schema
+    assert "failedItems" in schema
+    assert "retryable: Boolean!" in schema
     assert "resolved: Int!" in schema
 
 
@@ -321,18 +324,57 @@ async def test_import_progress_query_uses_authenticated_owner(monkeypatch, exten
     async def get_status(owner, job_id):
         calls.append((owner, job_id))
         return {
-            "job_id": job_id, "status": "running", "requested": 4,
-            "processed": 2, "resolved": 3, "added": 1, "skipped": 1, "failed": 0,
-            "errors": [],
+            "job_id": job_id, "status": "partial", "requested": 4,
+            "processed": 4, "resolved": 3, "added": 1, "skipped": 1, "failed": 1,
+            "errors": ["timed out"],
+            "failed_items": [{
+                "link": "https://youtube.com/@channel", "error": "timed out", "retryable": True,
+            }],
         }
 
     monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
     monkeypatch.setattr(ext_graph, "get_youtube_import_status", get_status)
 
-    result = await ext_graph.ExtQuery().youtube_import_job(extension_info, "job-123")
+    result = await ext_graph.ext_schema.execute(
+        'query { youtubeImportJob(jobId: "job-123") { jobId status processed failed errors '
+        'failedItems { link error retryable } } }'
+    )
 
     assert calls == [(12, "job-123")]
-    assert result.job_id == "job-123" and result.processed == 2 and result.resolved == 3
+    assert result.errors is None
+    assert result.data["youtubeImportJob"]["jobId"] == "job-123"
+    assert result.data["youtubeImportJob"]["processed"] == 4
+    assert result.data["youtubeImportJob"]["failedItems"] == [{
+        "link": "https://youtube.com/@channel", "error": "timed out", "retryable": True,
+    }]
+
+
+@pytest.mark.asyncio
+async def test_retry_import_mutation_uses_authenticated_owner_and_returns_new_job(monkeypatch, extension_info):
+    calls = []
+
+    async def user_id(_info):
+        return 12
+
+    async def retry(owner, job_id):
+        calls.append((owner, job_id))
+        return {
+            "job_id": "retry-456", "status": "queued", "requested": 1,
+            "processed": 0, "resolved": 0, "added": 0, "skipped": 0, "failed": 0,
+        }
+
+    monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
+    monkeypatch.setattr(ext_graph, "retry_youtube_import_job", retry)
+
+    result = await ext_graph.ext_schema.execute(
+        'mutation { retryYoutubeImport(jobId: "failed-123") { jobId status requested } }'
+    )
+
+    assert calls == [(12, "failed-123")]
+    assert result.errors is None
+    assert result.data["retryYoutubeImport"] == {
+        "jobId": "retry-456", "status": "queued", "requested": 1,
+    }
 
 
 @pytest.mark.asyncio
