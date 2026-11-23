@@ -322,7 +322,7 @@ async def test_single_add_and_bulk_share_resolution_and_persistence_helpers(monk
 
 @pytest.mark.asyncio
 async def test_shared_resolver_uses_the_users_network_lane(monkeypatch):
-    from Orchestrator.Yt.Fetch import convert
+    from Media.Yt.Fetch import convert
 
     expected = SimpleNamespace(
         rss_id="UCx", name="Channel", url="https://youtube.com/@x", logo=None
@@ -344,7 +344,9 @@ async def test_shared_resolver_uses_the_users_network_lane(monkeypatch):
 
 
 def test_import_schema_is_idempotent_and_drops_legacy_global_pacing_tables():
-    schema = Path(__file__).parents[1].joinpath("Database", "schema.sql").read_text()
+    from Media.Yt.SQL.process import create as yt_create
+
+    schema = yt_create.DDL
     assert "ADD COLUMN IF NOT EXISTS resolved_enc BYTEA" in schema
     assert "ADD COLUMN IF NOT EXISTS resolved INTEGER NOT NULL DEFAULT 0" in schema
     assert "SET status = 'queued', claimed_at = NULL, claim_token = NULL" in schema

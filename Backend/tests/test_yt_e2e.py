@@ -11,8 +11,8 @@ from returns.result import Success
 
 from Auth import auth
 from Database import db
-from Database.pg_store import PgStore
-from Orchestrator.Yt import manager
+from Media.Yt.SQL.store import PgStore
+from Media.Yt import manager
 
 E2E_USER = "testuser_yt_e2e"
 MRBEAST = "UCX6OQ3DkcsbYNE6H8uQQuVA"
@@ -58,7 +58,7 @@ async def test_full_happy_path_live():
     # Run the manager pass over the live feed.
     processed = 0
     for sub in claimed:
-        from Orchestrator.Yt.pipeline import run_subscription
+        from Media.Yt.pipeline import run_subscription
 
         result = await run_subscription(store, sub)
         assert isinstance(result, Success), result

@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 
 from returns.result import Failure, Result, Success
 
-from Admin import settings
+from Database.Admin import settings
 from Admin.backup import run_backup
 from Config.Hardcoded.limits import MAX_RESTORE_UPLOAD_BYTES, PG_DUMP_CANDIDATES
 from Database.db import dsn
@@ -48,13 +48,13 @@ def restore_in_progress() -> bool:
 
 
 async def restore_in_progress_db() -> bool:
-    from Admin import settings
+    from Database.Admin import settings
 
     return (await settings.get_typed("restore_active")) == "1"
 
 
 async def _persist_gate(active: bool) -> None:
-    from Admin import settings
+    from Database.Admin import settings
 
     await settings.set_value("restore_active", "1" if active else "0")
 

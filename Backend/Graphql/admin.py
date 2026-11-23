@@ -16,7 +16,8 @@ import strawberry
 from returns.result import Failure
 from strawberry.types import Info
 
-from Admin import backup, restore, settings, users
+from Admin import backup, restore
+from Database.Admin import settings, users
 from Config.Hardcoded.limits import MIN_BACKUPS_KEPT
 from Database.db import get_pool
 

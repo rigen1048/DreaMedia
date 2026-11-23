@@ -15,15 +15,16 @@ import Utility.env  # noqa: F401 — loads the root .env before anything else
 from fastapi import FastAPI
 from strawberry.fastapi import GraphQLRouter
 
-from Admin import scheduler, settings
+from Admin import scheduler
+from Database.Admin import settings
 from Admin.router import router as admin_router
 from Auth.router import router as auth_router
 from Database import db
 from Graphql.children import ani_schema, yt_schema
 from Graphql.supergraph import supergraph_schema
-from Orchestrator.Ani import manager as ani_manager
-from Orchestrator.Ani.Access.router import router as ani_access_router
-from Orchestrator.Ani.Feed.router import router as ani_feed_router
+from Media.Ani import manager as ani_manager
+from Media.Ani.Access.router import router as ani_access_router
+from Media.Ani.Feed.router import router as ani_feed_router
 from Extension import live as ext_live
 from Extension.tokens import user_for_token
 from Extension.youtube_imports import (
@@ -34,10 +35,10 @@ from Extension.youtube_imports import (
 )
 from Extension.ws_router import ExtensionGraphQLRouter
 from Graphql.ext_graph import ext_context, ext_schema
-from Orchestrator.Yt import manager as yt_manager
-from Orchestrator.Yt.Access.cards_router import router as yt_cards_router
-from Orchestrator.Yt.Access.router import router as yt_access_router
-from Orchestrator.Yt.Feed.router import router as yt_feed_router
+from Media.Yt import manager as yt_manager
+from Media.Yt.Access.cards_router import router as yt_cards_router
+from Media.Yt.Access.router import router as yt_access_router
+from Media.Yt.Feed.router import router as yt_feed_router
 
 
 @asynccontextmanager

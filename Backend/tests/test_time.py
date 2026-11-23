@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from returns.result import Success
 
-from Orchestrator.Yt.Filter.time import ts_proccess
+from Media.Yt.Filter.time import ts_proccess
 
 
 def _payload_with_gaps(gap_days: int, n: int = 12):

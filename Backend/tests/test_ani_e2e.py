@@ -11,10 +11,10 @@ from returns.result import Success
 
 from Auth import auth
 from Database import db, vault
-from Database.ani_store import AniStore
+from Media.Ani.SQL.store import AniStore
 from Database.crypto import decrypt
-from Orchestrator.Ani import manager
-from Orchestrator.Ani.Fetch.ani_track import ani_fetch
+from Media.Ani import manager
+from Media.Ani.Fetch.ani_track import ani_fetch
 
 E2E_USER = "testuser_ani_e2e"
 

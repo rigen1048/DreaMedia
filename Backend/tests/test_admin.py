@@ -16,7 +16,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from Admin import restore as restore_mod
-from Admin import settings as settings_mod
+from Database.Admin import settings as settings_mod
 from App.main import app
 from Database import db
 

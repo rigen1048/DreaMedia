@@ -7,7 +7,7 @@ from returns.result import Success
 
 from Extension import store as ext_store
 from Graphql import ext_graph
-from Orchestrator.Yt.Fetch import convert
+from Media.Yt.Fetch import convert
 
 
 class FakeYtStore:

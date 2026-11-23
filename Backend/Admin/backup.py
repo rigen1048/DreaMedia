@@ -15,7 +15,7 @@ from pathlib import Path
 
 from returns.result import Failure, Result, Success
 
-from Admin import settings
+from Database.Admin import settings
 from Config.Hardcoded.limits import MIN_BACKUPS_KEPT, PG_DUMP_CANDIDATES
 from Database.db import dsn
 from Utility.logs import log

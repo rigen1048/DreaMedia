@@ -16,7 +16,7 @@ import sys
 
 from returns.result import Failure
 
-from Admin import users
+from Database.Admin import users
 from Database import db
 
 

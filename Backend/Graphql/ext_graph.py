@@ -14,9 +14,9 @@ import strawberry
 from returns.result import Failure
 from strawberry.types import Info
 
-from Database.ani_store import AniStore
-from Database.card_store import CardStore
-from Database.pg_store import PgStore
+from Media.Ani.SQL.store import AniStore
+from Media.Yt.SQL.user.cards import CardStore
+from Media.Yt.SQL.store import PgStore
 from Extension import anchor, live, store
 from Extension.tokens import user_for_token
 from Extension.youtube_imports import (
@@ -270,7 +270,7 @@ class ExtMutation:
         """Subscribe-from-page (HydraTracker capability): the popup sends
         the current tab's URL; resolution happens server-side. Categories
         are optional as a pair because YouTube channels attach to subdomains."""
-        from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
+        from Media.Yt.Fetch.convert import parse_playlist_id, resolve_channel
 
         user_id = await _ext_uid(info)
         if kind == "withhold" and (withhold is None or withhold < 1):
@@ -341,7 +341,7 @@ class ExtMutation:
     @strawberry.field
     async def add_card_items(self, info: Info, card_id: int, links: List[str]) -> AddItemsResult:
         """Paste video links — resolved (title/thumb) once at add-time (D47)."""
-        from Orchestrator.Yt.Fetch.convert import resolve_video
+        from Media.Yt.Fetch.convert import resolve_video
 
         user_id = await _ext_uid(info)
         added = 0

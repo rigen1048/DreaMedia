@@ -20,10 +20,10 @@ from returns.result import Success
 
 from Auth import auth
 from Database import db, vault
-from Database.ani_store import AniStore
-from Database.card_store import CardStore
+from Media.Ani.SQL.store import AniStore
+from Media.Yt.SQL.user.cards import CardStore
 from Database.crypto import encrypt
-from Database.pg_store import PgStore
+from Media.Yt.SQL.store import PgStore
 
 USERNAME = "demo"
 PASSWORD = "demo1234"

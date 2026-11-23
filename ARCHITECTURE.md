@@ -69,22 +69,26 @@ The schema stores source identifiers and user content in a form that supports en
 
 ## Source orchestration
 
-`Backend/Orchestrator` contains separate YouTube and anime pipelines.
-
-The source layout establishes recurring boundaries for media handled by the backend:
+`Backend/Media` contains one folder per media (`Media/Yt`, `Media/Ani`), each mirroring the same layout. Media-specific code never lives outside the media folder:
 
 ```text
-Media source
-├── Access        source resolution and provider communication
-├── Feed          source event and read-model representation
+Media/<source>
+├── Access        user-triggered writes/deletes (+ Fetch Now → manager)
+├── Feed          user-triggered reads
 ├── Fetch         retrieval and metadata conversion
 ├── Filter        last-seen, policy, time, and user rules
-├── Pipeline      one refresh from access through notification
-├── Manager       scheduling, claims, wake-ups, and recovery
-└── Notify        durable history and delivery gating
+├── Utility       media-specific helpers (existence checks)
+├── Config
+│   ├── Hardcoded media policy numbers (never .env)
+│   └── Model     media pydantic models
+├── SQL
+│   ├── user      queries that run only when the user triggers
+│   └── process   queries the backend mechanism runs (+ create.py)
+├── manager.py    scheduling, claims, wake-ups, and recovery
+└── pipeline.py   one refresh from fetch through feed persistence
 ```
 
-The concrete implementation uses source-specific modules such as `Access`, `Feed`, `Fetch`, and `Filter`, while shared stores, models, GraphQL contracts, and notification infrastructure remain reusable. This gives contributors a recognizable place to add a new media source and keeps provider-specific behavior from leaking into the rest of the product.
+The trigger boundary is the directory itself: `Feed`/`Access` run only on user trigger via GraphQL; `manager.py`/`pipeline.py`/`SQL/process` run only from the backend's own mechanism. Cross-media concerns (pool, crypto, vault, leadership, schema bootstrap, admin SQL, backup processes) live in `Database/` at the backend root; the shared fetch contract lives in `Model/`. Feed is pull-driven from the media tables; the bell receives backend-driven alerts on unhappy paths only.
 
 ### YouTube pipeline
 

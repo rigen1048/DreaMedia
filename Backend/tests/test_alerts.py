@@ -109,13 +109,15 @@ async def test_store_alerts_reads_alerts_table(monkeypatch):
         }
     ]
     connection = _Connection(rows)
-    from Database import pg_store
+    from Database import vault as _vault
+    import Media.Yt.SQL.user.store as _user_store_mod
+    from Media.Yt.SQL.store import PgStore
 
-    monkeypatch.setattr(pg_store.vault, "get", _async_value(b"user-key"))
-    monkeypatch.setattr(pg_store, "decrypt", lambda _key, _blob: '{"title": "Channel may got deleted"}')
-    monkeypatch.setattr(pg_store, "get_pool", _async_value(_Pool(connection)))
+    monkeypatch.setattr(_vault, "get", _async_value(b"user-key"))
+    monkeypatch.setattr(_user_store_mod, "decrypt", lambda _key, _blob: '{"title": "Channel may got deleted"}')
+    monkeypatch.setattr(_user_store_mod, "get_pool", _async_value(_Pool(connection)))
 
-    result = await pg_store.PgStore().alerts(7, limit=25)
+    result = await PgStore().alerts(7, limit=25)
 
     assert result[0]["id"] == 41
     assert result[0]["payload"] == {"title": "Channel may got deleted"}

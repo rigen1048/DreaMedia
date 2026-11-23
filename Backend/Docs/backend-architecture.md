@@ -1,7 +1,11 @@
 # DreaMedia Backend Architecture — Restructure Design
 
-Status: **proposal, awaiting owner approval** (same process as Extension/Docs/extension-design.md).
+Status: **approved 2026-11-23; Phases 1–3 implemented** (Phase 4 pending).
 Recorded 2026-11-23 after the owner's review of the current tree.
+Phase 3 note: the backend root keeps `Config/Hardcoded/limits.py` (cross-media
+process policy) and `Model/` (the shared fetch contract every media returns) —
+both are cross-media by nature, same as `Database/`. Media-specific config
+lives in `Media/<m>/Config/`.
 
 ## 1. Problem
 

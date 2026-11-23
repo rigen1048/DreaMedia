@@ -14,9 +14,9 @@ from returns.result import Failure, Success
 
 from Auth import auth
 from Database import db, vault
-from Database.ani_store import AniStore
+from Media.Ani.SQL.store import AniStore
 from Database.crypto import encrypt
-from Database.pg_store import PgStore
+from Media.Yt.SQL.store import PgStore
 
 USER = "testuser_progress"
 OTHER = "testuser_progress_other"
@@ -255,7 +255,7 @@ async def test_set_progress_validates_season_and_owner():
 
 
 async def test_fetch_now_marks_subscriptions_due_and_wakes_the_manager():
-    from Orchestrator.Yt import manager
+    from Media.Yt import manager
 
     user_id = await _user()
     store = PgStore()
@@ -290,7 +290,7 @@ async def test_fetch_now_marks_subscriptions_due_and_wakes_the_manager():
 async def test_manager_nap_returns_early_on_wake():
     import asyncio
 
-    from Orchestrator.Yt import manager
+    from Media.Yt import manager
 
     manager._WAKE.clear()
 

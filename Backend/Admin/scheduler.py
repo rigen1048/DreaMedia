@@ -15,7 +15,8 @@ from pathlib import Path
 from returns.result import Failure
 
 from Database.leader import is_leader
-from Admin import backup, settings
+from Admin import backup
+from Database.Admin import settings
 from Utility.logs import log
 
 _TICK_SECONDS = 300.0  # how often we check whether a backup is due

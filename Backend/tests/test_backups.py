@@ -21,12 +21,12 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from Admin import settings as settings_mod
+from Database.Admin import settings as settings_mod
 from Admin.restore import _pg_restore_bin
 from App.main import app
 from Database import db, vault
 from Database.crypto import encrypt
-from Database.pg_store import PgStore
+from Media.Yt.SQL.store import PgStore
 
 pytestmark = pytest.mark.asyncio
 
@@ -108,7 +108,7 @@ async def delete_anime_entry(user_id: int) -> None:
 
 
 async def anime_view(user_id: int):
-    from Database.ani_store import AniStore
+    from Media.Ani.SQL.store import AniStore
     return await AniStore().management_view(user_id)
 
 

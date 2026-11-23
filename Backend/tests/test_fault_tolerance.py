@@ -20,10 +20,10 @@ from httpx import ASGITransport, AsyncClient
 
 from App.main import app
 from Database import db
-from Database.pg_store import PgStore
+from Media.Yt.SQL.store import PgStore
 from Gate.gate import registry as gates
-from Orchestrator.Yt import manager as yt_manager
-from Orchestrator.Yt import pipeline as yt_pipeline
+from Media.Yt import manager as yt_manager
+from Media.Yt import pipeline as yt_pipeline
 from returns.result import Failure
 
 CHANNEL = "UCfaulttolerance0000000"
@@ -41,7 +41,7 @@ def _fast(monkeypatch):
     async def _online(*_args, **_kwargs) -> bool:
         return True
 
-    monkeypatch.setattr("Orchestrator.Yt.pipeline.wait_for_internet_bounded", _online)
+    monkeypatch.setattr("Media.Yt.pipeline.wait_for_internet_bounded", _online)
     monkeypatch.setattr(gates, "_rest_seconds", lambda _key: 0)
     monkeypatch.setattr("Config.Hardcoded.limits.RETRY_DELAY_SECONDS", 0)
     monkeypatch.setattr("Config.Hardcoded.limits.FETCH_RETRIES", 1)
@@ -237,7 +237,7 @@ async def test_no_internet_alerts_once(user, monkeypatch):
     async def _offline(*_args, **_kwargs) -> bool:
         return False
 
-    monkeypatch.setattr("Orchestrator.Yt.pipeline.wait_for_internet_bounded", _offline)
+    monkeypatch.setattr("Media.Yt.pipeline.wait_for_internet_bounded", _offline)
 
     await yt_manager.run_once(PgStore())
     assert [a["kind"] for a in await alerts(client)] == ["no_internet"]

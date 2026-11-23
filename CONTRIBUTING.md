@@ -100,7 +100,7 @@ Backend compilation:
 
 ```bash
 cd Backend
-uv run python -m compileall -q App Auth Admin Config Database Extension Gate Graphql Orchestrator Utility
+uv run python -m compileall -q App Auth Admin Config Database Extension Gate Graphql Media Model Utility
 ```
 
 Backend tests:

@@ -2,9 +2,9 @@
 import pytest
 
 from Auth import auth
-from Database.ani_store import AniStore
+from Media.Ani.SQL.store import AniStore
 from Database.db import get_pool
-from Database.pg_store import PgStore
+from Media.Yt.SQL.store import PgStore
 from returns.result import Success
 
 

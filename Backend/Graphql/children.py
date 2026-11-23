@@ -21,9 +21,9 @@ from returns.result import Failure, Success
 from strawberry.types import Info
 
 from Auth import auth
-from Database.ani_store import AniStore
-from Database.card_store import CardStore
-from Database.pg_store import PgStore
+from Media.Ani.SQL.store import AniStore
+from Media.Yt.SQL.user.cards import CardStore
+from Media.Yt.SQL.store import PgStore
 
 _yt = PgStore()
 _ani = AniStore()
@@ -31,7 +31,7 @@ _ani = AniStore()
 
 async def _enrich_card_items(user_id: int, pending: list[tuple[int, str]]) -> None:
     """Background metadata fill for manual playlist rows (best effort)."""
-    from Orchestrator.Yt.Fetch.convert import resolve_video
+    from Media.Yt.Fetch.convert import resolve_video
     from Utility.logs import log
     from Utility.media_executor import run_youtube_network
 
@@ -295,7 +295,7 @@ class YtMutation:
         subdomain: Optional[str] = None,
     ) -> int:
         """Link-only subscribe. Server resolves the channel/playlist."""
-        from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
+        from Media.Yt.Fetch.convert import parse_playlist_id, resolve_channel
 
         user_id = await _uid(info)
         if kind == "playlist":
@@ -375,7 +375,7 @@ class YtMutation:
         Returns how many subscriptions are due now — the UI shows it in the
         toast, the polling itself stays in the one background manager.
         """
-        from Orchestrator.Yt import manager
+        from Media.Yt import manager
 
         queued = await _yt.request_fetch_now(await _uid(info))
         manager.wake()
@@ -481,9 +481,9 @@ class YtMutation:
         self, info: Info, card_id: int, links: List[str]
     ) -> int:
         """Bulk add by pasted video links; each link is resolved server-side."""
-        from Orchestrator.Yt.Fetch.convert import resolve_video
+        from Media.Yt.Fetch.convert import resolve_video
 
-        from Orchestrator.Yt.Fetch.convert import parse_video_id
+        from Media.Yt.Fetch.convert import parse_video_id
 
         user_id = await _uid(info)
         pending: list[tuple[int, str]] = []
@@ -778,7 +778,7 @@ class AniMutation:
         self, info: Info, title: str, list_kind: str = "watching",
         domain: Optional[str] = None, subdomain: Optional[str] = None,
     ) -> int:
-        from Orchestrator.Ani.Fetch.ani_track import ani_fetch
+        from Media.Ani.Fetch.ani_track import ani_fetch
 
         user_id = await _uid(info)
         fetch = await ani_fetch(title)

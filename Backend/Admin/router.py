@@ -19,7 +19,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from returns.result import Failure
 
-from Admin import backup, restore, settings, users
+from Admin import backup, restore
+from Database.Admin import settings, users
 from App.deps import require_admin
 
 router = APIRouter(prefix="/admin", tags=["admin"])

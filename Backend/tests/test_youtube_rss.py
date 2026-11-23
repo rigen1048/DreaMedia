@@ -2,7 +2,7 @@ import httpx
 import pytest
 from returns.result import Failure, Success
 
-from Orchestrator.Yt.Fetch import yt_rss
+from Media.Yt.Fetch import yt_rss
 
 
 ATOM = 'http://www.w3.org/2005/Atom'

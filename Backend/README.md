@@ -7,9 +7,9 @@ This directory contains DreaMedia's existing Python/FastAPI/Postgres backend and
 | Directory | Responsibility |
 |---|---|
 | `App/` | FastAPI application assembly, lifespan, and dependencies |
-| `Auth/` | Login/signup/logout and notification-history routes |
-| `Database/` | PostgreSQL schema, queries, stores, and vault |
-| `Orchestrator/` | YouTube and Ani feed/access/fetch/filter pipelines |
+| `Auth/` | Login/signup/logout and session routes |
+| `Database/` | Cross-media layer only: pool, crypto, vault, leadership; `Init/` schema bootstrap, `Admin/` admin SQL, `Backup/` portable+CSV processes |
+| `Media/` | One folder per media (`Yt`, `Ani`): Access, Feed, Fetch, Filter, Utility, Config/{Hardcoded,Model}, SQL/{user,process}+create.py, manager.py, pipeline.py |
 | `Graphql/` | GraphQL routes and query composition |
 | `Config/` | Runtime and hard-coded service configuration |
 | `Model/` | Shared data models |

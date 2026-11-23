@@ -11,11 +11,12 @@ from pathlib import Path
 import pytest
 from returns.result import Failure, Success
 
-from Admin import backup, settings
+from Admin import backup
+from Database.Admin import settings
 from Auth import auth
 from Database import db, vault
 from Database.crypto import decrypt, derive_key, encrypt, index_hash
-from Database.pg_store import PgStore
+from Media.Yt.SQL.store import PgStore
 
 TEST_USER = "testuser_infra"
 

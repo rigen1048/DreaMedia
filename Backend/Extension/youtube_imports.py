@@ -19,7 +19,7 @@ from returns.result import Failure
 from Database import vault
 from Database.crypto import decrypt, encrypt
 from Database.db import get_pool
-from Database.pg_store import PgStore
+from Media.Yt.SQL.store import PgStore
 from Utility.logs import log
 from Utility.media_executor import run_youtube_network
 
@@ -112,7 +112,7 @@ def normalize_source_options(
 
 async def resolve_youtube_channel(link: str, user_id: int) -> Dict[str, Any]:
     """Resolve through the owner's shared YT lane without holding a DB connection."""
-    from Orchestrator.Yt.Fetch.convert import resolve_channel
+    from Media.Yt.Fetch.convert import resolve_channel
 
     clean_link = link.strip()
     if not clean_link:

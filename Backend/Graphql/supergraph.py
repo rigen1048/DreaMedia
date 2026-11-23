@@ -16,7 +16,7 @@ from returns.result import Failure
 from strawberry.types import Info
 
 from Auth import auth
-from Database.pg_store import PgStore
+from Media.Yt.SQL.store import PgStore
 from Graphql.account import AccountMutation, AccountQuery
 from Graphql.admin import AdminMutation, AdminQuery
 from Graphql.children import Alert, AniMutation, AniQuery, Viewer, YtMutation, YtQuery

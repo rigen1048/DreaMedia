@@ -5,8 +5,9 @@ import time
 import pytest
 from returns.result import Failure, Success
 
-from Admin import restore, settings
-from Admin.users import delete_user, set_role
+from Admin import restore
+from Database.Admin import settings
+from Database.Admin.users import delete_user, set_role
 from Auth import auth
 from Database.db import get_pool
 

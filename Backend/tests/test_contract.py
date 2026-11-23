@@ -6,14 +6,15 @@ import pytest
 from returns.result import Failure, Success
 
 from Auth import auth
-from Database import csvio, db
-from Database.ani_store import AniStore
-from Database.card_store import CardStore
-from Database.pg_store import PgStore, PgSubscription
+from Database import db
+from Database.Backup import csvio
+from Media.Ani.SQL.store import AniStore
+from Media.Yt.SQL.user.cards import CardStore
+from Media.Yt.SQL.store import PgStore, PgSubscription
 from Extension import anchor, live, sites
 from Extension.store import ExtDomainStore, list_blocked_yt
-from Orchestrator.Ani.Fetch.ani_track import ani_fetch
-from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
+from Media.Ani.Fetch.ani_track import ani_fetch
+from Media.Yt.Fetch.convert import parse_playlist_id, resolve_channel
 
 TEST_USER = "testuser_contract"
 
@@ -154,7 +155,7 @@ async def test_direct_subscription_upserts_keep_modes_exclusive():
 
 
 async def test_extension_source_write_is_atomic_and_import_skips_existing(monkeypatch):
-    from Orchestrator.Yt import manager as yt_manager
+    from Media.Yt import manager as yt_manager
 
     wake_calls = []
     monkeypatch.setattr(yt_manager, "wake", lambda: wake_calls.append(True))

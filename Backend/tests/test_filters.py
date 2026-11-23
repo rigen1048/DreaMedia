@@ -1,8 +1,8 @@
 """Pure-filter tests — owner scenarios as executable spec."""
 from returns.result import Failure, Success
 
-from Orchestrator.Yt.Filter.last_seen import filter_new_videos
-from Orchestrator.Yt.Filter.scan import filter_words
+from Media.Yt.Filter.last_seen import filter_new_videos
+from Media.Yt.Filter.scan import filter_words
 
 PAYLOAD = (
     {

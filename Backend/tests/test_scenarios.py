@@ -34,11 +34,11 @@ from httpx import ASGITransport, AsyncClient
 
 from App.main import app
 from Database import db
-from Database.ani_store import AniStore
-from Database.pg_store import PgStore
+from Media.Ani.SQL.store import AniStore
+from Media.Yt.SQL.store import PgStore
 from Gate.gate import registry as gates
-from Orchestrator.Ani import manager as ani_manager
-from Orchestrator.Yt import manager as yt_manager
+from Media.Ani import manager as ani_manager
+from Media.Yt import manager as yt_manager
 
 CHANNEL = "UCscenario0000000000000000"
 ANILIST_ID = 900001
@@ -64,8 +64,8 @@ def _fast_gates(monkeypatch):
     async def _online(*_args, **_kwargs) -> bool:
         return True
 
-    monkeypatch.setattr("Orchestrator.Yt.pipeline.wait_for_internet_bounded", _online)
-    monkeypatch.setattr("Orchestrator.Ani.pipeline.wait_for_internet_bounded", _online)
+    monkeypatch.setattr("Media.Yt.pipeline.wait_for_internet_bounded", _online)
+    monkeypatch.setattr("Media.Ani.pipeline.wait_for_internet_bounded", _online)
     monkeypatch.setattr(gates, "_rest_seconds", lambda _key: 0)
 
 

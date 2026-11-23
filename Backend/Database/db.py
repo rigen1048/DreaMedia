@@ -8,12 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import os
-from pathlib import Path
 from urllib.parse import quote
 
 import asyncpg
-
-_SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 
 def dsn() -> str:
@@ -52,9 +49,12 @@ async def get_pool() -> asyncpg.Pool:
 
 
 async def migrate() -> None:
+    """Apply the schema: shared tables, then each media's own create (D58)."""
+    from Database.Init import migrate as init_migrate
+
     pool = await get_pool()
     async with pool.acquire() as con:
-        await con.execute(_SCHEMA_PATH.read_text())
+        await init_migrate.run(con)
 
 
 async def close() -> None:

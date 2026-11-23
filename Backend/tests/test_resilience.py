@@ -11,9 +11,9 @@ import pytest
 
 from Auth import auth
 from Database import vault
-from Database.ani_store import AniStore
+from Media.Ani.SQL.store import AniStore
 from Database.db import get_pool
-from Database.pg_store import PgStore
+from Media.Yt.SQL.store import PgStore
 from returns.result import Success
 
 
@@ -62,7 +62,7 @@ async def test_crash_recovery_random():
 
 
 async def test_crash_recovery_ani():
-    from Orchestrator.Ani.Fetch.ani_track import ani_fetch
+    from Media.Ani.Fetch.ani_track import ani_fetch
 
     uid = await _user("crash_ani")
     store = AniStore()
@@ -109,7 +109,7 @@ async def test_vault_lock_pauses_pipeline():
 
 async def test_backup_verification_rejects_corrupt_dump(tmp_path):
     """Owner mandate: every backup verified. A corrupt dump must not survive."""
-    from Admin import settings
+    from Database.Admin import settings
     from Admin.backup import run_backup
     from returns.result import Failure
 
