@@ -59,3 +59,38 @@ async def send_alert(
     except Exception:
         log.exception("alert: DB persist failed")
     return None
+
+
+# --------------------------------------------------------------------------
+# Outage throttling — one alert per outage, not one per failing poll
+# --------------------------------------------------------------------------
+# Process-local set of (user_id, kind) pairs currently "in outage". The
+# first failure alerts; repeats are silent until clear_outage() marks
+# recovery — a channel that stays deleted for a month produces ONE alert,
+# not a bell full of duplicates. Resets on process restart: a boot during
+# an ongoing outage alerts once again, which is correct (fresh process,
+# fresh signal).
+_ACTIVE_OUTAGES: set[tuple[int, str]] = set()
+
+
+async def alert_outage(
+    user_id: int,
+    media: str,
+    kind: str,
+    payload: Dict[str, Any],
+    **kwargs: Any,
+) -> Optional[int]:
+    """send_alert, but only once per (user, kind) until clear_outage()."""
+    key = (user_id, kind)
+    if key in _ACTIVE_OUTAGES:
+        return None
+    row_id = await send_alert(user_id, media, kind, payload, **kwargs)
+    if row_id is not None:
+        _ACTIVE_OUTAGES.add(key)
+    return row_id
+
+
+def clear_outage(user_id: int, *kinds: str) -> None:
+    """Mark recovery: the next failure of these kinds may alert again."""
+    for kind in kinds:
+        _ACTIVE_OUTAGES.discard((user_id, kind))

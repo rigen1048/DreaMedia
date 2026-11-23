@@ -20,6 +20,10 @@ DEFAULT_COOLDOWN: float = 2.0
 FETCH_RETRIES: int = 3
 RETRY_DELAY_SECONDS: float = 5.0
 
+# Fault tolerance (D60): how long a pipeline waits for connectivity before
+# the outage becomes a 'We cannot access the internet' alert + Failure.
+INTERNET_WAIT_SECONDS: float = 30.0
+
 # Backup policy guardrails (D13): .env may configure cadence/retention,
 # but never below this floor — a user must not be able to set retention 0.
 MIN_BACKUPS_KEPT: int = 2

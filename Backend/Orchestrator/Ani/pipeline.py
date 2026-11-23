@@ -25,7 +25,9 @@ from Orchestrator.Ani.Filter.states import (
     next_check_for,
     parse_release_ts,
 )
-from Utility.check_internet import wait_for_internet
+from Config.Hardcoded import limits
+from Utility.alert import alert_outage, clear_outage
+from Utility.check_internet import wait_for_internet_bounded
 from Utility.logs import log
 
 
@@ -41,15 +43,33 @@ def _find_season(payload, anilist_id: int) -> Optional[tuple[int, Dict[str, Any]
 
 
 async def run_subscription(store: AniStore, due: AniDue) -> Result[str, str]:
-    await wait_for_internet()
+    if not await wait_for_internet_bounded(limits.INTERNET_WAIT_SECONDS):
+        await alert_outage(
+            due.user_id, "process", "no_internet", {},
+            title="We cannot access the internet",
+            message="Pipelines are paused until connectivity returns",
+            level="error",
+        )
+        await store.set_next_check(due.entry_id, due.season_no, int(time.time()) + 3600)
+        return Failure("no-internet")
+    clear_outage(due.user_id, "no_internet")
 
     # 1. Fetch the whole chain for this entry (gate: per user+media+kind, D4).
     result = await gates.submit((due.user_id, "ani", "tracking"), lambda: ani_fetch(due.title))
     if isinstance(result, Failure):
         log.warning("ani fetch failed for %s: %s", due.title, result.failure())
-        # Transient failures: retry on a short cadence, no state damage.
+        # Unhappy path (D60): tell the bell once per outage; retry on a
+        # short cadence with no state damage (D15 — nothing auto-deletes).
+        await alert_outage(
+            due.user_id, "ani", "anilist_unreachable",
+            {"title": due.title, "error": result.failure()},
+            title="We cannot reach AniList",
+            message=f"{due.title}: {result.failure()} — will keep retrying",
+            level="error",
+        )
         await store.set_next_check(due.entry_id, due.season_no, int(time.time()) + 3600)
         return Failure(result.failure())
+    clear_outage(due.user_id, "anilist_unreachable")
     payload = result.unwrap()
 
     now = int(time.time())

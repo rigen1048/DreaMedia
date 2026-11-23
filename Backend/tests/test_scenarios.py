@@ -61,8 +61,11 @@ def _fast_gates(monkeypatch):
     async def _noop() -> None:
         return None
 
-    monkeypatch.setattr("Orchestrator.Yt.pipeline.wait_for_internet", _noop)
-    monkeypatch.setattr("Orchestrator.Ani.pipeline.wait_for_internet", _noop)
+    async def _online(*_args, **_kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr("Orchestrator.Yt.pipeline.wait_for_internet_bounded", _online)
+    monkeypatch.setattr("Orchestrator.Ani.pipeline.wait_for_internet_bounded", _online)
     monkeypatch.setattr(gates, "_rest_seconds", lambda _key: 0)
 
 
