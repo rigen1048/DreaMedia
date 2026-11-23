@@ -65,6 +65,50 @@ CREATE TABLE IF NOT EXISTS ani_entries (
     UNIQUE (user_id, anilist_id)
 );
 
+-- Extension tables reference ani_entries and therefore belong after it.
+-- Extension v2 phase 5: which site the user watches which anime on.
+-- Learned passively from anchor reports; feed-item clicks resolve the
+-- next episode URL by pattern-matching the stored page URL, falling back
+-- to the site home (fresh releases surface there), then AniList.
+CREATE TABLE IF NOT EXISTS ani_watch_sites (
+    id            SERIAL PRIMARY KEY,
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    entry_id      INTEGER NOT NULL REFERENCES ani_entries(id) ON DELETE CASCADE,
+    domain_enc    BYTEA NOT NULL,
+    domain_hash   BYTEA NOT NULL,
+    url_enc       BYTEA NOT NULL,           -- last page URL watched there
+    season        INTEGER,                  -- what that URL was playing
+    episode       INTEGER,
+    use_count     INTEGER NOT NULL DEFAULT 1,
+    last_used_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, entry_id, domain_hash)
+);
+
+-- Extension v2 phase 2: live watch sessions over the websocket lane.
+-- One row per active watch; upserted every few seconds while playing,
+-- merged into the real cursor (set_progress, the backward-allowed path)
+-- and deleted on pause/ended. On power loss the row survives and the
+-- boot sweep merges it — DreaMedia always knows the last position.
+CREATE TABLE IF NOT EXISTS ext_live_sessions (
+    user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    entry_id         INTEGER NOT NULL REFERENCES ani_entries(id) ON DELETE CASCADE,
+    season           INTEGER NOT NULL,
+    episode          INTEGER NOT NULL,
+    position_seconds INTEGER NOT NULL DEFAULT 0,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, entry_id)
+);
+
+-- Retains the latest client event order after a live row is closed. A delayed
+-- progress packet cannot recreate an already-ended session; new progress has
+-- a later event timestamp and may open a fresh row.
+CREATE TABLE IF NOT EXISTS ext_live_watermarks (
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    entry_id      INTEGER NOT NULL REFERENCES ani_entries(id) ON DELETE CASCADE,
+    last_event_ms BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, entry_id)
+);
+
 CREATE TABLE IF NOT EXISTS ani_seasons (
     entry_id      INTEGER NOT NULL REFERENCES ani_entries(id) ON DELETE CASCADE,
     season_no     INTEGER NOT NULL,
