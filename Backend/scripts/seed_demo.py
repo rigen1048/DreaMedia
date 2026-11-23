@@ -167,7 +167,7 @@ async def main() -> None:
         await con.execute("DELETE FROM yt_domains WHERE user_id = $1", user_id)
         await con.execute("DELETE FROM ani_entries WHERE user_id = $1", user_id)
         await con.execute("DELETE FROM ani_domains WHERE user_id = $1", user_id)
-        await con.execute("DELETE FROM notifications WHERE user_id = $1", user_id)
+        await con.execute("DELETE FROM alerts WHERE user_id = $1", user_id)
 
     store = PgStore()
     ani = AniStore()
@@ -292,7 +292,7 @@ async def main() -> None:
                     entry_id, str(hours_ago), kind,
                 )
 
-    await _seed_demo_messages(user_id)
+    await _seed_demo_alerts(user_id)
     await db.close()
     print("Seeded demo workspace for user 'demo' / 'demo1234'.")
 
@@ -300,32 +300,35 @@ async def main() -> None:
 COVER_COLORS = ["332a52", "243a44", "43303c", "2b3a2c", "2f3348", "3c2f28"]
 
 
-async def _seed_demo_messages(user_id: int) -> None:
-    """Populate the header bell through its PostgreSQL source of truth."""
-    from Utility.notify import notify
+async def _seed_demo_alerts(user_id: int) -> None:
+    """Populate the header bell with unhappy-path alerts (D60/D61)."""
+    from Utility.alert import send_alert
 
     samples = [
         {
-            "media": "yt", "kind": "tracking_video",
-            "title": "PostgreSQL bell smoke test",
-            "message": "Marques Brownlee · Track",
-            "url": "https://www.youtube.com/watch?v=S1VkZ4k9K2A",
+            "media": "yt", "kind": "channel_deleted",
+            "title": "Channel may got deleted",
+            "message": "Some Spam Channel — we can no longer reach this channel",
+            "level": "warning",
+            "url": "https://www.youtube.com/results?search_query=Some+Spam+Channel",
             "payload": {
-                "channel": "Marques Brownlee", "mode": "tracking",
-                "videoId": "S1VkZ4k9K2A", "title": "The M5 MacBook Air is genuinely different",
-                "url": "https://www.youtube.com/watch?v=S1VkZ4k9K2A",
+                "channel": "Some Spam Channel",
+                "url": "https://www.youtube.com/results?search_query=Some+Spam+Channel",
             },
         },
         {
-            "media": "ani", "kind": "release_confirmed",
-            "title": "Frieren: Beyond Journey's End",
-            "message": "Release confirmed · Season 2", "level": "release",
-            "payload": {"season": 2, "release": "2027-03-14"},
+            "media": "yt", "kind": "last_seen_deleted",
+            "title": "Last seen video may got deleted",
+            "message": "Marques Brownlee — the previous anchor video is gone",
+            "level": "warning",
+            "payload": {"channel": "Marques Brownlee"},
         },
         {
-            "media": "ani", "kind": "next_episode_date",
-            "title": "Dandadan", "message": "New episode · Season 1 · in 3d",
-            "level": "release", "payload": {"season": 1, "episode": 8},
+            "media": "process", "kind": "no_internet",
+            "title": "We cannot access the internet",
+            "message": "Pipelines are paused until connectivity returns",
+            "level": "error",
+            "payload": {},
         },
     ]
     for sample in samples:
@@ -333,8 +336,8 @@ async def _seed_demo_messages(user_id: int) -> None:
         media = details.pop("media")
         kind = details.pop("kind")
         payload = details.pop("payload")
-        await notify(user_id, media, kind, payload, **details)
-    print("  ✓ demo bell messages stored in PostgreSQL")
+        await send_alert(user_id, media, kind, payload, **details)
+    print("  ✓ demo bell alerts stored in PostgreSQL")
 
 
 def cover_for(title: str) -> str:

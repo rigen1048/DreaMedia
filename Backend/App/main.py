@@ -17,7 +17,6 @@ from strawberry.fastapi import GraphQLRouter
 
 from Admin import scheduler, settings
 from Admin.router import router as admin_router
-from Auth.notify_router import router as notifications_router
 from Auth.router import router as auth_router
 from Database import db
 from Graphql.children import ani_schema, yt_schema
@@ -152,7 +151,6 @@ async def _restore_gate(request, call_next):
 
 
 app.include_router(auth_router)
-app.include_router(notifications_router)
 app.include_router(admin_router)
 app.include_router(yt_feed_router)
 app.include_router(yt_access_router)

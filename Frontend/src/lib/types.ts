@@ -177,18 +177,17 @@ export type Workspace = {
   aniDomains: Domain[];
 };
 
-export type BellMessage = {
+/** One backend-driven bell item (D61) — unhappy-path only, never feed. */
+export type Alert = {
   id: number;
-  rowId: number;
-  userId: number;
-  media: "yt" | "ani" | string;
+  media: "yt" | "ani" | "process" | string;
   kind: string;
   title: string;
   message: string;
   level: string;
   url: string | null;
   createdAt: string;
-  payload?: Record<string, unknown>;
+  payload?: string;
   seen: boolean;
 };
 

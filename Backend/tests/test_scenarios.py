@@ -8,11 +8,15 @@ through the same entry point the background loop uses.
 
 Scenarios
   YT-1  channel whose last-seen is the 3rd newest video → only the two newer
-        videos appear, each with one backend message, and the anchor advances.
+        videos appear in the pull-driven feed, and the anchor advances.
   YT-2  WordScan picks only the matching new title, while still advancing the
         anchor so non-matching videos are never re-scanned.
-  YT-3  muted channel still stores videos but emits no message.
+  YT-3  muted channel still stores videos in the feed.
   YT-4  muted domain silences the channel beneath it without touching flags.
+
+D60/D61 invariant under test everywhere below: feed items NEVER produce
+bell alerts — the alerts lane is backend-driven and unhappy-path only, so
+every happy-path scenario must leave the alerts list empty.
   ANI-1 release day unchanged + episode count unchanged → "releases today".
   ANI-2 release day moved → change event carrying old/new dates.
   ANI-3 episode count moved → "already released" event (not another "today").
@@ -185,9 +189,9 @@ async def feed_titles(client: AsyncClient) -> list[str]:
     return [row["title"] for row in data["ytFeed"]]
 
 
-async def messages(client: AsyncClient) -> list[dict]:
-    data = await gql(client, "{ backendMessages(limit: 100) { id media kind title } }")
-    return data["backendMessages"]
+async def alerts(client: AsyncClient) -> list[dict]:
+    data = await gql(client, "{ alerts(limit: 100) { id media kind title } }")
+    return data["alerts"]
 
 
 # --------------------------------------------------------------------------
@@ -209,14 +213,14 @@ async def test_tracking_only_returns_videos_after_last_seen(api):
 
     titles = await feed_titles(api)
     assert titles == ["Newest upload", "Second newest"], titles
-    assert sorted(m["title"] for m in await messages(api)) == ["Newest upload", "Second newest"]
+    assert await alerts(api) == [], "happy-path feed must never alert the bell"
 
     # Anchor advanced to the newest video: a later upload is the only new one.
     await make_due(sub_id)
     with provider_mock([("v6new", "Later upload", "2026-11-15")] + videos):
         await tick_yt()
     assert await feed_titles(api) == ["Later upload", "Newest upload", "Second newest"]
-    assert len(await messages(api)) == 3
+    assert await alerts(api) == []
 
 
 # --------------------------------------------------------------------------
@@ -236,20 +240,20 @@ async def test_wordscan_matches_only_keyword_titles_but_still_advances_anchor(ap
         await tick_yt()
 
     assert await feed_titles(api) == ["Why AI models hallucinate"]
-    assert [m["title"] for m in await messages(api)] == ["Why AI models hallucinate"]
+    assert await alerts(api) == []
 
     # The non-matching new video must not be rescanned forever.
     await make_due(sub_id)
     with provider_mock(videos):
         await tick_yt()
     assert await feed_titles(api) == ["Why AI models hallucinate"]
-    assert len(await messages(api)) == 1
+    assert await alerts(api) == []
 
 
 # --------------------------------------------------------------------------
-# YT-3 / YT-4  notification scope
+# YT-3 / YT-4  per-scope notify flags (mute state persists on the feed)
 # --------------------------------------------------------------------------
-async def test_muted_channel_still_stores_but_never_notifies(api):
+async def test_muted_channel_still_stores_in_feed(api):
     sub_id = await add_tracking(api.user_id)
     await set_anchor(sub_id, "v3seen")
     data = await gql(
@@ -268,7 +272,7 @@ async def test_muted_channel_still_stores_but_never_notifies(api):
         await tick_yt()
 
     assert await feed_titles(api) == ["Kept quiet one", "Kept quiet two"]
-    assert await messages(api) == []
+    assert await alerts(api) == []
 
 
 async def test_muted_domain_silences_channel_without_touching_its_flag(api):
@@ -292,7 +296,7 @@ async def test_muted_domain_silences_channel_without_touching_its_flag(api):
         await tick_yt()
 
     assert await feed_titles(api) == ["Domain muted"]
-    assert await messages(api) == []
+    assert await alerts(api) == []
     channels = await gql(api, "{ ytChannels { id notify } }")
     mine = next(c for c in channels["ytChannels"] if c["id"] == sub_id)
     assert mine["notify"] is True, "domain mute must not rewrite the channel flag"
@@ -446,9 +450,9 @@ async def test_episode_count_increase_means_already_released(api):
 
 
 # --------------------------------------------------------------------------
-# ANI-4  UpToDate tracking is persisted and enables release notifications
+# ANI-4  UpToDate tracking is persisted and enables release feed events
 # --------------------------------------------------------------------------
-async def test_up_to_date_tracking_enables_release_notifications(api):
+async def test_up_to_date_tracking_enables_release_events(api):
     state = {"media": media(published=iso(0), episode=3, airing_at=int(time.time()) + 3 * 86400)}
     with anilist_mock(state):
         entry_id = await track_anime(api, "up_to_date")

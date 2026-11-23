@@ -74,7 +74,7 @@ async def test_fetch_returns_before_worker_rest_and_next_fetch_waits():
 
     first = await registry.submit((3, "yt", "tracking"), fetch)
     downstream_started = time.monotonic()
-    # Filtering/persistence/notifications can run as soon as the network call
+    # Filtering/persistence can run as soon as the network call
     # resolves; the sleeping worker does not hold the caller or this task.
     await asyncio.sleep(0.005)
     downstream_completed = time.monotonic()

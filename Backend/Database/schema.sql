@@ -20,9 +20,12 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Backend messages for the header bell. Encrypted PostgreSQL rows are the
--- single source of truth; the frontend reads and updates them via the API.
-CREATE TABLE IF NOT EXISTS notifications (
+-- Alerts for the header bell (D60/D61): backend-driven, unhappy-path ONLY
+-- ("channel got deleted", "no internet"). Feed never lands here — the feed
+-- is pull-only from the media tables (yt_videos, ani_events). Encrypted
+-- PostgreSQL rows are the single source of truth; the frontend reads and
+-- updates them via GraphQL (alerts / markAlertsSeen).
+CREATE TABLE IF NOT EXISTS alerts (
     id            BIGSERIAL PRIMARY KEY,
     user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     media         TEXT NOT NULL,
@@ -31,7 +34,19 @@ CREATE TABLE IF NOT EXISTS notifications (
     seen          BOOLEAN NOT NULL DEFAULT FALSE,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, seen);
+CREATE INDEX IF NOT EXISTS idx_alerts_user ON alerts(user_id, seen);
+
+-- D61 vocabulary purge: notifications → alerts. Idempotent; preserves any
+-- pre-rename history, then drops the old table.
+DO $$
+BEGIN
+    IF to_regclass('notifications') IS NOT NULL THEN
+        INSERT INTO alerts (user_id, media, kind, payload_enc, seen, created_at)
+            SELECT user_id, media, kind, payload_enc, seen, created_at
+            FROM notifications;
+        DROP TABLE notifications;
+    END IF;
+END $$;
 
 -- Bulk extension imports are durable jobs. Links, selected source settings,
 -- and per-channel errors are encrypted with the owning user's vault key.
@@ -335,11 +350,8 @@ CREATE INDEX IF NOT EXISTS idx_ani_todo_user ON ani_todo(user_id, done);
 -- Idempotent: this file is replayed on every start, so post-original columns
 -- are added here behind IF NOT EXISTS / DO guards.
 
--- No separate push receiver remains; bell delivery is a read of this table.
-ALTER TABLE notifications DROP COLUMN IF EXISTS pushed;
-
--- Notification scoping: disable notifications for an entire domain, an
--- entire subdomain, or a single channel. Effective delivery is
+-- Per-scope notify flags: mute an entire domain, an entire subdomain, or a
+-- single channel. Effective state is
 -- domain.notify AND subdomain.notify AND channel.notify AND label = 'none'.
 ALTER TABLE yt_domains    ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE yt_subdomains ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE;
@@ -383,7 +395,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 -- D55: per-user extension token (hash only; the raw token is shown once).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS ext_token_hash BYTEA;
 
--- D57 trashbin: opening a notification trashes it; purge after 24h.
+-- D57 trashbin: opening a feed item trashes it; purge after 24h.
 ALTER TABLE yt_videos  ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ;
 ALTER TABLE ani_events ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_yt_videos_trash ON yt_videos(trashed_at) WHERE trashed_at IS NOT NULL;
@@ -397,7 +409,7 @@ ALTER TABLE ani_entries  ADD COLUMN IF NOT EXISTS blocked_domain_enc BYTEA;
 ALTER TABLE ani_entries  ADD COLUMN IF NOT EXISTS blocked_subdomain_enc BYTEA;
 CREATE INDEX IF NOT EXISTS idx_yt_channels_subdomain ON yt_channels(subdomain_id);
 CREATE INDEX IF NOT EXISTS idx_ani_entries_subdomain ON ani_entries(subdomain_id);
-CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alerts_user_created ON alerts(user_id, created_at DESC);
 
 -- Episode actually aired (aired-count increase while already releasing).
 -- Replayed on every start, so drop+re-add keeps the constraint in sync.
@@ -407,7 +419,7 @@ ALTER TABLE ani_events ADD CONSTRAINT ani_events_kind_check CHECK (kind IN (
     'episode_postponed', 'next_sequel', 'release_confirmed',
     'release_changed', 'episode_released'));
 
--- F1 Withhold: quantity-batched notifications. Videos from a withhold
+-- F1 Withhold: quantity-batched feed releases. Videos from a withhold
 -- subscription buffer (withheld=TRUE, hidden from the feed) until the
 -- buffered count reaches the threshold, then release as one batch.
 ALTER TABLE yt_tracking ADD COLUMN IF NOT EXISTS withhold_threshold INTEGER;
@@ -436,7 +448,7 @@ CREATE TABLE IF NOT EXISTS ext_domain_defaults (
 );
 
 -- Extension v2 phase 5: which site the user watches which anime on.
--- Learned passively from anchor reports; notification clicks resolve the
+-- Learned passively from anchor reports; feed-item clicks resolve the
 -- next episode URL by pattern-matching the stored page URL, falling back
 -- to the site home (fresh releases surface there), then AniList.
 CREATE TABLE IF NOT EXISTS ani_watch_sites (
@@ -482,7 +494,7 @@ CREATE TABLE IF NOT EXISTS ext_live_watermarks (
 -- the FK constraints existed never got them — CREATE TABLE IF NOT EXISTS is
 -- a no-op for existing tables, so inline REFERENCES clauses were skipped.
 -- The live dev DB had FKs only on yt_* tables; every ani_* table (plus
--- notifications and sessions) had none, and ON DELETE CASCADE silently
+-- the bell table and sessions) had none, and ON DELETE CASCADE silently
 -- didn't happen. Clean dangling rows (parent-first order where needed),
 -- then add any missing FK idempotently.
 DO $$
@@ -501,7 +513,7 @@ BEGIN
           );
     DELETE FROM ani_subdomains s WHERE NOT EXISTS (SELECT 1 FROM ani_domains d WHERE d.id = s.domain_id);
     DELETE FROM ani_domains    d WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = d.user_id);
-    DELETE FROM notifications  n WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = n.user_id);
+    DELETE FROM alerts         a WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = a.user_id);
     DELETE FROM sessions       s WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = s.user_id);
     DELETE FROM ani_entries    e WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = e.user_id);
     DELETE FROM ani_seasons    s WHERE NOT EXISTS (SELECT 1 FROM ani_entries e WHERE e.id = s.entry_id);
@@ -512,7 +524,7 @@ BEGIN
 
     FOR fk IN
         SELECT * FROM (VALUES
-            ('notifications',  'notifications_user_id_fkey',      'user_id',      'users',          'id', 'CASCADE'),
+            ('alerts',         'alerts_user_id_fkey',             'user_id',      'users',          'id', 'CASCADE'),
             ('sessions',       'sessions_user_id_fkey',           'user_id',      'users',          'id', 'CASCADE'),
             ('ani_domains',    'ani_domains_user_id_fkey',        'user_id',      'users',          'id', 'CASCADE'),
             ('ani_subdomains', 'ani_subdomains_domain_id_fkey',   'domain_id',    'ani_domains',    'id', 'CASCADE'),

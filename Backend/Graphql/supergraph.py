@@ -1,8 +1,8 @@
-"""Supergraph (D25): the primary GraphQL endpoint the frontend talks to.
+"""Supergraph (D25): the ONLY endpoint the frontend talks to.
 
 Merges the yt/ani feature schemas with auth (viewer/login/signup/logout)
-and the backend-message history. The header bell also uses the authenticated
-PostgreSQL REST endpoints in Auth.notify_router. Session cookies are written through
+and the alert lane (D60/D61): the header bell reads and marks alerts here
+— GraphQL only, no REST. Session cookies are written through
 request.state and applied by the HTTP middleware in App.main — so login is
 a normal GraphQL mutation, not a side-channel REST route.
 """
@@ -19,7 +19,7 @@ from Auth import auth
 from Database.pg_store import PgStore
 from Graphql.account import AccountMutation, AccountQuery
 from Graphql.admin import AdminMutation, AdminQuery
-from Graphql.children import AniMutation, AniQuery, BackendMessage, Viewer, YtMutation, YtQuery
+from Graphql.children import Alert, AniMutation, AniQuery, Viewer, YtMutation, YtQuery
 
 _yt = PgStore()
 
@@ -51,12 +51,12 @@ class AuthQuery:
         return await _viewer(info)
 
     @strawberry.field
-    async def backend_messages(self, info: Info, limit: int = 100) -> List[BackendMessage]:
-        """Durable backend-message history from the notification table."""
+    async def alerts(self, info: Info, limit: int = 100) -> List[Alert]:
+        """Bell alert history (D60/D61): backend-driven, unhappy-path only."""
         viewer = await _viewer(info)
         if viewer is None:
             return []
-        rows = await _yt.messages(viewer.id, limit)
+        rows = await _yt.alerts(viewer.id, limit)
         result = []
         for r in rows:
             payload = r.get("payload") or {}
@@ -69,7 +69,7 @@ class AuthQuery:
                 elif record.get("season"):
                     message = f"Season {record['season']}"
             result.append(
-                BackendMessage(
+                Alert(
                     id=r["id"], media=r["media"], kind=r["kind"], title=str(title),
                     message=str(message), level=str(record.get("level") or "info"),
                     url=record.get("url"), created_at=r["created_at"],
@@ -110,7 +110,7 @@ class AuthMutation:
         return True
 
     @strawberry.field
-    async def messages_seen(self, info: Info, ids: List[int], seen: bool = True) -> int:
+    async def mark_alerts_seen(self, info: Info, ids: List[int], seen: bool = True) -> int:
         viewer = await _viewer(info)
         if viewer is None:
             return 0
@@ -121,7 +121,7 @@ class AuthMutation:
         pool = await get_pool()
         async with pool.acquire() as con:
             result = await con.execute(
-                "UPDATE notifications SET seen = $3 WHERE user_id = $1 AND id = ANY($2)",
+                "UPDATE alerts SET seen = $3 WHERE user_id = $1 AND id = ANY($2)",
                 viewer.id, ids, seen,
             )
         return int(result.split()[-1])

@@ -14,7 +14,7 @@ _store = AniStore()
 async def events(
     user_id: int = Depends(current_user_id), include_seen: bool = Query(False)
 ):
-    """Notification division (D18): the 7 event kinds with awaited tier (D21)."""
+    """Feed division (D18): the 7 event kinds with awaited tier (D21)."""
     return {"events": await _store.events_feed(user_id, include_seen)}
 
 

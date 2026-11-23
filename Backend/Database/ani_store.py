@@ -201,7 +201,6 @@ class AniStore:
             f"{entry_id}|{season_no}|{kind}|"
             + json.dumps(payload, sort_keys=True, default=str),
         )
-        title = None
         pool = await get_pool()
         async with pool.acquire() as con:
             exists = await con.fetchval(
@@ -217,18 +216,9 @@ class AniStore:
                 )
             except asyncpg.UniqueViolationError:
                 return
-            title_enc = await con.fetchval(
-                "SELECT title_enc FROM ani_entries WHERE id = $1", entry_id
-            )
-            if title_enc is not None:
-                title = decrypt(key, title_enc)
+        # Pull-only feed (D60): the event lives in ani_events; the frontend
+        # reads it via GraphQL. Nothing is pushed to the bell from here.
         log.info("ani event: %s entry=%s season=%s tier=%s", kind, entry_id, season_no, tier)
-        # Backend message lane: release/change notifications for the bell.
-        from Utility.notify import notify_ani_release
-
-        await notify_ani_release(
-            user_id, entry_id, title or "Anime", season_no, kind, payload
-        )
 
     # ---------------- Trashbin (D57) ----------------
     async def trash_events(self, user_id: int, event_ids: List[int]) -> int:
@@ -474,7 +464,7 @@ class AniStore:
     # ---------------- feed reads ----------------
     async def events_feed(self, user_id: int, include_seen: bool = False) -> List[Dict[str, Any]]:
         """Anime events + the owning entry's display metadata, so each event
-        is a complete notification row without a second round-trip."""
+        is a complete feed row without a second round-trip."""
         key = await vault.get(user_id)
         if key is None:
             return []
@@ -883,7 +873,7 @@ class AniStore:
                         entry_id, season_no + 1, start,
                     )
                 # Due now: the pipeline re-checks this season and raises the
-                # next_sequel_date notification with the confirmed date.
+                # next_sequel_date feed event with the confirmed date.
                 await con.execute(
                     "UPDATE ani_schedule SET next_check_ts = $3 "
                     "WHERE entry_id = $1 AND season_no = $2",

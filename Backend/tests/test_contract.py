@@ -262,7 +262,7 @@ async def test_switch_mode_random_to_tracking_and_wordscan():
     await store.delete_channel(user_id, cid)
 
 
-# ---------- withhold notification type (F1) ----------
+# ---------- withhold feed batching (F1) ----------
 
 async def test_withhold_buffers_then_releases_as_a_batch():
     """F1: withhold=2 buffers single uploads invisibly; the batch that reaches
@@ -710,7 +710,7 @@ def test_watch_site_episode_url_parser():
 
 
 async def test_watch_sites_learn_and_resolve():
-    """Phase 5: anchor reports teach the site map; the notification click
+    """Phase 5: anchor reports teach the site map; the feed-item click
     resolves the next episode by pattern, else the site home."""
     user_id = await _user_id()
     store, entry_id, _total = await _ani_entry(user_id)

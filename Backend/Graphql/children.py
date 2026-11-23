@@ -1,17 +1,14 @@
 """Unified GraphQL API — the frontend's ONLY data contract.
 
 Every read and write the UI performs goes through this schema and its
-supergraph (/graphql). The REST routers that remain mounted are the
-frontend's *inbound* notification lane and internal/admin tooling; the UI
-does not call them.
+supergraph (/graphql) — including the bell's alert lane (alerts /
+markAlertsSeen). No frontend-facing REST remains.
 
 Design notes:
-- One schema, two feature namespaces (yt / ani) plus auth + messages.
-- YouTube notification types map to the subscription mode
-  (tracking → Track, wordscan → WordScan, playlist → Playlist,
-  random → Random).
-- Notification scoping is exposed on the category tree and channel rows so
-  the UI can mute a domain, a subdomain, or one channel.
+- One schema, two feature namespaces (yt / ani) plus auth + alerts.
+- Feed is pull-driven (D60): ytFeed / aniEvents read the media tables.
+- Per-scope notify flags are exposed on the category tree and channel rows
+  so the UI can mute a domain, a subdomain, or one channel.
 """
 from __future__ import annotations
 
@@ -85,7 +82,8 @@ class Viewer:
 
 
 @strawberry.type
-class BackendMessage:
+class Alert:
+    """One backend-driven bell item (D61) — unhappy-path only, never feed."""
     id: int
     media: str
     kind: str
@@ -339,14 +337,14 @@ class YtMutation:
                     )
                 )
             else:
-                raise ValueError(f"Unknown notification type: {kind}")
+                raise ValueError(f"Unknown subscription kind: {kind}")
         if domain and subdomain:
             await _yt.assign_category(user_id, channel_id, domain, subdomain)
         return channel_id
 
     @strawberry.field
     async def yt_trash_videos(self, info: Info, video_ids: List[int]) -> int:
-        """Opening a notification trashes it (D57); 24h later it's purged."""
+        """Opening a feed item trashes it (D57); 24h later it's purged."""
         return await _yt.trash_videos(await _uid(info), video_ids)
 
     @strawberry.field

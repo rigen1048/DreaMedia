@@ -7,7 +7,6 @@ import { defineConfig, loadEnv, type ProxyOptions } from "vite";
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const apiPrefixes = [
   "/auth",
-  "/notifications",
   "/admin",
   "/yt",
   "/ani",

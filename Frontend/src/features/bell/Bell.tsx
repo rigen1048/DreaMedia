@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell as BellIcon, Check, Radio, X } from "lucide-react";
 import { useApp } from "../../app/state";
-import { listMessages, markMessagesSeen, NotificationApiError } from "../../lib/notifications";
+import { listAlerts, markAlertsSeen } from "../../lib/alerts";
+import { BackendError } from "../../lib/gql";
 import { timeAgo } from "../../lib/format";
-import type { BellMessage } from "../../lib/types";
+import type { Alert } from "../../lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 /**
- * The bell reads durable notification history and read state from PostgreSQL
- * through the authenticated backend API. It never reads the YouTube/Anime feed.
+ * The bell shows ALERTS ONLY (D60/D61): backend-driven unhappy-path messages
+ * ("channel may got deleted", "we cannot access the internet") read from the
+ * supergraph. It never reads the YouTube/Anime feed — the feed is pull-driven
+ * and lives on the Feed page.
  */
 export default function Bell() {
   const { viewer } = useApp();
-  const [messages, setMessages] = useState<BellMessage[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [open, setOpen] = useState(false);
   const [online, setOnline] = useState(false);
   const [vaultLocked, setVaultLocked] = useState(false);
@@ -25,14 +28,17 @@ export default function Bell() {
   const pull = useCallback(async () => {
     if (!userId) return;
     try {
-      setMessages(await listMessages());
+      setAlerts(await listAlerts());
       setOnline(true);
       setVaultLocked(false);
     } catch (error) {
       setOnline(false);
-      const locked = error instanceof NotificationApiError && error.status === 423;
+      // A locked vault (D9) means the backend can store nothing decryptable;
+      // the supergraph returns an empty list rather than 423, so reaching
+      // here with an auth error is the closest signal we still surface.
+      const locked = error instanceof BackendError && /auth|vault/i.test(error.message);
       setVaultLocked(locked);
-      if (locked) setMessages([]);
+      if (locked) setAlerts([]);
     }
   }, [userId]);
 
@@ -65,27 +71,27 @@ export default function Bell() {
     };
   }, [open]);
 
-  const unread = useMemo(() => messages.filter((message) => !message.seen), [messages]);
+  const unread = useMemo(() => alerts.filter((alert) => !alert.seen), [alerts]);
 
-  const setSeen = async (message: BellMessage, seen: boolean) => {
-    setMessages((current) =>
-      current.map((item) => (item.id === message.id ? { ...item, seen } : item)),
+  const setSeen = async (alert: Alert, seen: boolean) => {
+    setAlerts((current) =>
+      current.map((item) => (item.id === alert.id ? { ...item, seen } : item)),
     );
     try {
-      await markMessagesSeen([message.id], seen);
+      await markAlertsSeen([alert.id], seen);
     } catch {
       void pull();
     }
   };
 
-  const acknowledge = async (message: BellMessage) => setSeen(message, !message.seen);
+  const acknowledge = async (alert: Alert) => setSeen(alert, !alert.seen);
 
   const acknowledgeAll = async () => {
-    const ids = unread.map((message) => message.id);
+    const ids = unread.map((alert) => alert.id);
     if (!ids.length) return;
-    setMessages((current) => current.map((item) => ({ ...item, seen: true })));
+    setAlerts((current) => current.map((item) => ({ ...item, seen: true })));
     try {
-      await markMessagesSeen(ids, true);
+      await markAlertsSeen(ids, true);
     } catch {
       void pull();
     }
@@ -95,7 +101,7 @@ export default function Bell() {
     <div className="relative" ref={panel}>
       <Button
         variant="ghost"
-        aria-label={`Backend messages${unread.length ? `, ${unread.length} unread` : ""}`}
+        aria-label={`Alerts${unread.length ? `, ${unread.length} unread` : ""}`}
         aria-expanded={open}
         onClick={() => {
           setOpen((value) => !value);
@@ -114,11 +120,11 @@ export default function Bell() {
       {open && (
         <div
           role="dialog"
-          aria-label="Backend messages"
+          aria-label="Alerts"
           className="absolute right-0 top-11 z-50 flex w-96 flex-col overflow-hidden rounded-xl border bg-card shadow-xl"
         >
           <div className="flex items-center gap-2 border-b px-4 py-2.5">
-            <strong className="text-sm">Backend messages</strong>
+            <strong className="text-sm">Alerts</strong>
             <span className="text-xs text-muted-foreground">{unread.length} new</span>
             <span className="grow" />
             <Button
@@ -142,34 +148,34 @@ export default function Bell() {
           </div>
 
           <div ref={list} className="max-h-96 overflow-y-auto">
-            {messages.length === 0 && (
+            {alerts.length === 0 && (
               <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
                 <Radio size={18} className="text-muted-foreground" />
                 <div className="text-sm">
-                  {vaultLocked ? "Notifications are locked." : "No backend messages yet."}
+                  {vaultLocked ? "Alerts are locked." : "No alerts."}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {vaultLocked
-                    ? "Sign in again to unlock your encrypted notifications."
+                    ? "Sign in again to unlock your encrypted alerts."
                     : online
-                      ? "No PostgreSQL notifications yet."
-                      : "PostgreSQL notifications are unavailable."}
+                      ? "Nothing is wrong — alerts only appear on unhappy paths."
+                      : "The alert lane is unavailable."}
                 </div>
               </div>
             )}
-            {messages.slice(0, 40).map((message) => (
+            {alerts.slice(0, 40).map((alert) => (
               <Button
-                key={message.id}
+                key={alert.id}
                 variant="ghost"
-                onClick={() => void acknowledge(message)}
-                title={message.seen ? "Mark unread" : "Mark read"}
+                onClick={() => void acknowledge(alert)}
+                title={alert.seen ? "Mark unread" : "Mark read"}
                 className={cn(
                   "flex h-auto w-full items-start justify-start gap-2.5 rounded-none border-b px-4 py-2.5 text-left whitespace-normal",
-                  !message.seen && "bg-accent/30",
+                  !alert.seen && "bg-accent/30",
                 )}
               >
                 <span className="mt-1 shrink-0 text-muted-foreground">
-                  {message.seen ? (
+                  {alert.seen ? (
                     <Check size={13} />
                   ) : (
                     <span className="block h-1.5 w-1.5 rounded-full bg-sky-500" />
@@ -177,15 +183,16 @@ export default function Bell() {
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">
-                    {message.title || message.kind}
+                    {alert.title || alert.kind}
                   </span>
-                  {message.message && (
+                  {alert.message && (
                     <span className="block truncate text-xs text-muted-foreground">
-                      {message.message}
+                      {alert.message}
                     </span>
                   )}
                   <span className="mt-0.5 block text-xs text-muted-foreground">
-                    {timeAgo(message.createdAt)} · {message.media === "yt" ? "YouTube" : "Anime"}
+                    {timeAgo(alert.createdAt)} ·{" "}
+                    {alert.media === "yt" ? "YouTube" : alert.media === "ani" ? "Anime" : "System"}
                   </span>
                 </span>
               </Button>
@@ -200,12 +207,12 @@ export default function Bell() {
               )}
             />
             {online
-              ? "PostgreSQL connected"
+              ? "Alert lane connected"
               : vaultLocked
                 ? "Vault locked"
-                : "PostgreSQL unavailable"}
+                : "Alert lane unavailable"}
             <span className="grow" />
-            <span>database-backed history</span>
+            <span>unhappy-path only</span>
           </div>
         </div>
       )}

@@ -307,7 +307,7 @@ class PgStore:
         self, sub: PgSubscription, payload: FetchPayload
     ) -> List[Dict[str, Any]]:
         """Insert new videos and return exactly the rows that were new, so the
-        pipeline can emit one notification per genuinely new video."""
+        pipeline stores each genuinely new video for the pull-driven feed."""
         key = await vault.get(sub.user_id)
         if key is None:
             return []
@@ -381,7 +381,7 @@ class PgStore:
         return len(await self.save_videos_detailed(sub, payload))
 
     async def channel_meta(self, user_id: int, channel_id: int) -> Dict[str, Any]:
-        """Display metadata for notification payloads (name + categories)."""
+        """Display metadata for feed rows and alert payloads (name + categories)."""
         key = await vault.get(user_id)
         if key is None:
             return {}
@@ -930,7 +930,7 @@ class PgStore:
 
     # ---------------- Trashbin (D57) ----------------
     async def trash_videos(self, user_id: int, video_ids: List[int]) -> int:
-        """Opening a notification trashes it (seen + 24h purge window)."""
+        """Opening a feed item trashes it (seen + 24h purge window)."""
         if not video_ids:
             return 0
         pool = await get_pool()
@@ -1205,11 +1205,11 @@ class PgStore:
             return Failure("category not found")
         return Success({"deleted": domain if subdomain is None else f"{domain}/{subdomain}"})
 
-    # ---------------- notification scoping (domain / subdomain / channel) ----------------
+    # ---------------- per-scope notify flags (domain / subdomain / channel) ----------------
     async def set_channel_notify(
         self, user_id: int, channel_id: int, notify: bool
     ) -> Result[Dict[str, Any], str]:
-        """Change only notification delivery; keep fetch/label state unchanged."""
+        """Change only the notify flag; keep fetch/label state unchanged."""
         pool = await get_pool()
         async with pool.acquire() as con:
             result = await con.execute(
@@ -1253,7 +1253,7 @@ class PgStore:
 
     async def domains_tree(self, user_id: int) -> Dict[str, Any]:
         """Full domain/subdomain tree with counts and mute flags — the
-        Management tree and the notification filter rail both read this."""
+        Management tree and the feed filter rail both read this."""
         key = await vault.get(user_id)
         if key is None:
             return {"domains": [], "unassigned_channels": 0}
@@ -1442,7 +1442,7 @@ class PgStore:
         return Success({"id": channel_id, "subdomain_id": subdomain_id})
 
     async def notify_enabled(self, user_id: int, channel_id: int) -> bool:
-        """Effective notification gate for one channel (domain ∧ subdomain ∧
+        """Effective notify gate for one channel (domain ∧ subdomain ∧
         channel ∧ not blocked ∧ subscription active)."""
         pool = await get_pool()
         async with pool.acquire() as con:
@@ -1464,8 +1464,8 @@ class PgStore:
                 )
             )
 
-    async def messages(self, user_id: int, limit: int = 100) -> List[Dict[str, Any]]:
-        """Backend message history from the bell's PostgreSQL source of truth."""
+    async def alerts(self, user_id: int, limit: int = 100) -> List[Dict[str, Any]]:
+        """Alert history from the bell's PostgreSQL source of truth (D61)."""
         key = await vault.get(user_id)
         if key is None:
             return []
@@ -1473,7 +1473,7 @@ class PgStore:
         async with pool.acquire() as con:
             rows = await con.fetch(
                 "SELECT id, media, kind, payload_enc, seen, created_at "
-                "FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+                "FROM alerts WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
                 user_id, limit,
             )
         import json
