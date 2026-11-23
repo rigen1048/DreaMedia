@@ -9,7 +9,6 @@ FreeTube, HydraWatch, and our own exports all parse.
 """
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 from typing import Any, Dict, List, Optional
@@ -126,6 +125,7 @@ async def import_youtube(user_id: int, text: str) -> Result[Dict[str, Any], str]
     if isinstance(parsed, Failure):
         return parsed
     from Orchestrator.Yt.Fetch.convert import resolve_channel
+    from Utility.media_executor import run_youtube_network
 
     yt = PgStore()
     imported, skipped = 0, 0
@@ -142,7 +142,7 @@ async def import_youtube(user_id: int, text: str) -> Result[Dict[str, Any], str]
         name = _col(row, "channel title", "title", "name")
         logo = None
         if not rss_id or not name:
-            resolved = await asyncio.to_thread(resolve_channel, url)
+            resolved = await run_youtube_network(user_id, resolve_channel, url)
             if isinstance(resolved, Failure):
                 skipped += 1
                 errors.append(f"{url}: {resolved.failure()}")

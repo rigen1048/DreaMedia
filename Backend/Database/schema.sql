@@ -93,31 +93,10 @@ WHERE status = 'running';
 CREATE INDEX IF NOT EXISTS idx_yt_import_items_stage
     ON yt_import_items(status, claimed_at, job_id, ordinal);
 
--- A row is one globally enforced concurrency slot, shared by every backend
--- process/container connected to this database. The resolver target is 8;
--- source-write processing is capped separately at 16.
-CREATE TABLE IF NOT EXISTS yt_import_worker_slots (
-    stage        TEXT NOT NULL CHECK (stage IN ('resolve', 'process')),
-    slot_id      INTEGER NOT NULL CHECK (slot_id > 0),
-    available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    claimed_at   TIMESTAMPTZ,
-    claim_token  TEXT,
-    PRIMARY KEY (stage, slot_id),
-    CHECK ((claim_token IS NULL) = (claimed_at IS NULL))
-);
-
-INSERT INTO yt_import_worker_slots (stage, slot_id)
-SELECT 'resolve', slot_id FROM generate_series(1, 8) AS slots(slot_id)
-ON CONFLICT (stage, slot_id) DO NOTHING;
-INSERT INTO yt_import_worker_slots (stage, slot_id)
-SELECT 'process', slot_id FROM generate_series(1, 16) AS slots(slot_id)
-ON CONFLICT (stage, slot_id) DO NOTHING;
-
-CREATE TABLE IF NOT EXISTS yt_import_dispatcher (
-    id             SMALLINT PRIMARY KEY CHECK (id = 1),
-    next_start_at  TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
-);
-INSERT INTO yt_import_dispatcher (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+-- Existing item-row claims plus GateRegistry provide durable work and
+-- per-user network pacing; legacy global slots/dispatcher are no longer used.
+DROP TABLE IF EXISTS yt_import_worker_slots;
+DROP TABLE IF EXISTS yt_import_dispatcher;
 
 -- ============================ Yt plugin ============================
 CREATE TABLE IF NOT EXISTS yt_domains (

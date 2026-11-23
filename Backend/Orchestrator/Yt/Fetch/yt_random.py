@@ -19,6 +19,7 @@ from yt_dlp import YoutubeDL
 from Model.video import FetchPayload
 from Utility.http import get_consent_cookies, get_privacy_headers
 from Utility.logs import log
+from Utility.media_executor import run_media
 
 
 def _normalize_channel_url(url: str) -> str:
@@ -171,7 +172,7 @@ def _pick_random(channel_url: str) -> Result[FetchPayload, str]:
 
 
 async def yt_random(channel_url: str) -> Result[FetchPayload, str]:
-    return await asyncio.to_thread(_pick_random, channel_url)
+    return await run_media(_pick_random, channel_url)
 
 
 if __name__ == "__main__":

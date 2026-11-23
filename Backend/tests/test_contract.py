@@ -154,6 +154,10 @@ async def test_direct_subscription_upserts_keep_modes_exclusive():
 
 
 async def test_extension_source_write_is_atomic_and_import_skips_existing(monkeypatch):
+    from Orchestrator.Yt import manager as yt_manager
+
+    wake_calls = []
+    monkeypatch.setattr(yt_manager, "wake", lambda: wake_calls.append(True))
     user_id = await _user_id()
     store = PgStore()
     url = f"https://www.youtube.com/@atomic-{time.time_ns()}"
@@ -178,6 +182,7 @@ async def test_extension_source_write_is_atomic_and_import_skips_existing(monkey
     assert after_rollback == before, "a category error must roll back the new channel too"
 
     monkeypatch.undo()
+    monkeypatch.setattr(yt_manager, "wake", lambda: wake_calls.append(True))
     added = await store.add_extension_subscription(
         user_id, rss_id="UC" + ("a" * 22), channel_name="Atomic import",
         channel_url=url, kind="withhold", withhold=4,
@@ -194,13 +199,15 @@ async def test_extension_source_write_is_atomic_and_import_skips_existing(monkey
     }
     async with pool.acquire() as con:
         row = await con.fetchrow(
-            "SELECT t.kind, t.withhold_threshold, c.subdomain_id "
+            "SELECT t.kind, t.withhold_threshold, t.ts, c.subdomain_id "
             "FROM yt_channels c JOIN yt_tracking t ON t.channel_id = c.id "
             "WHERE c.id = $1 AND c.user_id = $2",
             channel_id, user_id,
         )
     assert row["kind"] == "tracking" and row["withhold_threshold"] == 4
     assert row["subdomain_id"] is not None
+    assert row["ts"] == 0
+    assert len(wake_calls) == 1
 
     race_url = f"https://www.youtube.com/@atomic-race-{time.time_ns()}"
     raced = await asyncio.gather(*(
@@ -212,6 +219,7 @@ async def test_extension_source_write_is_atomic_and_import_skips_existing(monkey
     ))
     assert all(isinstance(result, Success) for result in raced)
     assert sorted(result.unwrap()["created"] for result in raced) == [False, True]
+    assert len(wake_calls) == 2
     race_channel_id = raced[0].unwrap()["channel_id"]
 
     await store.delete_channel(user_id, channel_id)

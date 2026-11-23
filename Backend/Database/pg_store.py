@@ -876,12 +876,12 @@ class PgStore:
                     await con.execute("DELETE FROM yt_randomsubs WHERE channel_id = $1", channel_id)
                     await con.execute(
                         "INSERT INTO yt_tracking "
-                        "(channel_id, rss_id_enc, rss_hash, kind, word_enc, withhold_threshold) "
-                        "VALUES ($1, $2, $3, $4, $5, $6) "
+                        "(channel_id, rss_id_enc, rss_hash, kind, word_enc, withhold_threshold, ts) "
+                        "VALUES ($1, $2, $3, $4, $5, $6, 0) "
                         "ON CONFLICT (channel_id) DO UPDATE SET "
                         "rss_id_enc = EXCLUDED.rss_id_enc, rss_hash = EXCLUDED.rss_hash, "
                         "kind = EXCLUDED.kind, word_enc = EXCLUDED.word_enc, "
-                        "withhold_threshold = EXCLUDED.withhold_threshold",
+                        "withhold_threshold = EXCLUDED.withhold_threshold, ts = 0",
                         channel_id, encrypt(key, rss_id), index_hash(key, rss_id),
                         actual_kind, encrypt(key, ",".join(words)) if words else None,
                         threshold,
@@ -890,18 +890,21 @@ class PgStore:
                     await con.execute("DELETE FROM yt_tracking WHERE channel_id = $1", channel_id)
                     await con.execute("DELETE FROM yt_randomsubs WHERE channel_id = $1", channel_id)
                     await con.execute(
-                        "INSERT INTO yt_playlists (channel_id, playlist_id) VALUES ($1, $2) "
-                        "ON CONFLICT (channel_id) DO UPDATE SET playlist_id = EXCLUDED.playlist_id",
+                        "INSERT INTO yt_playlists (channel_id, playlist_id, ts) VALUES ($1, $2, 0) "
+                        "ON CONFLICT (channel_id) DO UPDATE SET playlist_id = EXCLUDED.playlist_id, ts = 0",
                         channel_id, playlist_id,
                     )
                 else:  # random
                     await con.execute("DELETE FROM yt_tracking WHERE channel_id = $1", channel_id)
                     await con.execute("DELETE FROM yt_playlists WHERE channel_id = $1", channel_id)
                     await con.execute(
-                        "INSERT INTO yt_randomsubs (channel_id, rank) VALUES ($1, $2) "
-                        "ON CONFLICT (channel_id) DO UPDATE SET rank = EXCLUDED.rank",
+                        "INSERT INTO yt_randomsubs (channel_id, rank, ts) VALUES ($1, $2, 0) "
+                        "ON CONFLICT (channel_id) DO UPDATE SET rank = EXCLUDED.rank, ts = 0",
                         channel_id, rank or "week",
                     )
+        from Orchestrator.Yt.manager import wake
+
+        wake()
         return Success({"channel_id": channel_id, "created": True})
 
 

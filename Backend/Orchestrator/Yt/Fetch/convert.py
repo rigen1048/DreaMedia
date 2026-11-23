@@ -6,7 +6,7 @@ extract playlist IDs from playlist URLs. Accepted channel formats:
   youtube.com/@HANDLE[/featured|/videos|/shorts|...]
   youtube.com/channel/UC...
   bare UC... id
-yt-dlp is blocking → callers run this via asyncio.to_thread.
+yt-dlp is blocking; callers use the dedicated Utility.media_executor.
 """
 from __future__ import annotations
 

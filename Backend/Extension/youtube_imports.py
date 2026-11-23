@@ -1,8 +1,7 @@
-"""Encrypted two-stage PostgreSQL queue for bulk YouTube source additions.
+"""Encrypted PostgreSQL queue for bulk YouTube source additions.
 
-Resolver and source-write workers use separate durable stages and PostgreSQL
-global slots. Single Add Source uses the same resolver and resolved-metadata
-write helpers as bulk imports.
+Channel resolution uses the owner's shared network lane; source writes use the
+same Add Source persistence path as individual imports. Item claims are durable.
 """
 from __future__ import annotations
 
@@ -12,7 +11,6 @@ import os
 import random
 import re
 import uuid
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import urlsplit
 
@@ -23,18 +21,15 @@ from Database.crypto import decrypt, encrypt
 from Database.db import get_pool
 from Database.pg_store import PgStore
 from Utility.logs import log
+from Utility.media_executor import run_youtube_network
 
 MAX_IMPORT_CHANNELS = 2000
 MAX_STATUS_ERRORS = 10
 CLAIM_STALE_AFTER_MINUTES = 10
-DEFAULT_IMPORT_WORKERS = 8
+DEFAULT_IMPORT_WORKERS = 64
 DEFAULT_PROCESS_WORKERS = 16
-GLOBAL_RESOLVE_SLOTS = 8
-GLOBAL_PROCESS_SLOTS = 16
-MAX_IMPORT_WORKERS = GLOBAL_RESOLVE_SLOTS
-MAX_PROCESS_WORKERS = GLOBAL_PROCESS_SLOTS
-RESOLVE_START_SPACING_SECONDS = 0.25
-RESOLVE_WORKER_COOLDOWN_SECONDS = 2
+MAX_IMPORT_WORKERS = 64
+MAX_PROCESS_WORKERS = 16
 IMPORT_IDLE_POLL_SECONDS = 1.0
 IMPORT_ERROR_BACKOFF_BASE_SECONDS = 2.0
 IMPORT_ERROR_BACKOFF_MAX_SECONDS = 60.0
@@ -71,14 +66,14 @@ def _bounded_worker_count(env_name: str, default: int, maximum: int) -> int:
 
 
 def import_worker_count() -> int:
-    """Per-process resolver workers; PostgreSQL slots cap global lookups at 8."""
+    """Claim consumers; GateRegistry enforces per-user YT network pacing."""
     return _bounded_worker_count(
         "DREAMEDIA_YT_IMPORT_WORKERS", DEFAULT_IMPORT_WORKERS, MAX_IMPORT_WORKERS
     )
 
 
 def process_worker_count() -> int:
-    """Per-process persistence workers; PostgreSQL slots cap global work at 16."""
+    """Independent async source-write consumers; no network cooldown applies."""
     return _bounded_worker_count(
         "DREAMEDIA_YT_IMPORT_PROCESS_WORKERS",
         DEFAULT_PROCESS_WORKERS,
@@ -115,14 +110,16 @@ def normalize_source_options(
     }
 
 
-async def resolve_youtube_channel(link: str) -> Dict[str, Any]:
-    """Resolve channel metadata in a thread; do not hold a DB connection."""
+async def resolve_youtube_channel(link: str, user_id: int) -> Dict[str, Any]:
+    """Resolve through the owner's shared YT lane without holding a DB connection."""
     from Orchestrator.Yt.Fetch.convert import resolve_channel
 
     clean_link = link.strip()
     if not clean_link:
         raise ValueError("source link is required")
-    thread_task = asyncio.create_task(asyncio.to_thread(resolve_channel, clean_link))
+    thread_task = asyncio.create_task(
+        run_youtube_network(user_id, resolve_channel, clean_link)
+    )
     try:
         resolved_result = await asyncio.shield(thread_task)
     except asyncio.CancelledError:
@@ -221,7 +218,7 @@ async def add_youtube_channel_source(
         domain=domain,
         subdomain=subdomain,
     )
-    resolved = await resolve_youtube_channel(link)
+    resolved = await resolve_youtube_channel(link, user_id)
     return await _store_resolved_source(
         user_id, resolved, options, skip_existing=skip_existing, store=store
     )
@@ -457,7 +454,7 @@ async def _pending_user_ids(stage: str) -> List[int]:
 
 
 async def _claim_next_stage_item(stage: str):
-    """Serialize pending scans and claims locally; PostgreSQL slots stay global."""
+    """Serialize local polling; PostgreSQL item claims coordinate concurrent workers."""
     lock = _stage_poll_lock(stage)
     loop = asyncio.get_running_loop()
     async with lock:
@@ -487,7 +484,7 @@ async def _claim_next_stage_item(stage: str):
 
 
 async def _claim_stage_item(user_id: int, stage: str) -> Optional[Dict[str, Any]]:
-    """Claim a durable item and one DB-global capacity slot atomically."""
+    """Claim one durable item; PostgreSQL row locking prevents duplicate work."""
     if stage == "resolve":
         predicate = (
             "(i.status = 'queued' OR (i.status = 'resolving' AND "
@@ -507,17 +504,6 @@ async def _claim_stage_item(user_id: int, stage: str) -> Optional[Dict[str, Any]
     pool = await get_pool()
     async with pool.acquire() as con:
         async with con.transaction():
-            slot = await con.fetchrow(
-                "SELECT slot_id FROM yt_import_worker_slots WHERE stage = $1 AND "
-                "((claim_token IS NULL AND available_at <= now()) OR "
-                "(claim_token IS NOT NULL AND claimed_at < "
-                "now() - make_interval(mins => $2))) "
-                "ORDER BY available_at, slot_id LIMIT 1 FOR UPDATE SKIP LOCKED",
-                stage,
-                CLAIM_STALE_AFTER_MINUTES,
-            )
-            if slot is None:
-                return None
             row = await con.fetchrow(
                 "SELECT i.id, i.job_id, i.link_enc, j.options_enc, i.resolved_enc "
                 "FROM yt_import_items i JOIN yt_import_jobs j ON j.job_id = i.job_id "
@@ -537,75 +523,21 @@ async def _claim_stage_item(user_id: int, stage: str) -> Optional[Dict[str, Any]
                 claim_token,
             )
             await con.execute(
-                "UPDATE yt_import_worker_slots SET claim_token = $3, claimed_at = now() "
-                "WHERE stage = $1 AND slot_id = $2",
-                stage,
-                slot["slot_id"],
-                claim_token,
-            )
-            await con.execute(
                 "UPDATE yt_import_jobs SET status = 'running', updated_at = now() "
                 "WHERE job_id = $1 AND status = 'queued'",
                 row["job_id"],
             )
-
-            start_at = None
-            if stage == "resolve":
-                scheduled = await con.fetchrow(
-                    "UPDATE yt_import_dispatcher SET next_start_at = "
-                    "GREATEST(next_start_at, clock_timestamp()) + "
-                    "make_interval(secs => $1::double precision) WHERE id = 1 "
-                    "RETURNING next_start_at - "
-                    "make_interval(secs => $1::double precision) AS start_at",
-                    RESOLVE_START_SPACING_SECONDS,
-                )
-                if scheduled is None:
-                    raise RuntimeError("YouTube import request dispatcher is not initialized")
-                start_at = scheduled["start_at"]
-
             return {
                 **dict(row),
                 "user_id": user_id,
                 "stage": stage,
-                "slot_id": slot["slot_id"],
                 "claim_token": claim_token,
-                "start_at": start_at,
             }
-
-
-async def _release_slot(
-    con: Any,
-    item: Dict[str, Any],
-    *,
-    cooldown_seconds: float = 0,
-) -> None:
-    if cooldown_seconds:
-        await con.execute(
-            "UPDATE yt_import_worker_slots SET claim_token = NULL, claimed_at = NULL, "
-            "available_at = clock_timestamp() + "
-            "make_interval(secs => $4::double precision) "
-            "WHERE stage = $1 AND slot_id = $2 AND claim_token = $3",
-            item["stage"],
-            item["slot_id"],
-            item["claim_token"],
-            cooldown_seconds,
-        )
-    else:
-        await con.execute(
-            "UPDATE yt_import_worker_slots SET claim_token = NULL, claimed_at = NULL, "
-            "available_at = clock_timestamp() "
-            "WHERE stage = $1 AND slot_id = $2 AND claim_token = $3",
-            item["stage"],
-            item["slot_id"],
-            item["claim_token"],
-        )
 
 
 async def _requeue_claim_for_retry(
     item: Dict[str, Any],
     next_status: str,
-    *,
-    cooldown_seconds: float = 0,
 ) -> None:
     """Return a canceled claim to its stage queue without counting progress."""
     claimed_status = {"queued": "resolving", "resolved": "processing"}.get(next_status)
@@ -622,7 +554,6 @@ async def _requeue_claim_for_retry(
                 claimed_status,
                 item["claim_token"],
             )
-            await _release_slot(con, item, cooldown_seconds=cooldown_seconds)
 
 
 async def _complete_resolution(
@@ -662,11 +593,6 @@ async def _complete_resolution(
                         "updated_at = now() WHERE job_id = $1",
                         item["job_id"],
                     )
-            await _release_slot(
-                con,
-                item,
-                cooldown_seconds=RESOLVE_WORKER_COOLDOWN_SECONDS,
-            )
 
 
 async def _complete_processing(
@@ -700,27 +626,17 @@ async def _complete_processing(
                     1 if status == "skipped" else 0,
                     1 if status == "failed" else 0,
                 )
-            await _release_slot(con, item)
 
 
 async def _resolve_claim(item: Dict[str, Any], key: bytes) -> None:
-    start_at = item.get("start_at")
     link = ""
     try:
-        if start_at is not None:
-            delay = (start_at - datetime.now(timezone.utc)).total_seconds()
-            if delay > 0:
-                await asyncio.sleep(delay)
         link = decrypt(key, item["link_enc"]) or ""
-        resolved = await resolve_youtube_channel(link)
+        resolved = await resolve_youtube_channel(link, item["user_id"])
         error = None
     except asyncio.CancelledError:
         try:
-            await _requeue_claim_for_retry(
-                item,
-                "queued",
-                cooldown_seconds=RESOLVE_WORKER_COOLDOWN_SECONDS,
-            )
+            await _requeue_claim_for_retry(item, "queued")
         except Exception:
             log.exception("Could not safely requeue canceled YouTube resolution claim")
         raise
@@ -791,10 +707,10 @@ async def _run_stage_worker(stage: str) -> None:
 
 
 async def run_youtube_import_resolver_worker() -> None:
-    """Resolve channel metadata with globally slotted, staggered requests."""
+    """Resolve channel metadata through per-user GateRegistry network lanes."""
     await _run_stage_worker("resolve")
 
 
 async def run_youtube_import_processor_worker() -> None:
-    """Apply the shared Add Source write path, independently capped at 16."""
+    """Apply the shared Add Source path without any network rest delay."""
     await _run_stage_worker("process")

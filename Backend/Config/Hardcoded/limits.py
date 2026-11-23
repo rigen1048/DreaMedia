@@ -5,19 +5,16 @@ aggressiveness against external services. .env is for deployment
 facts only (paths, ports, backup policy — D13).
 """
 
-# Cooldown between requests per gate (seconds).
-# Gate granularity = (user, media, fetch_type) — D4.
-# A user's YT tracking fetch never blocks their YT random, their anime
-# fetch, or any other user.
-COOLDOWN_SECONDS: dict[tuple[str, str], float] = {
-    ("yt", "tracking"): 8.0,
-    ("yt", "wordscan"): 8.0,
-    ("yt", "playlist"): 8.0,
-    ("yt", "random"): 8.0,
-    ("ani", "tracking"): 2.0,  # AniList is a friendly GraphQL API
-}
+# Only network fetches use this lane; completed results leave before the rest.
+YT_FETCH_WORKERS_PER_USER = 8
+YT_FETCH_START_STAGGER_SECONDS = 1.0
+YT_FETCH_REST_SECONDS = 2.0
+MEDIA_EXECUTOR_WORKERS = 64
 
-DEFAULT_COOLDOWN: float = 8.0
+COOLDOWN_SECONDS: dict[tuple[str, str], float] = {
+    ("ani", "tracking"): 2.0,
+}
+DEFAULT_COOLDOWN: float = 2.0
 
 # Retry policy for transient HTTP errors inside a single fetch.
 FETCH_RETRIES: int = 3

@@ -13,6 +13,7 @@ from returns.result import Failure, Result, Success
 from Model.video import FetchPayload, VideosDict
 from Utility.http import get_ydl_opts
 from Utility.logs import log
+from Utility.media_executor import run_media
 
 
 def _extract(playlist_id: str) -> Result[FetchPayload, str]:
@@ -62,7 +63,7 @@ def _extract(playlist_id: str) -> Result[FetchPayload, str]:
 
 
 async def yt_playlist(playlist_id: str) -> Result[FetchPayload, str]:
-    return await asyncio.to_thread(_extract, playlist_id)
+    return await run_media(_extract, playlist_id)
 
 
 if __name__ == "__main__":

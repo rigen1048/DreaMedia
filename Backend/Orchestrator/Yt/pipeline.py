@@ -1,7 +1,7 @@
 """Yt pipeline — happy-path orchestration per subscription (Postgres-backed).
 
 Flow (100% async):
-    fetch (through the per-(user, media, kind) queued gate — D4/D5)
+    fetch (through the shared per-user YT network lane)
     → last_seen filter (not for random)
     → word filter (wordscan only)
     → ts/rank prediction (not for random — rank is user-controlled)
@@ -49,7 +49,7 @@ async def run_subscription(store: PgStore, sub: PgSubscription) -> Result[str, s
     if fetcher is None:
         return Failure(f"Unknown kind: {sub.kind}")
 
-    # 1. Fetch through this subscription's own gate (D4/D5).
+    # 1. Only the network call enters the shared lane; post-fetch work is free.
     result = await gates.submit((sub.user_id, "yt", sub.kind), lambda: fetcher(sub.link))
     if isinstance(result, Failure):
         log.warning("fetch failed for %s (%s): %s", sub.link, sub.kind, result.failure())

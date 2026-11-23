@@ -36,11 +36,12 @@ async def _enrich_card_items(user_id: int, pending: list[tuple[int, str]]) -> No
     """Background metadata fill for manual playlist rows (best effort)."""
     from Orchestrator.Yt.Fetch.convert import resolve_video
     from Utility.logs import log
+    from Utility.media_executor import run_youtube_network
 
     store = CardStore()
     for item_id, url in pending:
         try:
-            result = await asyncio.to_thread(resolve_video, url)
+            result = await run_youtube_network(user_id, resolve_video, url)
             if isinstance(result, Failure):
                 continue
             video = result.unwrap()
@@ -303,7 +304,11 @@ class YtMutation:
             playlist_id = parse_playlist_id(link)
             if not playlist_id:
                 raise ValueError("Could not extract a playlist id from that link")
-            info_res = await asyncio.to_thread(resolve_channel, link.split("?")[0])
+            from Utility.media_executor import run_youtube_network
+
+            info_res = await run_youtube_network(
+                user_id, resolve_channel, link.split("?")[0]
+            )
             if isinstance(info_res, Failure):
                 name, url, logo = "Playlist", link, None
             else:
@@ -313,7 +318,9 @@ class YtMutation:
                 await _yt.add_playlist(user_id, playlist_id, name, url, logo=logo)
             )
         else:
-            info_res = await asyncio.to_thread(resolve_channel, link)
+            from Utility.media_executor import run_youtube_network
+
+            info_res = await run_youtube_network(user_id, resolve_channel, link)
             if isinstance(info_res, Failure):
                 raise ValueError(info_res.failure())
             resolved = info_res.unwrap()

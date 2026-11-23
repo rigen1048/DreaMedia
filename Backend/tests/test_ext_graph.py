@@ -266,7 +266,7 @@ def test_extension_schema_exposes_category_and_withhold_contract():
     assert "domain: String" in schema
     assert "subdomain: String" in schema
     assert "eventTimeMs: String" in schema
-    assert "importYoutubeChannels" in schema
+    assert "importYoutubeChannels" not in schema
     assert "startYoutubeImport" in schema
     assert "youtubeImportJob" in schema
     assert "resolved: Int!" in schema
@@ -348,40 +348,6 @@ async def test_import_progress_query_returns_null_for_unknown_or_other_owner(mon
     monkeypatch.setattr(ext_graph, "get_youtube_import_status", get_status)
 
     assert await ext_graph.ExtQuery().youtube_import_job(extension_info, "hidden-job") is None
-
-
-@pytest.mark.asyncio
-async def test_extension_batch_import_validates_and_skips_duplicates(monkeypatch, extension_info):
-    store = FakeYtStore()
-    async def user_id(_info):
-        return 12
-
-    monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
-    monkeypatch.setattr(ext_graph, "_yt", store)
-    monkeypatch.setattr(
-        convert,
-        "resolve_channel",
-        lambda link: Success(SimpleNamespace(
-            rss_id="UC" + ("x" * 22), name="Example channel",
-            url=link, logo=None,
-        )),
-    )
-
-    result = await ext_graph.ExtMutation().import_youtube_channels(
-        extension_info,
-        links=[
-            "https://www.youtube.com/@example",
-            "https://www.youtube.com/@example/",
-            "https://not-youtube.example/channel/UC" + ("x" * 22),
-        ],
-    )
-
-    assert result.requested == 3
-    assert result.added == 1
-    assert result.skipped == 1
-    assert len(result.errors) == 1
-    assert len(store.calls) == 1
-    assert store.calls[0][2]["skip_existing"] is True
 
 
 @pytest.mark.asyncio

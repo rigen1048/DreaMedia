@@ -59,7 +59,7 @@ def _fast_gates(monkeypatch):
 
     monkeypatch.setattr("Orchestrator.Yt.pipeline.wait_for_internet", _noop)
     monkeypatch.setattr("Orchestrator.Ani.pipeline.wait_for_internet", _noop)
-    monkeypatch.setattr(gates, "_cooldown_for", lambda _key: 0)
+    monkeypatch.setattr(gates, "_rest_seconds", lambda _key: 0)
 
 
 @pytest.fixture

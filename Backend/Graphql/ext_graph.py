@@ -23,8 +23,8 @@ from Extension.youtube_imports import (
     add_youtube_channel_source,
     enqueue_youtube_import,
     get_youtube_import_status,
-    normalize_source_options,
 )
+from Utility.media_executor import run_youtube_network
 
 _ani = AniStore()
 _cards = CardStore()
@@ -200,14 +200,6 @@ class AddItemsResult:
 
 
 @strawberry.type
-class BatchImportResult:
-    added: int
-    skipped: int
-    requested: int
-    errors: List[str]
-
-
-@strawberry.type
 class YoutubeImportStarted:
     job_id: str
     status: str
@@ -278,8 +270,6 @@ class ExtMutation:
         """Subscribe-from-page (HydraTracker capability): the popup sends
         the current tab's URL; resolution happens server-side. Categories
         are optional as a pair because YouTube channels attach to subdomains."""
-        import asyncio
-
         from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
 
         user_id = await _ext_uid(info)
@@ -293,7 +283,9 @@ class ExtMutation:
             playlist_id = parse_playlist_id(link)
             if not playlist_id:
                 raise ValueError("could not extract a playlist id from that link")
-            info_r = await asyncio.to_thread(resolve_channel, link.split("?")[0])
+            info_r = await run_youtube_network(
+                user_id, resolve_channel, link.split("?")[0]
+            )
             if isinstance(info_r, Failure):
                 name, url, logo = "Playlist", link, None
             else:
@@ -341,82 +333,6 @@ class ExtMutation:
         return YoutubeImportStarted(**result)
 
     @strawberry.field
-    async def import_youtube_channels(
-        self, info: Info, links: List[str], kind: str = "tracking",
-        words: Optional[List[str]] = None, rank: Optional[str] = None,
-        withhold: Optional[int] = None, domain: Optional[str] = None,
-        subdomain: Optional[str] = None,
-    ) -> BatchImportResult:
-        """Compatibility API: add a small batch through the Add Source path."""
-        import asyncio
-        import re
-        from urllib.parse import urlsplit
-
-        if len(links) > 50:
-            raise ValueError("batch size cannot exceed 50 channels")
-        options = normalize_source_options(
-            kind=kind, words=words, rank=rank, withhold=withhold,
-            domain=domain, subdomain=subdomain,
-        )
-
-        channel_path = re.compile(r"^/(?:@[^/]+|channel/UC[A-Za-z0-9_-]{22})(?:/|$)")
-        unique_links: List[str] = []
-        seen_links = set()
-        errors: List[str] = []
-        duplicate_links = 0
-        for raw_link in links:
-            link = raw_link.strip()
-            try:
-                parsed = urlsplit(link)
-            except ValueError:
-                errors.append(f"{raw_link}: invalid URL")
-                continue
-            host = (parsed.hostname or "").lower()
-            if parsed.scheme not in ("http", "https") or not (
-                host == "youtube.com" or host.endswith(".youtube.com")
-            ) or not channel_path.match(parsed.path):
-                errors.append(f"{raw_link}: not a supported YouTube channel link")
-                continue
-            path = parsed.path.rstrip("/")
-            key = f"{host}{path.casefold() if path.startswith('/@') else path}"
-            if key in seen_links:
-                duplicate_links += 1
-                continue
-            seen_links.add(key)
-            unique_links.append(link)
-
-        user_id = await _ext_uid(info)
-        semaphore = asyncio.Semaphore(4)
-
-        async def add_one(link: str):
-            async with semaphore:
-                try:
-                    saved = await add_youtube_channel_source(
-                        user_id,
-                        link,
-                        **options,
-                        skip_existing=True,
-                        store=_yt,
-                    )
-                    return ("added" if saved.get("created", True) else "skipped", None)
-                except Exception as exc:
-                    return ("error", f"{link}: {str(exc) or 'source could not be added'}")
-
-        results = await asyncio.gather(*(add_one(link) for link in unique_links))
-        added = 0
-        skipped = duplicate_links
-        for result, detail in results:
-            if result == "error":
-                errors.append(detail)
-            elif result == "added":
-                added += 1
-            else:
-                skipped += 1
-        return BatchImportResult(
-            added=added, skipped=skipped, requested=len(links), errors=errors
-        )
-
-    @strawberry.field
     async def create_card(self, info: Info, name: str) -> ExtCard:
         result = await _cards.create_card(await _ext_uid(info), name)
         card_id = _unwrap(result)
@@ -425,15 +341,13 @@ class ExtMutation:
     @strawberry.field
     async def add_card_items(self, info: Info, card_id: int, links: List[str]) -> AddItemsResult:
         """Paste video links — resolved (title/thumb) once at add-time (D47)."""
-        import asyncio
-
         from Orchestrator.Yt.Fetch.convert import resolve_video
 
         user_id = await _ext_uid(info)
         added = 0
         errors: List[str] = []
         for link in links:
-            info_r = await asyncio.to_thread(resolve_video, link)
+            info_r = await run_youtube_network(user_id, resolve_video, link)
             if isinstance(info_r, Failure):
                 errors.append(f"{link}: {info_r.failure()}")
                 continue

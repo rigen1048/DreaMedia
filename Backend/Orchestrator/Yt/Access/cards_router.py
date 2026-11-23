@@ -1,8 +1,6 @@
 """Manual todo cards (D47) — create cards, paste video links, check off."""
 from __future__ import annotations
 
-import asyncio
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from returns.result import Failure
@@ -10,6 +8,7 @@ from returns.result import Failure
 from App.deps import current_user_id
 from Database.card_store import CardStore
 from Orchestrator.Yt.Fetch.convert import resolve_video
+from Utility.media_executor import run_youtube_network
 
 router = APIRouter(prefix="/yt/cards", tags=["yt-cards"])
 _store = CardStore()
@@ -51,7 +50,7 @@ async def delete_card(card_id: int, user_id: int = Depends(current_user_id)):
 @router.post("/{card_id}/items")
 async def add_item(card_id: int, body: ItemBody, user_id: int = Depends(current_user_id)):
     """Paste a video link — the backend resolves title/thumbnail itself (D47)."""
-    info = await asyncio.to_thread(resolve_video, body.link)
+    info = await run_youtube_network(user_id, resolve_video, body.link)
     if isinstance(info, Failure):
         return {"ok": False, "error": info.failure()}
     video = info.unwrap()

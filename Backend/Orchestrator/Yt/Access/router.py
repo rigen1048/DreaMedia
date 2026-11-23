@@ -16,6 +16,7 @@ from returns.result import Failure
 
 from App.deps import current_user_id
 from Database.pg_store import PgStore
+from Utility.media_executor import run_youtube_network
 
 router = APIRouter(prefix="/yt/access", tags=["yt-access"])
 _store = PgStore()
@@ -48,22 +49,22 @@ class CategoryActiveBody(BaseModel):
 async def subscribe(body: SubscribeBody, user_id: int = Depends(current_user_id)):
     """Link-only subscribe (P1): we resolve channel handles/URLs ourselves.
     Playlist subs paste a playlist link; everything else is a channel link."""
-    import asyncio
-
     from Orchestrator.Yt.Fetch.convert import parse_playlist_id, resolve_channel
 
     if body.kind == "playlist":
         playlist_id = parse_playlist_id(body.link)
         if not playlist_id:
             return {"ok": False, "error": "could not extract a playlist id from that link"}
-        info = await asyncio.to_thread(resolve_channel, body.link.split("?")[0])
+        info = await run_youtube_network(
+            user_id, resolve_channel, body.link.split("?")[0]
+        )
         if isinstance(info, Failure):
             name, url, logo = "Playlist", body.link, None
         else:
             name, url, logo = info.unwrap().name, info.unwrap().url, info.unwrap().logo
         result = await _store.add_playlist(user_id, playlist_id, name, url, logo=logo)
     elif body.kind in ("tracking", "wordscan", "random"):
-        info = await asyncio.to_thread(resolve_channel, body.link)
+        info = await run_youtube_network(user_id, resolve_channel, body.link)
         if isinstance(info, Failure):
             return {"ok": False, "error": info.failure()}
         resolved = info.unwrap()
