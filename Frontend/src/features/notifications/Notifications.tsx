@@ -140,7 +140,7 @@ export default function Notifications() {
     for (const row of sourceRows) {
       const d = row.kind === "yt" ? row.video.domain : row.event.domain;
       const s = row.kind === "yt" ? row.video.subdomain : row.event.subdomain;
-      const muted = row.kind === "yt" ? !row.video.notifyEnabled : !row.event.notifyEnabled;
+      const muted = row.kind === "yt" ? !row.video.alertsEnabled : !row.event.alertsEnabled;
       const entry = map.get(d) ?? { name: d, muted: false, count: 0, subs: new Map() };
       entry.count += 1;
       entry.muted = entry.muted || !muted ? entry.muted : entry.muted;
@@ -326,7 +326,7 @@ export default function Notifications() {
 
           <Card>
             <CardHeader className="p-4 pb-2">
-              <CardTitle className="text-sm">{source === "youtube" ? "Notification types" : "Event mix"}</CardTitle>
+              <CardTitle className="text-sm">{source === "youtube" ? "Alert types" : "Event mix"}</CardTitle>
               <p className="text-xs text-muted-foreground">{scoped.length} events</p>
             </CardHeader>
             <CardContent className="space-y-2.5 p-4 pt-0">
@@ -412,7 +412,7 @@ function YtRow({ video, onOpen, onToggle }: { video: YtVideo; onOpen: () => void
         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
           <span>{video.domain}<i className="not-italic opacity-50"> / </i>{video.subdomain}</span>
           <Badge variant="secondary" className="text-[10px]">{MODE_LABEL[video.mode]}</Badge>
-          {!video.notifyEnabled && (
+          {!video.alertsEnabled && (
             <Badge variant="outline" className="gap-1 text-[10px]"><BellOff size={9} /> muted</Badge>
           )}
         </div>
@@ -470,7 +470,7 @@ function AniRow({ event, onOpen, onToggle }: { event: AniEvent; onOpen: () => vo
             {event.group === "release" ? "Release" : "Change"} · {event.bucket === "today" ? "Today" : event.bucket === "sequel" ? "Sequel" : "New"}
           </Badge>
           {detail && <span>{detail}</span>}
-          {!event.notifyEnabled && (
+          {!event.alertsEnabled && (
             <Badge variant="outline" className="gap-1 text-[10px]"><BellOff size={9} /> muted</Badge>
           )}
         </div>

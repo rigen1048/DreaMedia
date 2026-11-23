@@ -261,14 +261,14 @@ async def test_muted_channel_still_stores_in_feed(api):
     await set_anchor(sub_id, "v3seen")
     data = await gql(
         api,
-        "mutation($id:Int!){ ytSetNotify(channelId:$id, notify:false) }",
+        "mutation($id:Int!){ ytSetAlerts(channelId:$id, alerts:false) }",
         {"id": sub_id},
     )
-    assert data["ytSetNotify"] is True
-    channels = await gql(api, "{ ytChannels { id label notify } }")
+    assert data["ytSetAlerts"] is True
+    channels = await gql(api, "{ ytChannels { id label alerts } }")
     muted = next(channel for channel in channels["ytChannels"] if channel["id"] == sub_id)
     assert muted["label"] == "none"
-    assert muted["notify"] is False
+    assert muted["alerts"] is False
 
     with provider_mock([("v5", "Kept quiet one", "2026-11-14"), ("v4", "Kept quiet two", "2026-11-13"),
                         ("v3seen", "Anchor", "2026-11-12")]):
@@ -287,11 +287,11 @@ async def test_muted_domain_silences_channel_without_touching_its_flag(api):
         'mutation($id:Int!){ ytAssignChannel(channelId:$id, domain:"Silent", subdomain:"General") }',
         {"id": sub_id},
     )
-    domains = await gql(api, "{ ytDomains { id name notify } }")
+    domains = await gql(api, "{ ytDomains { id name alerts } }")
     domain_id = next(d["id"] for d in domains["ytDomains"] if d["name"] == "Silent")
     await gql(
         api,
-        "mutation($id:Int!){ ytSetDomainNotify(domainId:$id, notify:false) }",
+        "mutation($id:Int!){ ytSetDomainAlerts(domainId:$id, alerts:false) }",
         {"id": domain_id},
     )
 
@@ -300,9 +300,9 @@ async def test_muted_domain_silences_channel_without_touching_its_flag(api):
 
     assert await feed_titles(api) == ["Domain muted"]
     assert await alerts(api) == []
-    channels = await gql(api, "{ ytChannels { id notify } }")
+    channels = await gql(api, "{ ytChannels { id alerts } }")
     mine = next(c for c in channels["ytChannels"] if c["id"] == sub_id)
-    assert mine["notify"] is True, "domain mute must not rewrite the channel flag"
+    assert mine["alerts"] is True, "domain mute must not rewrite the channel flag"
 
 
 # --------------------------------------------------------------------------
@@ -460,7 +460,7 @@ async def test_up_to_date_tracking_enables_release_events(api):
     with anilist_mock(state):
         entry_id = await track_anime(api, "up_to_date")
 
-    data = await gql(api, "{ aniEntries(includeBlocked:true) { id list notifyRelease } }")
+    data = await gql(api, "{ aniEntries(includeBlocked:true) { id list alertsRelease } }")
     entry = next(item for item in data["aniEntries"] if item["id"] == entry_id)
     assert entry["list"] == "up_to_date"
-    assert entry["notifyRelease"] is True
+    assert entry["alertsRelease"] is True

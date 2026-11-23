@@ -64,12 +64,12 @@ async def _channel_name(store: PgStore, sub: PgSubscription) -> str:
 
 async def _alert_if_not_muted(store: PgStore, sub: PgSubscription, kind: str,
                               payload: dict, **kwargs) -> None:
-    """Feed-sourced unhappy paths respect the per-scope notify flags (D60)."""
+    """Feed-sourced unhappy paths respect the per-scope alerts flags (D60)."""
     try:
-        if not await store.notify_enabled(sub.user_id, sub.sub_id):
+        if not await store.alerts_enabled(sub.user_id, sub.sub_id):
             return
     except Exception:
-        log.exception("notify gate failed for channel %s; alerting anyway", sub.sub_id)
+        log.exception("alerts gate failed for channel %s; alerting anyway", sub.sub_id)
     await alert_outage(sub.user_id, "yt", kind, payload, **kwargs)
 
 

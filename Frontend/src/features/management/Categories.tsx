@@ -80,9 +80,9 @@ function DomainCard({ kind, domain }: { kind: Kind; domain: Domain }) {
     return kind === "yt" ? api.ytRenameSubdomain(id, name) : api.aniRenameSubdomain(id, name);
   };
 
-  const setNotify = (id: number, type: "domain" | "sub", notify: boolean) => {
-    if (type === "domain") return kind === "yt" ? api.ytSetDomainNotify(id, notify) : api.aniSetDomainNotify(id, notify);
-    return kind === "yt" ? api.ytSetSubdomainNotify(id, notify) : api.aniSetSubdomainNotify(id, notify);
+  const setAlerts = (id: number, type: "domain" | "sub", alerts: boolean) => {
+    if (type === "domain") return kind === "yt" ? api.ytSetDomainAlerts(id, alerts) : api.aniSetDomainAlerts(id, alerts);
+    return kind === "yt" ? api.ytSetSubdomainAlerts(id, alerts) : api.aniSetSubdomainAlerts(id, alerts);
   };
 
   const remove = (id: number, type: "domain" | "sub") => {
@@ -117,8 +117,8 @@ function DomainCard({ kind, domain }: { kind: Kind; domain: Domain }) {
           />
         ) : (
           <span
-            className={cn("truncate text-sm font-semibold", !domain.notify && "text-muted-foreground")}
-            title={domain.notify ? "Notifications on" : "Notifications muted"}
+            className={cn("truncate text-sm font-semibold", !domain.alerts && "text-muted-foreground")}
+            title={domain.alerts ? "Notifications on" : "Notifications muted"}
           >
             {domain.name}
           </span>
@@ -127,11 +127,11 @@ function DomainCard({ kind, domain }: { kind: Kind; domain: Domain }) {
         <span className="grow" />
         <Button
           variant="ghost" size="icon" className="h-7 w-7"
-          title={domain.notify ? "Mute entire domain" : "Unmute domain"}
-          aria-label={domain.notify ? "Mute entire domain" : "Unmute domain"}
-          onClick={() => void act(() => setNotify(domain.id, "domain", !domain.notify))}
+          title={domain.alerts ? "Mute entire domain" : "Unmute domain"}
+          aria-label={domain.alerts ? "Mute entire domain" : "Unmute domain"}
+          onClick={() => void act(() => setAlerts(domain.id, "domain", !domain.alerts))}
         >
-          {domain.notify ? <BellRing size={13} /> : <BellOff size={13} className="text-muted-foreground" />}
+          {domain.alerts ? <BellRing size={13} /> : <BellOff size={13} className="text-muted-foreground" />}
         </Button>
         <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Rename domain" title="Rename domain" onClick={() => beginEdit(domain.id, "domain", domain.name)}>
           <Pencil size={12} />
@@ -157,14 +157,14 @@ function DomainCard({ kind, domain }: { kind: Kind; domain: Domain }) {
                 onBlur={submitEdit}
               />
             ) : (
-              <span className={cn("text-sm", !sub.notify && "text-muted-foreground")}>{sub.name}</span>
+              <span className={cn("text-sm", !sub.alerts && "text-muted-foreground")}>{sub.name}</span>
             )}
             <span className="text-xs text-muted-foreground">{sub.channelCount}</span>
             <span className="grow" />
             <Switch
-              checked={sub.notify}
+              checked={sub.alerts}
               aria-label={`Notify for ${sub.name}`}
-              onCheckedChange={(next) => void act(() => setNotify(sub.id, "sub", next))}
+              onCheckedChange={(next) => void act(() => setAlerts(sub.id, "sub", next))}
             />
             <Button variant="ghost" size="icon" className="h-6 w-6" aria-label="Rename subdomain" onClick={() => beginEdit(sub.id, "sub", sub.name)}>
               <Pencil size={11} />

@@ -291,16 +291,16 @@ class YtUserSQL:
                 """
                 SELECT v.id, v.channel_id, v.title_enc, v.url_enc, v.thumbnail_enc, v.published_at, v.seen,
                        c.name_enc AS channel_enc, c.logo_enc AS channel_logo_enc,
-                       c.label, c.notify AS channel_notify,
+                       c.label, c.alerts AS channel_alerts,
                        COALESCE(t.kind,
                                 CASE WHEN p.channel_id IS NOT NULL THEN 'playlist'
                                      WHEN r.channel_id IS NOT NULL THEN 'random'
                                      ELSE 'tracking' END) AS mode,
-                       COALESCE(c.notify, TRUE)
-                         AND COALESCE(s.notify, TRUE)
-                         AND COALESCE(d.notify, TRUE)
+                       COALESCE(c.alerts, TRUE)
+                         AND COALESCE(s.alerts, TRUE)
+                         AND COALESCE(d.alerts, TRUE)
                          AND c.label = 'none'
-                         AND COALESCE(t.active, p.active, r.active, TRUE) AS notify_enabled,
+                         AND COALESCE(t.active, p.active, r.active, TRUE) AS alerts_enabled,
                        s.name_enc AS s_enc, d.name_enc AS d_enc
                 FROM yt_videos v
                 JOIN yt_channels c ON c.id = v.channel_id
@@ -329,7 +329,7 @@ class YtUserSQL:
                 "channel": decrypt(key, r["channel_enc"]),
                 "channel_logo": decrypt(key, r["channel_logo_enc"]),
                 "mode": r["mode"] or "tracking",
-                "notify_enabled": bool(r["notify_enabled"]),
+                "alerts_enabled": bool(r["alerts_enabled"]),
                 "label": r["label"],
                 "domain": decrypt(key, r["d_enc"]) or "uncategorized",
                 "subdomain": decrypt(key, r["s_enc"]) or "uncategorized",
@@ -386,10 +386,10 @@ class YtUserSQL:
                 """
                 SELECT c.id, c.name_enc, c.url_enc, c.logo_enc, c.label, c.label_reason_enc,
                        d.name_enc AS d_enc, s.name_enc AS s_enc,
-                       c.notify AS c_notify, c.subdomain_id,
-                       s.id AS s_id, d.id AS d_id, s.notify AS s_notify, d.notify AS d_notify,
-                       COALESCE(c.notify, TRUE) AND COALESCE(s.notify, TRUE)
-                         AND COALESCE(d.notify, TRUE) AND c.label = 'none' AS notify_enabled,
+                       c.alerts AS c_alerts, c.subdomain_id,
+                       s.id AS s_id, d.id AS d_id, s.alerts AS s_alerts, d.alerts AS d_alerts,
+                       COALESCE(c.alerts, TRUE) AND COALESCE(s.alerts, TRUE)
+                         AND COALESCE(d.alerts, TRUE) AND c.label = 'none' AS alerts_enabled,
                        t.rss_id_enc, t.kind AS t_kind, t.word_enc, t.rank AS t_rank, t.active AS t_active,
                        t.withhold_threshold AS t_withhold,
                        p.rank AS p_rank, p.active AS p_active,
@@ -433,8 +433,8 @@ class YtUserSQL:
                 "subdomain": decrypt(key, r["s_enc"]) or "uncategorized",
                 "domain_id": r["d_id"],
                 "subdomain_id": r["s_id"],
-                "notify": r["c_notify"],
-                "notify_enabled": bool(r["notify_enabled"]),
+                "alerts": r["c_alerts"],
+                "alerts_enabled": bool(r["alerts_enabled"]),
             })
         return result
 
@@ -467,8 +467,8 @@ class YtUserSQL:
         async with pool.acquire() as con:
             result = await con.execute(
                 "UPDATE yt_channels SET label = $3, label_reason_enc = $4, "
-                "notify = CASE WHEN $3 = 'reserved' THEN FALSE "
-                "WHEN $3 = 'none' THEN TRUE ELSE notify END "
+                "alerts = CASE WHEN $3 = 'reserved' THEN FALSE "
+                "WHEN $3 = 'none' THEN TRUE ELSE alerts END "
                 "WHERE id = $1 AND user_id = $2",
                 channel_id, user_id, label, encrypt(key, reason) if reason else None,
             )
@@ -712,7 +712,7 @@ class YtUserSQL:
         async with pool.acquire() as con:
             result = await con.execute(
                 "UPDATE yt_channels SET label = $3, "
-                "notify = $4 "
+                "alerts = $4 "
                 "WHERE id = $1 AND user_id = $2 "
                 "AND label != 'blocked'",
                 channel_id, user_id, "none" if active else "reserved", active,
@@ -823,23 +823,23 @@ class YtUserSQL:
             return Failure("category not found")
         return Success({"deleted": domain if subdomain is None else f"{domain}/{subdomain}"})
 
-    async def set_channel_notify(
-        self, user_id: int, channel_id: int, notify: bool
+    async def set_channel_alerts(
+        self, user_id: int, channel_id: int, alerts: bool
     ) -> Result[Dict[str, Any], str]:
-        """Change only the notify flag; keep fetch/label state unchanged."""
+        """Change only the alerts flag; keep fetch/label state unchanged."""
         pool = await get_pool()
         async with pool.acquire() as con:
             result = await con.execute(
-                "UPDATE yt_channels SET notify = $3 "
+                "UPDATE yt_channels SET alerts = $3 "
                 "WHERE id = $1 AND user_id = $2 AND label != 'blocked'",
-                channel_id, user_id, notify,
+                channel_id, user_id, alerts,
             )
         if result.endswith("0"):
             return Failure("channel not found")
-        return Success({"id": channel_id, "notify": notify})
+        return Success({"id": channel_id, "alerts": alerts})
 
-    async def set_domain_notify(
-        self, user_id: int, domain_id: int, notify: bool
+    async def set_domain_alerts(
+        self, user_id: int, domain_id: int, alerts: bool
     ) -> Result[Dict[str, Any], str]:
         """Mute/unmute an entire domain. Subdomains inherit through the AND
         rule, so a muted domain silences every channel under it without
@@ -847,26 +847,26 @@ class YtUserSQL:
         pool = await get_pool()
         async with pool.acquire() as con:
             result = await con.execute(
-                "UPDATE yt_domains SET notify = $3 WHERE id = $1 AND user_id = $2",
-                domain_id, user_id, notify,
+                "UPDATE yt_domains SET alerts = $3 WHERE id = $1 AND user_id = $2",
+                domain_id, user_id, alerts,
             )
         if result.endswith("0"):
             return Failure("domain not found")
-        return Success({"id": domain_id, "notify": notify})
+        return Success({"id": domain_id, "alerts": alerts})
 
-    async def set_subdomain_notify(
-        self, user_id: int, subdomain_id: int, notify: bool
+    async def set_subdomain_alerts(
+        self, user_id: int, subdomain_id: int, alerts: bool
     ) -> Result[Dict[str, Any], str]:
         pool = await get_pool()
         async with pool.acquire() as con:
             result = await con.execute(
-                "UPDATE yt_subdomains s SET notify = $3 FROM yt_domains d "
+                "UPDATE yt_subdomains s SET alerts = $3 FROM yt_domains d "
                 "WHERE d.id = s.domain_id AND d.user_id = $1 AND s.id = $2",
-                user_id, subdomain_id, notify,
+                user_id, subdomain_id, alerts,
             )
         if result.endswith("0"):
             return Failure("subdomain not found")
-        return Success({"id": subdomain_id, "notify": notify})
+        return Success({"id": subdomain_id, "alerts": alerts})
 
     async def domains_tree(self, user_id: int) -> Dict[str, Any]:
         """Full domain/subdomain tree with counts and mute flags — the
@@ -879,9 +879,9 @@ class YtUserSQL:
             rows = await con.fetch(
                 """
                 SELECT d.id AS d_id, d.name_enc AS d_enc, d.active AS d_active,
-                       d.notify AS d_notify,
+                       d.alerts AS d_alerts,
                        s.id AS s_id, s.name_enc AS s_enc, s.active AS s_active,
-                       s.notify AS s_notify,
+                       s.alerts AS s_alerts,
                        (SELECT count(*) FROM yt_channels c
                          WHERE c.subdomain_id = s.id) AS channel_count,
                        (SELECT count(*) FROM yt_channels c WHERE c.subdomain_id = s.id
@@ -903,7 +903,7 @@ class YtUserSQL:
                 r["d_id"],
                 {
                     "id": r["d_id"], "name": decrypt(key, r["d_enc"]),
-                    "active": r["d_active"], "notify": r["d_notify"],
+                    "active": r["d_active"], "alerts": r["d_alerts"],
                     "subdomains": [],
                 },
             )
@@ -911,7 +911,7 @@ class YtUserSQL:
                 entry["subdomains"].append(
                     {
                         "id": r["s_id"], "name": decrypt(key, r["s_enc"]),
-                        "active": r["s_active"], "notify": r["s_notify"],
+                        "active": r["s_active"], "alerts": r["s_alerts"],
                         "channel_count": r["channel_count"],
                         "blocked_count": r["blocked_count"],
                     }

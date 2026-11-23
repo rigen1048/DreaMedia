@@ -34,7 +34,7 @@ export default function Channels({ search, filter, onAdd }: Props) {
     return workspace.ytChannels
       .filter((channel) => channel.label !== "blocked")
       .filter((channel) => {
-        if (filter === "muted") return !channel.notifyEnabled;
+        if (filter === "muted") return !channel.alertsEnabled;
         return true;
       })
       .filter((channel) =>
@@ -87,7 +87,7 @@ function ChannelRow({
   const [rank, setRank] = useState(channel.rank ?? "week");
   const [withhold, setWithhold] = useState(channel.withholdThreshold ?? 2);
 
-  const muted = channel.label === "reserved" || channel.notify === false;
+  const muted = channel.label === "reserved" || channel.alerts === false;
   const status = channel.label === "blocked" ? "Blocked" : muted ? "Muted" : "Live";
   // Withhold is a tracking row with a threshold — display it as its own type.
   const displayKind: YtKind = channel.withholdThreshold ? "withhold" : (channel.kind ?? "tracking");
@@ -125,7 +125,7 @@ function ChannelRow({
 
         <div className="max-lg:hidden">
           <Select value={displayKind} onValueChange={(value) => void typeSelect(value as YtKind)}>
-            <SelectTrigger className="h-8" aria-label={`Notification type for ${channel.name}`}>
+            <SelectTrigger className="h-8" aria-label={`Label type for ${channel.name}`}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -168,7 +168,7 @@ function ChannelRow({
         <div className="border-b bg-muted/30 px-4 py-4">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <div className="space-y-1.5">
-              <Label>Notification type</Label>
+              <Label>Label type</Label>
               <Select value={displayKind} onValueChange={(value) => void typeSelect(value as YtKind)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -275,7 +275,7 @@ function ChannelRow({
             </div>
 
             <div className="space-y-1.5">
-              <Label>Notification state</Label>
+              <Label>Alert state</Label>
               <div className="flex h-9 items-center gap-2">
                 <Switch
                   checked={!muted}
@@ -289,11 +289,11 @@ function ChannelRow({
 
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-3">
             <Badge variant="outline" className="gap-1 text-[10px]">
-              {channel.notifyEnabled ? <BellRing size={9} className="text-emerald-500" /> : <BellOff size={9} />}
-              effective {channel.notifyEnabled ? "on" : "off"}
+              {channel.alertsEnabled ? <BellRing size={9} className="text-emerald-500" /> : <BellOff size={9} />}
+              effective {channel.alertsEnabled ? "on" : "off"}
             </Badge>
             <span className="text-xs text-muted-foreground">
-              {channel.notifyEnabled ? "Delivered through the backend message lane." : "Any parent scope or this channel is muted."}
+              {channel.alertsEnabled ? "Delivered through the alert lane." : "Any parent scope or this channel is muted."}
             </span>
             <span className="grow" />
             {channel.url && (

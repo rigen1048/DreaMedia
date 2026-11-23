@@ -258,14 +258,14 @@ class AniProcessSQL:
                 "WHERE e.active AND NOT s.working AND s.next_check_ts IS NOT NULL"
             )
 
-    async def notify_enabled(self, user_id: int, entry_id: int) -> bool:
+    async def alerts_enabled(self, user_id: int, entry_id: int) -> bool:
         pool = await get_pool()
         async with pool.acquire() as con:
             return bool(
                 await con.fetchval(
                     """
-                    SELECT COALESCE(e.notify_release, TRUE) AND COALESCE(sd.notify, TRUE)
-                       AND COALESCE(d.notify, TRUE) AND e.label = 'none' AND e.active
+                    SELECT COALESCE(e.alerts_release, TRUE) AND COALESCE(sd.alerts, TRUE)
+                       AND COALESCE(d.alerts, TRUE) AND e.label = 'none' AND e.active
                     FROM ani_entries e
                     LEFT JOIN ani_subdomains sd ON sd.id = e.subdomain_id
                     LEFT JOIN ani_domains d ON d.id = sd.domain_id

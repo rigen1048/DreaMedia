@@ -32,7 +32,7 @@ export type YtVideo = {
   channel: string | null;
   channelLogo: string | null;
   mode: YtKind;
-  notifyEnabled: boolean;
+  alertsEnabled: boolean;
   label: string;
   domain: string;
   subdomain: string;
@@ -55,15 +55,15 @@ export type YtChannel = {
   subdomain: string;
   domainId: number | null;
   subdomainId: number | null;
-  notify: boolean;
-  notifyEnabled: boolean;
+  alerts: boolean;
+  alertsEnabled: boolean;
 };
 
 export type Subdomain = {
   id: number;
   name: string;
   active: boolean;
-  notify: boolean;
+  alerts: boolean;
   channelCount: number;
   blockedCount: number;
 };
@@ -72,7 +72,7 @@ export type Domain = {
   id: number;
   name: string;
   active: boolean;
-  notify: boolean;
+  alerts: boolean;
   channelCount: number;
   subdomains: Subdomain[];
 };
@@ -123,8 +123,8 @@ export type AniEntry = {
   list: AniList;
   watchState: WatchState;
   active: boolean;
-  notifyRelease: boolean;
-  notifyEnabled: boolean;
+  alertsRelease: boolean;
+  alertsEnabled: boolean;
   canonOnly: boolean;
   animeType: string | null;
   airingTime: string | null;
@@ -162,7 +162,7 @@ export type AniEvent = {
   payload: string;
   domain: string;
   subdomain: string;
-  notifyEnabled: boolean;
+  alertsEnabled: boolean;
 };
 
 export type Workspace = {

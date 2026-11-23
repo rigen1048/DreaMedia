@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS ani_subdomains (
     name_enc      BYTEA NOT NULL,
     name_hash     BYTEA NOT NULL,
     active        BOOLEAN NOT NULL DEFAULT TRUE,
-    notify_override BOOLEAN,              -- D20: category-level activation (NULL = inherit)
+    alerts_override BOOLEAN,              -- D20: category-level activation (NULL = inherit)
     UNIQUE (domain_id, name_hash)
 );
 
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS ani_entries (
     label         TEXT NOT NULL DEFAULT 'none' CHECK (label IN ('none', 'completed', 'blocked')),
     label_reason_enc BYTEA,
     list          TEXT NOT NULL DEFAULT 'watching' CHECK (list IN ('watchlist', 'confirmed', 'watching', 'up_to_date')),
-    notify_release BOOLEAN NOT NULL DEFAULT FALSE,  -- D20
+    alerts_release BOOLEAN NOT NULL DEFAULT FALSE,  -- D20
     active        BOOLEAN NOT NULL DEFAULT TRUE,    -- "watched S1, loved it, not continuing"
     -- D44 linear cursor (fragmented watching unsupported by design):
     cursor_season   INTEGER,
@@ -131,9 +131,40 @@ CREATE TABLE IF NOT EXISTS ani_todo (
 );
 CREATE INDEX IF NOT EXISTS idx_ani_todo_user ON ani_todo(user_id, done);
 
--- Per-scope notify flags (ani side).
-ALTER TABLE ani_domains    ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE;
-ALTER TABLE ani_subdomains ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE;
+-- Per-scope alert flags (ani side).
+-- Fresh installs get 'alerts' directly; existing installs rename 'notify'.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='ani_domains' AND column_name='notify') THEN
+        ALTER TABLE ani_domains RENAME COLUMN notify TO alerts;
+    ELSE
+        ALTER TABLE ani_domains ADD COLUMN IF NOT EXISTS alerts BOOLEAN NOT NULL DEFAULT TRUE;
+    END IF;
+END $$;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='ani_subdomains' AND column_name='notify') THEN
+        ALTER TABLE ani_subdomains RENAME COLUMN notify TO alerts;
+    ELSE
+        ALTER TABLE ani_subdomains ADD COLUMN IF NOT EXISTS alerts BOOLEAN NOT NULL DEFAULT TRUE;
+    END IF;
+END $$;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='ani_subdomains' AND column_name='notify_override') THEN
+        ALTER TABLE ani_subdomains RENAME COLUMN notify_override TO alerts_override;
+    ELSE
+        ALTER TABLE ani_subdomains ADD COLUMN IF NOT EXISTS alerts_override BOOLEAN;
+    END IF;
+END $$;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='ani_entries' AND column_name='notify_release') THEN
+        ALTER TABLE ani_entries RENAME COLUMN notify_release TO alerts_release;
+    ELSE
+        ALTER TABLE ani_entries ADD COLUMN IF NOT EXISTS alerts_release BOOLEAN NOT NULL DEFAULT FALSE;
+    END IF;
+END $$;
 
 -- Anime card metadata: Type / Release / Time / season + episode counts.
 ALTER TABLE ani_entries ADD COLUMN IF NOT EXISTS anime_type TEXT;

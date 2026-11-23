@@ -24,7 +24,7 @@ class EntryUpdateBody(BaseModel):
     label: Optional[str] = None              # none | completed | blocked
     label_reason: Optional[str] = None
     list_kind: Optional[str] = None
-    notify_release: Optional[bool] = None    # D20 manual activation
+    alerts_release: Optional[bool] = None    # D20 manual activation
     active: Optional[bool] = None            # "loved S1, not continuing"
     canon_only: Optional[bool] = None        # D43 display flag (no filler data)
 
@@ -70,7 +70,7 @@ async def update_entry(entry_id: int, body: EntryUpdateBody, user_id: int = Depe
     result = await _store.update_entry(
         user_id, entry_id,
         label=body.label, label_reason=body.label_reason,
-        list_kind=body.list_kind, notify_release=body.notify_release,
+        list_kind=body.list_kind, alerts_release=body.alerts_release,
         active=body.active, canon_only=body.canon_only,
     )
     if isinstance(result, Failure):

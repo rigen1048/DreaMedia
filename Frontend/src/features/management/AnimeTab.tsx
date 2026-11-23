@@ -230,11 +230,11 @@ function AnimeCard({ entry, expanded, onToggle }: { entry: AniEntry; expanded: b
                 <Ban size={11} /> Block
               </Button>
             )}
-            <span title={entry.notifyEnabled ? "Release notifications on" : "Release notifications muted"}>
+            <span title={entry.alertsEnabled ? "Release notifications on" : "Release notifications muted"}>
               <Switch
-                checked={entry.notifyRelease}
-                aria-label={`Release notifications for ${entry.title}`}
-                onCheckedChange={(next) => void act(() => api.aniUpdateEntry(entry.id, { notifyRelease: next }))}
+                checked={entry.alertsRelease}
+                aria-label={`Release alerts for ${entry.title}`}
+                onCheckedChange={(next) => void act(() => api.aniUpdateEntry(entry.id, { alertsRelease: next }))}
               />
             </span>
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onToggle} aria-label="Seasons">
@@ -351,12 +351,12 @@ function AnimeCard({ entry, expanded, onToggle }: { entry: AniEntry; expanded: b
               <Label>Release notifications</Label>
               <div className="flex h-9 items-center gap-2">
                 <Switch
-                  checked={entry.notifyRelease}
-                  aria-label={`Release notifications for ${entry.title}`}
-                  onCheckedChange={(next) => void act(() => api.aniUpdateEntry(entry.id, { notifyRelease: next }))}
+                  checked={entry.alertsRelease}
+                  aria-label={`Release alerts for ${entry.title}`}
+                  onCheckedChange={(next) => void act(() => api.aniUpdateEntry(entry.id, { alertsRelease: next }))}
                 />
                 <span className="text-xs text-muted-foreground">
-                  {entry.notifyEnabled ? "Delivering" : "Muted by scope, label or switch"}
+                  {entry.alertsEnabled ? "Delivering" : "Muted by scope, label or switch"}
                 </span>
               </div>
             </div>

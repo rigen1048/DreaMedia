@@ -51,8 +51,8 @@ export default function Management() {
   };
 
   const muted =
-    workspace.ytChannels.filter((channel) => !channel.notifyEnabled && channel.label !== "blocked").length +
-    workspace.aniEntries.filter((entry) => !entry.notifyEnabled && entry.label !== "blocked").length;
+    workspace.ytChannels.filter((channel) => !channel.alertsEnabled && channel.label !== "blocked").length +
+    workspace.aniEntries.filter((entry) => !entry.alertsEnabled && entry.label !== "blocked").length;
 
   return (
     <div className="space-y-4">
@@ -154,7 +154,7 @@ function Blocked() {
       <section className="space-y-2">
         <div>
           <h2 className="text-sm font-semibold">Blocked sources</h2>
-          <p className="text-xs text-muted-foreground">Blocked sources never notify and stay out of the feed filters.</p>
+          <p className="text-xs text-muted-foreground">Blocked sources never produce alerts and stay out of the feed filters.</p>
         </div>
         {channels.length === 0 ? (
           <EmptyState title="No blocked sources" hint="Use a channel's label selector to block it." />

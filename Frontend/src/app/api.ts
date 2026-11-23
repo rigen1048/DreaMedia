@@ -6,16 +6,16 @@ const WORKSPACE_QUERY = `
     viewer { id username role }
     ytFeed(limit: 300) {
       id channelId title url thumbnail publishedAt seen channel channelLogo
-      mode notifyEnabled label domain subdomain
+      mode alertsEnabled label domain subdomain
     }
     ytChannels(includeBlocked: true) {
       id name url logo label labelReason rssId kind active rank words
       withholdThreshold
-      domain subdomain domainId subdomainId notify notifyEnabled
+      domain subdomain domainId subdomainId alerts alertsEnabled
     }
     ytDomains {
-      id name active notify channelCount
-      subdomains { id name active notify channelCount blockedCount }
+      id name active alerts channelCount
+      subdomains { id name active alerts channelCount blockedCount }
     }
     ytUnassignedCount
     ytCards {
@@ -23,8 +23,8 @@ const WORKSPACE_QUERY = `
       items { id videoId url title thumbnail done addedAt }
     }
     aniEntries(includeBlocked: true) {
-      id title cover label labelReason list watchState active notifyRelease
-      notifyEnabled canonOnly animeType airingTime domainId subdomainId domain
+      id title cover label labelReason list watchState active alertsRelease
+      alertsEnabled canonOnly animeType airingTime domainId subdomainId domain
       subdomain cursorSeason cursorEpisode positionSeconds totalSeasons
       episodeCount airedCount watchedSeasons releaseDate nextAiringAt nextAiringEp
       seasons {
@@ -34,11 +34,11 @@ const WORKSPACE_QUERY = `
     }
     aniEvents(includeSeen: true) {
       id entryId title cover animeType seasonNo kind group bucket label tier
-      seen createdAt payload domain subdomain notifyEnabled
+      seen createdAt payload domain subdomain alertsEnabled
     }
     aniDomains {
-      id name active notify channelCount
-      subdomains { id name active notify channelCount blockedCount }
+      id name active alerts channelCount
+      subdomains { id name active alerts channelCount blockedCount }
     }
   }
 `;
@@ -100,10 +100,10 @@ export const ytSetMode = (
     { id: channelId, kind, words, rank, withhold: withhold ?? null },
   );
 
-export const ytSetNotify = (channelId: number, notify: boolean) =>
-  gql<{ ytSetNotify: boolean }>(
-    `mutation SetNotify($id: Int!, $notify: Boolean!) { ytSetNotify(channelId: $id, notify: $notify) }`,
-    { id: channelId, notify },
+export const ytSetAlerts = (channelId: number, alerts: boolean) =>
+  gql<{ ytSetAlerts: boolean }>(
+    `mutation SetNotify($id: Int!, $alerts: Boolean!) { ytSetAlerts(channelId: $id, alerts: $alerts) }`,
+    { id: channelId, alerts },
   );
 
 export const ytSetActive = (channelId: number, active: boolean) =>
@@ -160,10 +160,10 @@ export const ytDeleteDomain = (domainId: number) =>
     },
   );
 
-export const ytSetDomainNotify = (domainId: number, notify: boolean) =>
-  gql<{ ytSetDomainNotify: boolean }>(
-    `mutation DomainNotify($id: Int!, $notify: Boolean!) { ytSetDomainNotify(domainId: $id, notify: $notify) }`,
-    { id: domainId, notify },
+export const ytSetDomainAlerts = (domainId: number, alerts: boolean) =>
+  gql<{ ytSetDomainAlerts: boolean }>(
+    `mutation DomainNotify($id: Int!, $alerts: Boolean!) { ytSetDomainAlerts(domainId: $id, alerts: $alerts) }`,
+    { id: domainId, alerts },
   );
 
 export const ytCreateSubdomain = (domainId: number, name: string) =>
@@ -184,10 +184,10 @@ export const ytDeleteSubdomain = (subdomainId: number) =>
     { id: subdomainId },
   );
 
-export const ytSetSubdomainNotify = (subdomainId: number, notify: boolean) =>
-  gql<{ ytSetSubdomainNotify: boolean }>(
-    `mutation SubNotify($id: Int!, $notify: Boolean!) { ytSetSubdomainNotify(subdomainId: $id, notify: $notify) }`,
-    { id: subdomainId, notify },
+export const ytSetSubdomainAlerts = (subdomainId: number, alerts: boolean) =>
+  gql<{ ytSetSubdomainAlerts: boolean }>(
+    `mutation SubNotify($id: Int!, $alerts: Boolean!) { ytSetSubdomainAlerts(subdomainId: $id, alerts: $alerts) }`,
+    { id: subdomainId, alerts },
   );
 
 export const ytCreateCard = (name: string) =>
@@ -246,7 +246,7 @@ export type EntryPatch = {
   watchState?: string | null;
   label?: string;
   labelReason?: string;
-  notifyRelease?: boolean;
+  alertsRelease?: boolean;
   active?: boolean;
   canonOnly?: boolean;
   animeType?: string;
@@ -258,12 +258,12 @@ export const aniUpdateEntry = (entryId: number, patch: EntryPatch) =>
   gql<{ aniUpdateEntry: boolean }>(
     `mutation UpdateEntry(
       $id: Int!, $list: String, $watchState: String, $label: String, $labelReason: String,
-      $notify: Boolean, $active: Boolean, $canon: Boolean, $type: String,
+      $alerts: Boolean, $active: Boolean, $canon: Boolean, $type: String,
       $subdomainId: Int, $clear: Boolean!
     ) {
       aniUpdateEntry(
         entryId: $id, listKind: $list, watchState: $watchState, label: $label,
-        labelReason: $labelReason, notifyRelease: $notify, active: $active,
+        labelReason: $labelReason, alertsRelease: $alerts, active: $active,
         canonOnly: $canon, animeType: $type, subdomainId: $subdomainId, clearCategory: $clear
       )
     }`,
@@ -273,7 +273,7 @@ export const aniUpdateEntry = (entryId: number, patch: EntryPatch) =>
       watchState: patch.watchState,
       label: patch.label,
       labelReason: patch.labelReason,
-      notify: patch.notifyRelease,
+      alerts: patch.alertsRelease,
       active: patch.active,
       canon: patch.canonOnly,
       type: patch.animeType,
@@ -391,12 +391,12 @@ export const aniDeleteDomain = (domainId: number) =>
     { id: domainId },
   );
 
-export const aniSetDomainNotify = (domainId: number, notify: boolean) =>
-  gql<{ aniSetDomainNotify: boolean }>(
-    `mutation AniDomainNotify($id: Int!, $notify: Boolean!) {
-      aniSetDomainNotify(domainId: $id, notify: $notify)
+export const aniSetDomainAlerts = (domainId: number, alerts: boolean) =>
+  gql<{ aniSetDomainAlerts: boolean }>(
+    `mutation AniDomainNotify($id: Int!, $alerts: Boolean!) {
+      aniSetDomainAlerts(domainId: $id, alerts: $alerts)
     }`,
-    { id: domainId, notify },
+    { id: domainId, alerts },
   );
 
 export const aniCreateSubdomain = (domainId: number, name: string) =>
@@ -421,12 +421,12 @@ export const aniDeleteSubdomain = (subdomainId: number) =>
     { id: subdomainId },
   );
 
-export const aniSetSubdomainNotify = (subdomainId: number, notify: boolean) =>
-  gql<{ aniSetSubdomainNotify: boolean }>(
-    `mutation AniSubNotify($id: Int!, $notify: Boolean!) {
-      aniSetSubdomainNotify(subdomainId: $id, notify: $notify)
+export const aniSetSubdomainAlerts = (subdomainId: number, alerts: boolean) =>
+  gql<{ aniSetSubdomainAlerts: boolean }>(
+    `mutation AniSubNotify($id: Int!, $alerts: Boolean!) {
+      aniSetSubdomainAlerts(subdomainId: $id, alerts: $alerts)
     }`,
-    { id: subdomainId, notify },
+    { id: subdomainId, alerts },
   );
 
 /* ----------------------------------------------------------------- admin */

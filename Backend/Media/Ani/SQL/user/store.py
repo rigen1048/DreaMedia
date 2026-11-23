@@ -129,7 +129,7 @@ class AniUserSQL:
         label: Optional[str] = None,
         label_reason: Optional[str] = None,
         list_kind: Optional[str] = None,
-        notify_release: Optional[bool] = None,
+        alerts_release: Optional[bool] = None,
         active: Optional[bool] = None,
         canon_only: Optional[bool] = None,
         watch_state: Optional[str] = None,
@@ -148,7 +148,7 @@ class AniUserSQL:
                     label = COALESCE($3, label),
                     label_reason_enc = COALESCE($4, label_reason_enc),
                     list = COALESCE($5, list),
-                    notify_release = COALESCE($6, notify_release),
+                    alerts_release = COALESCE($6, alerts_release),
                     active = COALESCE($7, active),
                     canon_only = COALESCE($8, canon_only),
                     watch_state = COALESCE($9, watch_state),
@@ -158,7 +158,7 @@ class AniUserSQL:
                 """,
                 entry_id, user_id, label,
                 encrypt(key, label_reason) if label_reason else None,
-                list_kind, notify_release, active,
+                list_kind, alerts_release, active,
                 canon_only, watch_state, anime_type,
                 clear_category, subdomain_id,
             )
@@ -223,8 +223,8 @@ class AniUserSQL:
             rows = await con.fetch(
                 """
                 SELECT e.id, e.entry_id, e.season_no, e.kind, e.tier, e.payload_enc, e.seen, e.created_at,
-                       a.title_enc, a.cover_enc, a.anime_type, a.notify_release, a.label,
-                       COALESCE(sd.notify, TRUE) AND COALESCE(d.notify, TRUE) AS category_notify,
+                       a.title_enc, a.cover_enc, a.anime_type, a.alerts_release, a.label,
+                       COALESCE(sd.alerts, TRUE) AND COALESCE(d.alerts, TRUE) AS category_alerts,
                        sd.name_enc AS sd_enc, d.name_enc AS d_enc
                 FROM ani_events e
                 JOIN ani_entries a ON a.id = e.entry_id
@@ -247,8 +247,8 @@ class AniUserSQL:
                 "anime_type": r["anime_type"],
                 "domain": decrypt(key, r["d_enc"]) or "uncategorized",
                 "subdomain": decrypt(key, r["sd_enc"]) or "uncategorized",
-                "notify_enabled": bool(
-                    r["notify_release"] and r["category_notify"] and r["label"] == "none"
+                "alerts_enabled": bool(
+                    r["alerts_release"] and r["category_alerts"] and r["label"] == "none"
                 ),
             }
             for r in rows
@@ -267,14 +267,14 @@ class AniUserSQL:
             rows = await con.fetch(
                 """
                 SELECT a.id, a.anilist_id, a.title_enc, a.cover_enc, a.label, a.label_reason_enc,
-                       a.list, a.watch_state, a.active, a.notify_release,
+                       a.list, a.watch_state, a.active, a.alerts_release,
                        a.canon_only, a.cursor_season, a.cursor_episode, a.cursor_position_seconds,
                        a.anime_type, a.airing_time, a.subdomain_id,
                        s.season_no, s.title_enc AS s_title_enc, s.poster_enc AS s_poster_enc, s.status, s.episodes_total,
                        s.episodes_aired, s.state, s.watched, s.start_date, s.release_date,
                        s.next_airing_at, s.next_airing_ep,
-                       d.id AS d_id, d.name_enc AS d_enc, d.notify AS d_notify,
-                       sd.id AS sd_id, sd.name_enc AS sd_enc, sd.notify AS sd_notify
+                       d.id AS d_id, d.name_enc AS d_enc, d.alerts AS d_alerts,
+                       sd.id AS sd_id, sd.name_enc AS sd_enc, sd.alerts AS sd_alerts
                 FROM ani_entries a
                 LEFT JOIN ani_seasons s ON s.entry_id = a.id
                 LEFT JOIN ani_subdomains sd ON sd.id = a.subdomain_id
@@ -296,7 +296,7 @@ class AniUserSQL:
                     "label_reason": decrypt(key, r["label_reason_enc"]),
                     "list": r["list"], "watch_state": r["watch_state"],
                     "active": r["active"],
-                    "notify_release": r["notify_release"],
+                    "alerts_release": r["alerts_release"],
                     "canon_only": r["canon_only"],
                     "anime_type": r["anime_type"],
                     "airing_time": r["airing_time"],
@@ -304,8 +304,8 @@ class AniUserSQL:
                     "subdomain_id": r["sd_id"],
                     "domain": decrypt(key, r["d_enc"]) or "uncategorized",
                     "subdomain": decrypt(key, r["sd_enc"]) or "uncategorized",
-                    "category_notify": bool(
-                        r["d_notify"] is not False and r["sd_notify"] is not False
+                    "category_alerts": bool(
+                        r["d_alerts"] is not False and r["sd_alerts"] is not False
                     ),
                     "cursor": {
                         "season": r["cursor_season"], "episode": r["cursor_episode"],
@@ -334,9 +334,9 @@ class AniUserSQL:
             entry["episode_count"] = sum(s["episodes_total"] or 0 for s in entry["seasons"])
             entry["aired_count"] = sum(s["episodes_aired"] or 0 for s in entry["seasons"])
             entry["watched_seasons"] = sum(1 for s in entry["seasons"] if s["watched"])
-            entry["notify_enabled"] = bool(
-                entry["notify_release"]
-                and entry["category_notify"]
+            entry["alerts_enabled"] = bool(
+                entry["alerts_release"]
+                and entry["category_alerts"]
                 and entry["label"] == "none"
                 and entry["active"]
             )
@@ -668,8 +668,8 @@ class AniUserSQL:
         async with pool.acquire() as con:
             rows = await con.fetch(
                 """
-                SELECT d.id AS d_id, d.name_enc AS d_enc, d.active AS d_active, d.notify AS d_notify,
-                       s.id AS s_id, s.name_enc AS s_enc, s.active AS s_active, s.notify AS s_notify,
+                SELECT d.id AS d_id, d.name_enc AS d_enc, d.active AS d_active, d.alerts AS d_alerts,
+                       s.id AS s_id, s.name_enc AS s_enc, s.active AS s_active, s.alerts AS s_alerts,
                        (SELECT count(*) FROM ani_entries e WHERE e.subdomain_id = s.id) AS entry_count
                 FROM ani_domains d
                 LEFT JOIN ani_subdomains s ON s.domain_id = d.id
@@ -688,14 +688,14 @@ class AniUserSQL:
                 r["d_id"],
                 {
                     "id": r["d_id"], "name": decrypt(key, r["d_enc"]),
-                    "active": r["d_active"], "notify": r["d_notify"], "subdomains": [],
+                    "active": r["d_active"], "alerts": r["d_alerts"], "subdomains": [],
                 },
             )
             if r["s_id"] is not None:
                 entry["subdomains"].append(
                     {
                         "id": r["s_id"], "name": decrypt(key, r["s_enc"]),
-                        "active": r["s_active"], "notify": r["s_notify"],
+                        "active": r["s_active"], "alerts": r["s_alerts"],
                         "channel_count": r["entry_count"], "blocked_count": 0,
                     }
                 )
@@ -806,28 +806,28 @@ class AniUserSQL:
             return Failure("subdomain not found")
         return Success({"deleted": subdomain_id})
 
-    async def set_domain_notify(self, user_id: int, domain_id: int, notify: bool) -> Result[Dict[str, Any], str]:
+    async def set_domain_alerts(self, user_id: int, domain_id: int, alerts: bool) -> Result[Dict[str, Any], str]:
         pool = await get_pool()
         async with pool.acquire() as con:
             result = await con.execute(
-                "UPDATE ani_domains SET notify = $3 WHERE id = $1 AND user_id = $2",
-                domain_id, user_id, notify,
+                "UPDATE ani_domains SET alerts = $3 WHERE id = $1 AND user_id = $2",
+                domain_id, user_id, alerts,
             )
         if result.endswith("0"):
             return Failure("domain not found")
-        return Success({"id": domain_id, "notify": notify})
+        return Success({"id": domain_id, "alerts": alerts})
 
-    async def set_subdomain_notify(self, user_id: int, subdomain_id: int, notify: bool) -> Result[Dict[str, Any], str]:
+    async def set_subdomain_alerts(self, user_id: int, subdomain_id: int, alerts: bool) -> Result[Dict[str, Any], str]:
         pool = await get_pool()
         async with pool.acquire() as con:
             result = await con.execute(
-                "UPDATE ani_subdomains s SET notify = $3 FROM ani_domains d "
+                "UPDATE ani_subdomains s SET alerts = $3 FROM ani_domains d "
                 "WHERE d.id = s.domain_id AND d.user_id = $1 AND s.id = $2",
-                user_id, subdomain_id, notify,
+                user_id, subdomain_id, alerts,
             )
         if result.endswith("0"):
             return Failure("subdomain not found")
-        return Success({"id": subdomain_id, "notify": notify})
+        return Success({"id": subdomain_id, "alerts": alerts})
 
     async def assign_entry(self, user_id: int, entry_id: int, subdomain_id: Optional[int]) -> Result[Dict[str, Any], str]:
         pool = await get_pool()

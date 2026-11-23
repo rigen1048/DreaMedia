@@ -45,7 +45,7 @@ def thumb(video_id: str) -> str:
 
 
 YT = [
-    # (domain, subdomain, channel, kind, rank, notify_domain, videos[(id,title,days_ago,seen)])
+    # (domain, subdomain, channel, kind, rank, alerts_domain, videos[(id,title,days_ago,seen)])
     ("Technology", "Hardware", "Marques Brownlee", "tracking", "day", True, [
         ("S1VkZ4k9K2A", "The M5 MacBook Air is genuinely different", 0.02, False),
         ("Kq3J8m2nP0c", "Pixel 10 Pro review: the camera everyone copies", 0.3, False),
@@ -91,7 +91,7 @@ YT = [
 ]
 
 ANI = [
-    # (title, type, domain, subdomain, list, watch_state, label, notify, seasons[(no, status, eps, aired, start, state, watched)], events[(kind, season, hours_ago)])
+    # (title, type, domain, subdomain, list, watch_state, label, alerts, seasons[(no, status, eps, aired, start, state, watched)], events[(kind, season, hours_ago)])
     ("Frieren: Beyond Journey's End", "TV", "Fantasy", "Adventure", "watching", None, "none", True,
      [(1, "FINISHED", 28, 28, "2023-09-29", "finished", True),
       (2, "RELEASING", 12, 4, "2026-10-02", "airing", False)],
@@ -174,7 +174,7 @@ async def main() -> None:
     cards = CardStore()
 
     # ---------------- YouTube ----------------
-    for domain, subdomain, channel, kind, rank, notify_domain, videos in YT:
+    for domain, subdomain, channel, kind, rank, alerts_domain, videos in YT:
         url = f"https://www.youtube.com/results?search_query={channel.replace(' ', '+')}"
         rss = f"UC{random.getrandbits(96):024x}"[:24]
         if kind == "playlist":
@@ -184,8 +184,8 @@ async def main() -> None:
         else:
             channel_id = (await store.add_tracking(user_id, rss, channel, url, kind=kind)).unwrap()
         await store.assign_category(user_id, channel_id, domain, subdomain)
-        await con_exec(pool, "UPDATE yt_channels SET notify = $3 WHERE id = $1 AND user_id = $2",
-                       channel_id, user_id, notify_domain)
+        await con_exec(pool, "UPDATE yt_channels SET alerts = $3 WHERE id = $1 AND user_id = $2",
+                       channel_id, user_id, alerts_domain)
         if channel == "Some Spam Channel":
             await store.set_label(user_id, channel_id, "blocked", "clickbait / repost farm")
         for vid, title, days_ago, seen in videos:
@@ -203,7 +203,7 @@ async def main() -> None:
     # mute one entire subdomain (Learning/Mathematics) and one channel (Skill Up)
     async with pool.acquire() as con:
         await con.execute(
-            "UPDATE yt_subdomains s SET notify = FALSE FROM yt_domains d "
+            "UPDATE yt_subdomains s SET alerts = FALSE FROM yt_domains d "
             "WHERE s.domain_id = d.id AND d.user_id = $1 AND s.name_hash = $2",
             user_id, index_hash_safe(key, "mathematics"),
         )
@@ -211,7 +211,7 @@ async def main() -> None:
     channels = await store.channels_view(user_id, include_blocked=True)
     for c in channels:
         if c["name"] == "Skill Up":
-            await store.set_channel_notify(user_id, c["id"], False)
+            await store.set_channel_alerts(user_id, c["id"], False)
 
     # ---------------- Playlists (Todo) ----------------
     playlists = [
@@ -237,7 +237,7 @@ async def main() -> None:
                 await cards.set_item_done(user_id, item_id, True)
 
     # ---------------- Anime ----------------
-    for (title, atype, domain, subdomain, list_kind, watch_state, label, notify,
+    for (title, atype, domain, subdomain, list_kind, watch_state, label, alerts,
          seasons, events) in ANI:
         subdomain_id = await ani.ensure_category(user_id, domain, subdomain)
         payload = {}
@@ -267,9 +267,9 @@ async def main() -> None:
                     aired + 1 if state == "airing" else None,
                 )
             await con.execute(
-                "UPDATE ani_entries SET label = $3, watch_state = $4, notify_release = $5, "
+                "UPDATE ani_entries SET label = $3, watch_state = $4, alerts_release = $5, "
                 "canon_only = $6 WHERE id = $1 AND user_id = $2",
-                entry_id, user_id, label, watch_state, notify, random.random() < 0.4,
+                entry_id, user_id, label, watch_state, alerts, random.random() < 0.4,
             )
             watched_seasons = [s for s in seasons if s[6]]
             if watched_seasons:

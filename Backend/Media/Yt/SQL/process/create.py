@@ -180,10 +180,32 @@ CREATE TABLE IF NOT EXISTS yt_card_items (
 );
 CREATE INDEX IF NOT EXISTS idx_card_items_card ON yt_card_items(card_id, done);
 
--- Per-scope notify flags (D20/D37): mute a domain, subdomain, or channel.
-ALTER TABLE yt_domains    ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE;
-ALTER TABLE yt_subdomains ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE;
-ALTER TABLE yt_channels   ADD COLUMN IF NOT EXISTS notify BOOLEAN NOT NULL DEFAULT TRUE;
+-- Per-scope alert flags (D20/D37): mute a domain, subdomain, or channel.
+-- Fresh installs get 'alerts' directly; existing installs rename 'notify'.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='yt_domains' AND column_name='notify') THEN
+        ALTER TABLE yt_domains RENAME COLUMN notify TO alerts;
+    ELSE
+        ALTER TABLE yt_domains ADD COLUMN IF NOT EXISTS alerts BOOLEAN NOT NULL DEFAULT TRUE;
+    END IF;
+END $$;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='yt_subdomains' AND column_name='notify') THEN
+        ALTER TABLE yt_subdomains RENAME COLUMN notify TO alerts;
+    ELSE
+        ALTER TABLE yt_subdomains ADD COLUMN IF NOT EXISTS alerts BOOLEAN NOT NULL DEFAULT TRUE;
+    END IF;
+END $$;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='yt_channels' AND column_name='notify') THEN
+        ALTER TABLE yt_channels RENAME COLUMN notify TO alerts;
+    ELSE
+        ALTER TABLE yt_channels ADD COLUMN IF NOT EXISTS alerts BOOLEAN NOT NULL DEFAULT TRUE;
+    END IF;
+END $$;
 
 ALTER TABLE yt_randomsubs ADD COLUMN IF NOT EXISTS claimed_at BIGINT;
 

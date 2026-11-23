@@ -7,7 +7,7 @@ markAlertsSeen). No frontend-facing REST remains.
 Design notes:
 - One schema, two feature namespaces (yt / ani) plus auth + alerts.
 - Feed is pull-driven (D60): ytFeed / aniEvents read the media tables.
-- Per-scope notify flags are exposed on the category tree and channel rows
+- Per-scope alerts flags are exposed on the category tree and channel rows
   so the UI can mute a domain, a subdomain, or one channel.
 """
 from __future__ import annotations
@@ -109,7 +109,7 @@ class YtVideo:
     channel: Optional[str]
     channel_logo: Optional[str]
     mode: str
-    notify_enabled: bool
+    alerts_enabled: bool
     label: str
     domain: str
     subdomain: str
@@ -133,8 +133,8 @@ class YtChannel:
     subdomain: str
     domain_id: Optional[int]
     subdomain_id: Optional[int]
-    notify: bool
-    notify_enabled: bool
+    alerts: bool
+    alerts_enabled: bool
 
 
 @strawberry.type
@@ -142,7 +142,7 @@ class YtSubdomain:
     id: int
     name: str
     active: bool
-    notify: bool
+    alerts: bool
     channel_count: int
     blocked_count: int
 
@@ -152,7 +152,7 @@ class YtDomain:
     id: int
     name: str
     active: bool
-    notify: bool
+    alerts: bool
     channel_count: int
     subdomains: List[YtSubdomain]
 
@@ -223,11 +223,11 @@ class YtQuery:
         tree = await _yt.domains_tree(await _uid(info))
         return [
             YtDomain(
-                id=d["id"], name=d["name"], active=d["active"], notify=d["notify"],
+                id=d["id"], name=d["name"], active=d["active"], alerts=d["alerts"],
                 channel_count=d.get("channel_count", 0),
                 subdomains=[
                     YtSubdomain(
-                        id=s["id"], name=s["name"], active=s["active"], notify=s["notify"],
+                        id=s["id"], name=s["name"], active=s["active"], alerts=s["alerts"],
                         channel_count=s.get("channel_count", 0),
                         blocked_count=s.get("blocked_count", 0),
                     )
@@ -402,8 +402,8 @@ class YtMutation:
         return True
 
     @strawberry.field
-    async def yt_set_notify(self, info: Info, channel_id: int, notify: bool) -> bool:
-        _unwrap(await _yt.set_channel_notify(await _uid(info), channel_id, notify))
+    async def yt_set_alerts(self, info: Info, channel_id: int, alerts: bool) -> bool:
+        _unwrap(await _yt.set_channel_alerts(await _uid(info), channel_id, alerts))
         return True
 
     @strawberry.field
@@ -426,8 +426,8 @@ class YtMutation:
         return True
 
     @strawberry.field
-    async def yt_set_domain_notify(self, info: Info, domain_id: int, notify: bool) -> bool:
-        _unwrap(await _yt.set_domain_notify(await _uid(info), domain_id, notify))
+    async def yt_set_domain_alerts(self, info: Info, domain_id: int, alerts: bool) -> bool:
+        _unwrap(await _yt.set_domain_alerts(await _uid(info), domain_id, alerts))
         return True
 
     @strawberry.field
@@ -447,10 +447,10 @@ class YtMutation:
         return True
 
     @strawberry.field
-    async def yt_set_subdomain_notify(
-        self, info: Info, subdomain_id: int, notify: bool
+    async def yt_set_subdomain_alerts(
+        self, info: Info, subdomain_id: int, alerts: bool
     ) -> bool:
-        _unwrap(await _yt.set_subdomain_notify(await _uid(info), subdomain_id, notify))
+        _unwrap(await _yt.set_subdomain_alerts(await _uid(info), subdomain_id, alerts))
         return True
 
     @strawberry.field
@@ -562,7 +562,7 @@ class AniEvent:
     payload: str
     domain: str
     subdomain: str
-    notify_enabled: bool
+    alerts_enabled: bool
 
 
 @strawberry.type
@@ -603,8 +603,8 @@ class AniEntry:
     list: str
     watch_state: Optional[str]
     active: bool
-    notify_release: bool
-    notify_enabled: bool
+    alerts_release: bool
+    alerts_enabled: bool
     canon_only: bool
     anime_type: Optional[str]
     airing_time: Optional[str]
@@ -630,7 +630,7 @@ class AniDomain:
     id: int
     name: str
     active: bool
-    notify: bool
+    alerts: bool
     channel_count: int
     subdomains: List[YtSubdomain]
 
@@ -684,7 +684,7 @@ class AniQuery:
                     payload=json.dumps(e["payload"], default=str),
                     domain=e.get("domain", "uncategorized"),
                     subdomain=e.get("subdomain", "uncategorized"),
-                    notify_enabled=bool(e.get("notify_enabled")),
+                    alerts_enabled=bool(e.get("alerts_enabled")),
                 )
             )
         return result
@@ -716,7 +716,7 @@ class AniQuery:
                 id=e["id"], title=e["title"], cover=e.get("cover"), label=e["label"],
                 label_reason=e.get("label_reason"), list=e["list"],
                 watch_state=e.get("watch_state"), active=e["active"],
-                notify_release=e["notify_release"], notify_enabled=e["notify_enabled"],
+                alerts_release=e["alerts_release"], alerts_enabled=e["alerts_enabled"],
                 canon_only=e["canon_only"], anime_type=e.get("anime_type"),
                 airing_time=e.get("airing_time"), domain_id=e.get("domain_id"),
                 subdomain_id=e.get("subdomain_id"), domain=e["domain"],
@@ -756,11 +756,11 @@ class AniQuery:
         tree = await _ani.domains_tree(await _uid(info))
         return [
             AniDomain(
-                id=d["id"], name=d["name"], active=d["active"], notify=d["notify"],
+                id=d["id"], name=d["name"], active=d["active"], alerts=d["alerts"],
                 channel_count=d.get("channel_count", 0),
                 subdomains=[
                     YtSubdomain(
-                        id=s["id"], name=s["name"], active=s["active"], notify=s["notify"],
+                        id=s["id"], name=s["name"], active=s["active"], alerts=s["alerts"],
                         channel_count=s.get("channel_count", 0),
                         blocked_count=s.get("blocked_count", 0),
                     )
@@ -799,14 +799,14 @@ class AniMutation:
             )
         )
         if list_kind == "up_to_date":
-            _unwrap(await _ani.update_entry(user_id, entry_id, notify_release=True))
+            _unwrap(await _ani.update_entry(user_id, entry_id, alerts_release=True))
         return entry_id
 
     @strawberry.field
     async def ani_update_entry(
         self, info: Info, entry_id: int, list_kind: Optional[str] = None,
         watch_state: Optional[str] = None, label: Optional[str] = None,
-        label_reason: Optional[str] = None, notify_release: Optional[bool] = None,
+        label_reason: Optional[str] = None, alerts_release: Optional[bool] = None,
         active: Optional[bool] = None, canon_only: Optional[bool] = None,
         anime_type: Optional[str] = None, subdomain_id: Optional[int] = None,
         clear_category: bool = False,
@@ -814,7 +814,7 @@ class AniMutation:
         _unwrap(
             await _ani.update_entry(
                 await _uid(info), entry_id, label=label, label_reason=label_reason,
-                list_kind=list_kind, notify_release=notify_release, active=active,
+                list_kind=list_kind, alerts_release=alerts_release, active=active,
                 canon_only=canon_only, watch_state=watch_state, anime_type=anime_type,
                 subdomain_id=subdomain_id, clear_category=clear_category,
             )
@@ -958,10 +958,10 @@ class AniMutation:
         return True
 
     @strawberry.field
-    async def ani_set_domain_notify(
-        self, info: Info, domain_id: int, notify: bool
+    async def ani_set_domain_alerts(
+        self, info: Info, domain_id: int, alerts: bool
     ) -> bool:
-        _unwrap(await _ani.set_domain_notify(await _uid(info), domain_id, notify))
+        _unwrap(await _ani.set_domain_alerts(await _uid(info), domain_id, alerts))
         return True
 
     @strawberry.field
@@ -983,10 +983,10 @@ class AniMutation:
         return True
 
     @strawberry.field
-    async def ani_set_subdomain_notify(
-        self, info: Info, subdomain_id: int, notify: bool
+    async def ani_set_subdomain_alerts(
+        self, info: Info, subdomain_id: int, alerts: bool
     ) -> bool:
-        _unwrap(await _ani.set_subdomain_notify(await _uid(info), subdomain_id, notify))
+        _unwrap(await _ani.set_subdomain_alerts(await _uid(info), subdomain_id, alerts))
         return True
 
     @strawberry.field

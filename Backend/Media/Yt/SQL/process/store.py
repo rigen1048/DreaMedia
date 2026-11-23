@@ -363,16 +363,16 @@ class YtProcessSQL:
                 sub_id, increment,
             )
 
-    async def notify_enabled(self, user_id: int, channel_id: int) -> bool:
-        """Effective notify gate for one channel (domain ∧ subdomain ∧
+    async def alerts_enabled(self, user_id: int, channel_id: int) -> bool:
+        """Effective alerts gate for one channel (domain ∧ subdomain ∧
         channel ∧ not blocked ∧ subscription active)."""
         pool = await get_pool()
         async with pool.acquire() as con:
             return bool(
                 await con.fetchval(
                     """
-                    SELECT COALESCE(c.notify, TRUE) AND COALESCE(s.notify, TRUE)
-                       AND COALESCE(d.notify, TRUE) AND c.label = 'none'
+                    SELECT COALESCE(c.alerts, TRUE) AND COALESCE(s.alerts, TRUE)
+                       AND COALESCE(d.alerts, TRUE) AND c.label = 'none'
                        AND COALESCE(t.active, p.active, r.active, TRUE)
                     FROM yt_channels c
                     LEFT JOIN yt_subdomains s ON s.id = c.subdomain_id
