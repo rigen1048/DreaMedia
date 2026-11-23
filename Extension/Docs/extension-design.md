@@ -158,14 +158,18 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
   **Add source**. It submits the links and source settings over the authenticated
   WebSocket; no YouTube password, cookie, or OAuth token is requested or sent
   to DreaMedia.
-- The backend durably resolves each link, encrypts resolved metadata, then
-  processes that metadata through the same Add Source write path. PostgreSQL
-  caps lookup at eight concurrent requests globally, staggers request starts by
-  250ms, and enforces a two-second cooldown per resolver slot; source processing
-  has a separate global limit of 16. Existing channels are skipped so their
-  current settings stay unchanged. The popup reports resolved channels
-  separately from completed writes, and individual failures do not abort other
-  channels.
+- Each scanned list is sent once as a durable backend import job. The extension
+  does not split the list into per-channel requests, schedule fetches, or apply
+  fetch pacing; another batch can be submitted while prior jobs continue.
+- The backend resolves each link through the owner's shared YouTube network
+  lane, encrypts resolved metadata, then uses the normal Add Source persistence
+  path and media-fetch queue. The eight per-user workers start one second apart
+  and rest two seconds after each fetch; filtering, persistence, and notifications
+  are outside that pacing. Existing channels are skipped, and individual errors
+  do not abort other channels.
+- The popup stores outstanding backend job IDs only so progress can resume when
+  it reopens. That browser storage is status tracking, not a second work queue;
+  job progress is read from the backend over the authenticated WebSocket.
 - Because the subscriptions page loads dynamically, the import button remains
   disabled unless the scan observes a stable end. If the list is still growing
   at the scan limit, the user must scroll/scan again.

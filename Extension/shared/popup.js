@@ -363,11 +363,62 @@ $("domain").addEventListener("input", updateCategorySuggestions);
 
 let scannedSubscriptions = [];
 let subscriptionScanComplete = false;
-let activeImportJobId = null;
-let pollingImportJobId = null;
+const activeImportJobs = new Map();
+const pollingImportJobs = new Set();
+let importJobsStorageWrite = Promise.resolve();
+let scanStatusMessage = "";
+let scanStatusClass = "";
+let lastImportStatus = "";
+let lastImportStatusClass = "";
 
 function setAddSourceLabel(text) {
   $("subscribeLabel").textContent = text;
+}
+
+function renderImportStatus() {
+  const jobs = Array.from(activeImportJobs.values());
+  const jobMessage = jobs.length
+    ? `${jobs.length > 1 ? `${jobs.length} backend batches active. ` : ""}${jobs[jobs.length - 1].message}`
+    : lastImportStatus;
+  const messages = [scanStatusMessage, jobMessage].filter(Boolean);
+  const cls = scanStatusMessage
+    ? scanStatusClass
+    : (jobs.length ? "ok" : lastImportStatusClass);
+  status("importStatus", messages.join(" · "), cls);
+}
+
+function setImportScanStatus(text, cls = "") {
+  scanStatusMessage = text;
+  scanStatusClass = cls;
+  renderImportStatus();
+}
+
+function setImportJobStatus(text, cls = "") {
+  lastImportStatus = text;
+  lastImportStatusClass = cls;
+  renderImportStatus();
+}
+
+function persistImportJobIds() {
+  const jobIds = Array.from(activeImportJobs.keys());
+  importJobsStorageWrite = importJobsStorageWrite
+    .catch(() => {})
+    .then(() => chrome.storage.local.set({ youtubeImportJobIds: jobIds }));
+  return importJobsStorageWrite;
+}
+
+async function trackImportJob(jobId, requested) {
+  if (activeImportJobs.has(jobId)) return;
+  scanStatusMessage = "";
+  scanStatusClass = "";
+  lastImportStatus = "";
+  lastImportStatusClass = "";
+  activeImportJobs.set(jobId, {
+    message: `Job ${jobId.slice(0, 8)} queued ${requested} sources; waiting for backend progress…`,
+  });
+  renderImportStatus();
+  await persistImportJobIds();
+  void pollImportJob(jobId);
 }
 
 function selectedSourceOptions(forBulk = false) {
@@ -402,78 +453,93 @@ function renderSubscriptionPreview() {
 }
 
 async function pollImportJob(jobId) {
-  if (pollingImportJobId === jobId) return;
-  pollingImportJobId = jobId;
+  if (pollingImportJobs.has(jobId) || !activeImportJobs.has(jobId)) return;
+  pollingImportJobs.add(jobId);
   try {
-    while (activeImportJobId === jobId) {
+    while (activeImportJobs.has(jobId)) {
       const response = await send("dreamedia:youtubeImportStatus", { jobId });
       if (!response.ok) {
-        status("importStatus", `Import is still running. Progress unavailable: ${response.error}; retrying…`);
+        const tracked = activeImportJobs.get(jobId);
+        if (tracked) tracked.message = `Job ${jobId.slice(0, 8)} progress unavailable: ${response.error}; retrying…`;
+        renderImportStatus();
         await new Promise((resolve) => setTimeout(resolve, 2000));
         continue;
       }
       const job = response.data;
       if (!job) {
-        activeImportJobId = null;
-        await chrome.storage.local.remove("youtubeImportJobId");
-        status("importStatus", "Import job was not found for this account.", "err");
+        activeImportJobs.delete(jobId);
+        await persistImportJobIds();
+        setImportJobStatus(`Import job ${jobId.slice(0, 8)} was not found for this account.`, "err");
         break;
       }
       const progress = `${job.resolved}/${job.requested} resolved · ${job.processed}/${job.requested} processed · ${job.added} added · ${job.skipped} already present · ${job.failed} failed`;
       if (job.status === "completed" || job.status === "partial") {
-        activeImportJobId = null;
-        await chrome.storage.local.remove("youtubeImportJobId");
-        const summary = `Import ${job.status === "completed" ? "complete" : "finished with errors"}: ${progress}.`;
-        status("importStatus", job.errors?.length ? `${summary} ${job.errors[0]}` : summary, job.failed ? "err" : "ok");
-        setAddSourceLabel("Add source");
+        activeImportJobs.delete(jobId);
+        await persistImportJobIds();
+        const summary = `Import ${job.status === "completed" ? "complete" : "finished with errors"} (${jobId.slice(0, 8)}): ${progress}.`;
+        setImportJobStatus(job.errors?.length ? `${summary} ${job.errors[0]}` : summary, job.failed ? "err" : "ok");
         break;
       }
-      status("importStatus", `${job.status === "queued" ? "Queued" : "Importing"}: ${progress}.`);
+      const tracked = activeImportJobs.get(jobId);
+      if (tracked) tracked.message = `Job ${jobId.slice(0, 8)} · ${job.status === "queued" ? "Queued" : "Importing"}: ${progress}.`;
+      renderImportStatus();
       await new Promise((resolve) => setTimeout(resolve, 1200));
     }
   } finally {
-    if (pollingImportJobId === jobId) pollingImportJobId = null;
+    pollingImportJobs.delete(jobId);
   }
 }
 
-async function resumeImportJob() {
-  const stored = await chrome.storage.local.get("youtubeImportJobId");
-  if (!stored.youtubeImportJobId) return;
-  activeImportJobId = stored.youtubeImportJobId;
-  setAddSourceLabel("Import in progress");
-  void pollImportJob(activeImportJobId);
+async function resumeImportJobs() {
+  const stored = await chrome.storage.local.get(["youtubeImportJobIds", "youtubeImportJobId"]);
+  const savedIds = Array.isArray(stored.youtubeImportJobIds) ? stored.youtubeImportJobIds : [];
+  const jobIds = [...new Set([...savedIds, stored.youtubeImportJobId]
+    .filter((jobId) => typeof jobId === "string" && jobId))];
+  for (const jobId of jobIds) {
+    activeImportJobs.set(jobId, { message: `Job ${jobId.slice(0, 8)} · restoring backend progress…` });
+  }
+  if (stored.youtubeImportJobId || !Array.isArray(stored.youtubeImportJobIds) || jobIds.length !== savedIds.length) {
+    await persistImportJobIds();
+    if (stored.youtubeImportJobId) await chrome.storage.local.remove("youtubeImportJobId");
+  }
+  renderImportStatus();
+  for (const jobId of jobIds) void pollImportJob(jobId);
 }
 
 action("scanSubscriptions", "importStatus", async () => {
-  if (activeImportJobId) throw new Error("Wait for the current import to finish before scanning again.");
   scannedSubscriptions = [];
   subscriptionScanComplete = false;
   setAddSourceLabel("Add source");
   $("importPreview").hidden = true;
   const tab = await currentTab();
-  if (!tab?.id) throw new Error("Open YouTube's channel subscriptions page first.");
-  status("importStatus", "Scanning the page and loading more channels…");
+  if (!tab?.id) {
+    setImportScanStatus("Open YouTube's channel subscriptions page first.", "err");
+    return;
+  }
+  setImportScanStatus("Scanning the page and loading more channels…");
   const response = await send("dreamedia:scanYoutubeSubscriptions", { tabId: tab.id });
-  if (!response.ok) throw new Error(response.error || "Subscription scan failed.");
+  if (!response.ok) {
+    setImportScanStatus(response.error || "Subscription scan failed.", "err");
+    return;
+  }
   scannedSubscriptions = Array.isArray(response.data?.channels) ? response.data.channels : [];
   subscriptionScanComplete = response.data?.complete === true;
   renderSubscriptionPreview();
   if (!scannedSubscriptions.length) {
-    status("importStatus", "No channel links found. Check that this is the channel subscriptions page and you are signed in.", "err");
+    setImportScanStatus("No channel links found. Check that this is the channel subscriptions page and you are signed in.", "err");
     return;
   }
   if (subscriptionScanComplete) {
     const count = scannedSubscriptions.length;
     setAddSourceLabel(`Add ${count} ${count === 1 ? "source" : "sources"}`);
-    status("importStatus", `${scannedSubscriptions.length} unique channel(s) found. Review the preview, then choose Add sources.`, "ok");
+    setImportScanStatus(`${scannedSubscriptions.length} unique channel(s) found. Review the preview, then choose Add sources.`, "ok");
   } else {
-    status("importStatus", `Found ${scannedSubscriptions.length}, but the page did not reach a stable end. Scroll through the page and scan again before adding sources.`, "err");
+    setImportScanStatus(`Found ${scannedSubscriptions.length}, but the page did not reach a stable end. Scroll through the page and scan again before adding sources.`, "err");
   }
 });
 
 // ---- subscribe ----
 action("subscribe", "subStatus", async () => {
-  if (activeImportJobId) throw new Error("A scanned-channel import is already running.");
   if (page.subscriptionChannels && !subscriptionScanComplete) {
     throw new Error("Scan the complete channel list first; Add Source will add each scanned channel.");
   }
@@ -485,16 +551,14 @@ action("subscribe", "subStatus", async () => {
       ...options,
     });
     if (!response.ok) throw new Error(response.error || "Could not queue the channel import.");
-    activeImportJobId = response.data?.jobId;
-    if (!activeImportJobId) throw new Error("The backend did not return an import job ID.");
-    await chrome.storage.local.set({ youtubeImportJobId: activeImportJobId });
+    const jobId = response.data?.jobId;
+    if (!jobId) throw new Error("The backend did not return an import job ID.");
     const count = scannedSubscriptions.length;
     scannedSubscriptions = [];
     subscriptionScanComplete = false;
     renderSubscriptionPreview();
-    setAddSourceLabel("Import in progress");
-    status("importStatus", `Queued ${count} sources. You can close this popup; progress will resume when you open it again.`, "ok");
-    void pollImportJob(activeImportJobId);
+    setAddSourceLabel("Add source");
+    await trackImportJob(jobId, count);
     return;
   }
   const tab = await currentTab();
@@ -581,7 +645,7 @@ async function initializePopup() {
     status("siteStatus", error.message, "err");
   }
   await loadLists(configured);
-  if (configured) await resumeImportJob();
+  if (configured) await resumeImportJobs();
   await refreshTrackingStatus();
   setInterval(() => void refreshTrackingStatus(), 1000);
 }

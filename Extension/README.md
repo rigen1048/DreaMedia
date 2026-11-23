@@ -21,9 +21,11 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
    Add sources click. Existing DreaMedia sources are skipped without changing
    their mode or category. The backend first resolves channel metadata, then
    separately writes each resolved source through the same Add Source path.
-   PostgreSQL globally caps resolution at eight concurrent requests (250ms
-   start spacing; each request slot cools down for two seconds before reuse)
-   and source processing at 16 concurrent operations across backend containers.
+   The whole scan is one durable PostgreSQL job. Eight per-user YouTube workers
+   pace only network fetches (one-second stagger; two-second rest after a fetch);
+   filtering and source writes are outside that lane, and imported sources enter
+   the normal media-fetch queue. The popup stores job IDs only for progress and
+   can submit another batch while earlier jobs run.
    A background job reports resolved and fully processed counts separately,
    and the popup can be closed and reopened while processing continues. Scan
    again if the page does not reach a stable end.
@@ -60,10 +62,11 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
   subdomains are suggested from DreaMedia; choose both names or neither.
   Entering a new domain/subdomain pair creates it when the source is added.
 - **Scan subscriptions** is available in the **Source** tab. Open YouTube’s
-  channel subscriptions page to scan and preview; the **Add source** button
-  then queues those channels using the selected notification type, settings,
-  and category. Processing continues in the backend and progress is restored
-  the next time the popup is opened.
+  channel subscriptions page to scan and preview; **Add source** submits the
+  complete scan once as a durable backend batch with the selected notification
+  type, settings, and category. You can submit another batch while earlier jobs
+  run. The extension stores job IDs only to restore progress when the popup
+  reopens; fetching and queueing are backend responsibilities.
 - **Save video** adds the active YouTube video to a custom playlist in Todo.
 - On enabled Anime sites, the extension automatically matches the page title
   to a tracked anime, estimates its episode from the URL, and shows the attached
