@@ -11,23 +11,52 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 const TYPE_LABEL: Record<YtKind, string> = {
-  tracking: "Track", wordscan: "WordScan", playlist: "Playlist", random: "Random",
+  tracking: "Track",
+  wordscan: "WordScan",
+  playlist: "Playlist",
+  random: "Random",
   withhold: "Withhold",
 };
 
 const FREQUENCIES = [
-  ["day", "Daily"], ["tri_day", "Every 3 days"], ["week", "Weekly"],
-  ["bi_week", "Every 2 weeks"], ["month", "Monthly"],
+  ["day", "Daily"],
+  ["tri_day", "Every 3 days"],
+  ["week", "Weekly"],
+  ["bi_week", "Every 2 weeks"],
+  ["month", "Monthly"],
 ] as const;
 
 type Props = { search: string; filter: "all" | "muted"; onAdd: () => void };
+
+type BatchAction =
+  | "mode"
+  | "category"
+  | "alerts"
+  | "active"
+  | "label"
+  | "delete";
 
 export default function Channels({ search, filter, onAdd }: Props) {
   const { act } = useApp();
   const workspace = useWorkspace();
   const [openId, setOpenId] = useState<number | null>(null);
+  const [selectedChannels, setSelectedChannels] = useState<Set<number>>(new Set());
+  const [batchAction, setBatchAction] = useState<BatchAction | null>(null);
+  const [batchDialogOpen, setBatchDialogOpen] = useState(false);
+
+  // Batch action config state
+  const [batchKind, setBatchKind] = useState<YtKind>("tracking");
+  const [batchRank, setBatchRank] = useState<string>("week");
+  const [batchWithhold, setBatchWithhold] = useState<number>(2);
+  const [batchSubdomainId, setBatchSubdomainId] = useState<number | null>(null);
+  const [batchAlerts, setBatchAlerts] = useState<boolean>(true);
+  const [batchActive, setBatchActive] = useState<boolean>(true);
+  const [batchLabel, setBatchLabel] = useState<string>("none");
+  const [batchLabelReason, setBatchLabelReason] = useState<string>("");
 
   const rows = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -44,6 +73,75 @@ export default function Channels({ search, filter, onAdd }: Props) {
       );
   }, [filter, search, workspace.ytChannels]);
 
+  const allSelected =
+    rows.length > 0 && rows.every((row) => selectedChannels.has(row.id));
+
+  const toggleChannel = (id: number) => {
+    setSelectedChannels((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelectedChannels(new Set());
+    } else {
+      setSelectedChannels(new Set(rows.map((row) => row.id)));
+    }
+  };
+
+  const hasSelection = selectedChannels.size > 0;
+
+  const applyBatch = async () => {
+    const ids = Array.from(selectedChannels);
+
+    switch (batchAction) {
+      case "mode":
+        await act(
+          () =>
+            api.ytBatchSetMode(ids, batchKind,
+              batchKind === "wordscan" ? undefined : [],
+              batchKind === "random" ? batchRank : undefined,
+              batchKind === "withhold" ? batchWithhold : undefined,
+            ),
+          `${ids.length} sources switched to ${TYPE_LABEL[batchKind]}`,
+        );
+        break;
+      case "category":
+        await act(
+          () => api.ytBatchAssignChannel(ids, batchSubdomainId),
+          `${ids.length} sources recategorised`,
+        );
+        break;
+      case "alerts":
+        await act(() => api.ytBatchSetAlerts(ids, batchAlerts), `${ids.length} sources updated`);
+        break;
+      case "active":
+        await act(() => api.ytBatchSetActive(ids, batchActive), `${ids.length} sources updated`);
+        break;
+      case "label":
+        await act(
+          () => api.ytBatchSetLabel(ids, batchLabel, batchLabelReason || undefined),
+          `${ids.length} sources labelled`,
+        );
+        break;
+      case "delete":
+        await act(() => api.ytBatchDeleteChannel(ids), `${ids.length} sources deleted`);
+        break;
+    }
+
+    setSelectedChannels(new Set());
+    setBatchAction(null);
+  };
+
+  const confirmDelete = () => {
+    setBatchAction("delete");
+    setBatchDialogOpen(true);
+  };
+
   if (!workspace.ytChannels.length) {
     return (
       <EmptyState
@@ -56,8 +154,120 @@ export default function Channels({ search, filter, onAdd }: Props) {
 
   return (
     <div className="overflow-hidden rounded-xl border">
-      <div className="grid grid-cols-[1fr_130px_150px_110px_50px] gap-2 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground max-lg:hidden">
-        <span>Source</span><span>Type</span><span>Category</span><span>Status</span><span className="text-right">Open</span>
+      {/* Batch toolbar */}
+      {hasSelection && batchAction && (
+        <div className="bg-card border-b p-2 flex items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">
+            {selectedChannels.size} selected
+          </span>
+          <Select value={String(batchAction ?? "")} onValueChange={(v) => setBatchAction(v as BatchAction)}>
+            <SelectTrigger className="h-7 w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="mode">Change type</SelectItem>
+              <SelectItem value="category">Change category</SelectItem>
+              <SelectItem value="alerts">Mute / unmute</SelectItem>
+              <SelectItem value="active">Enable / disable</SelectItem>
+              <SelectItem value="label">Block / unblock</SelectItem>
+              <SelectItem value="delete">Delete</SelectItem>
+            </SelectContent>
+          </Select>
+          {batchAction === "mode" && (
+            <div className="flex items-center gap-2">
+              <Label htmlFor="batch-kind">Type</Label>
+              <Select value={String(batchKind)} onValueChange={(v) => setBatchKind(v as YtKind)}>
+                <SelectTrigger className="h-7 w-28">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(TYPE_LABEL) as YtKind[]).map((kind) => (
+                    <SelectItem key={kind} value={kind}>
+                      {TYPE_LABEL[kind]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {batchAction === "category" && (
+            <div className="flex items-center gap-2">
+              <Label>Category</Label>
+              <Select value={batchSubdomainId ? String(batchSubdomainId) : "none"} onValueChange={(v) =>
+                setBatchSubdomainId(v === "none" ? null : Number(v))}
+              >
+                <SelectTrigger className="h-7 w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Uncategorized</SelectItem>
+                  {workspace.ytDomains.flatMap((domain) =>
+                    domain.subdomains.map((subdomain) => (
+                      <SelectItem key={subdomain.id} value={String(subdomain.id)}>
+                        {domain.name} / {subdomain.name}
+                      </SelectItem>
+                    )),
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {batchAction === "alerts" && (
+            <div className="flex items-center gap-2">
+              <Label>Alerts</Label>
+              <Switch checked={batchAlerts} onCheckedChange={setBatchAlerts} />
+              <span className="text-xs text-muted-foreground">
+                {batchAlerts ? "Receiving alerts" : "Muted"}
+              </span>
+            </div>
+          )}
+          {batchAction === "active" && (
+            <div className="flex items-center gap-2">
+              <Label>State</Label>
+              <Switch checked={batchActive} onCheckedChange={setBatchActive} />
+              <span className="text-xs text-muted-foreground">
+                {batchActive ? "Active" : "Inactive"}
+              </span>
+            </div>
+          )}
+          {batchAction === "label" && (
+            <div className="flex items-center gap-2">
+              <Label>Label</Label>
+              <Select value={batchLabel} onValueChange={setBatchLabel}>
+                <SelectTrigger className="h-7 w-24">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="reserved">Reserved</SelectItem>
+                  <SelectItem value="blocked">Blocked</SelectItem>
+                </SelectContent>
+              </Select>
+              {batchLabel === "blocked" && (
+                <Input
+                  value={batchLabelReason}
+                  onChange={(e) => setBatchLabelReason(e.target.value)}
+                  placeholder="Reason"
+                  className="h-7 w-24 text-xs"
+                />
+              )}
+            </div>
+          )}
+          <Button size="sm" onClick={applyBatch} disabled={!batchAction}>
+            Apply
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setSelectedChannels(new Set())}>
+            Deselect all
+          </Button>
+        </div>
+      )}
+
+      <div className="grid grid-cols-[50px_1fr_130px_150px_110px_50px] gap-2 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground max-lg:grid-cols-[50px_1fr_50px]">
+        <Checkbox checked={allSelected} onCheckedChange={toggleAll} aria-label="Select all" />
+        <span>Source</span>
+        <span>Type</span>
+        <span>Category</span>
+        <span className="text-right">Status</span>
       </div>
       {rows.length === 0 && <EmptyState title="No sources match" hint="Try clearing the search or filter." />}
       {rows.map((channel) => (
@@ -68,6 +278,8 @@ export default function Channels({ search, filter, onAdd }: Props) {
           onToggle={() => setOpenId(openId === channel.id ? null : channel.id)}
           act={act}
           workspace={workspace}
+          selected={selectedChannels.has(channel.id)}
+          onSelect={toggleChannel}
         />
       ))}
     </div>
@@ -75,13 +287,21 @@ export default function Channels({ search, filter, onAdd }: Props) {
 }
 
 function ChannelRow({
-  channel, open, onToggle, act, workspace,
+  channel,
+  open,
+  onToggle,
+  act,
+  workspace,
+  selected,
+  onSelect,
 }: {
   channel: YtChannel;
   open: boolean;
   onToggle: () => void;
   act: ReturnType<typeof useApp>["act"];
   workspace: ReturnType<typeof useWorkspace>;
+  selected: boolean;
+  onSelect: (id: number) => void;
 }) {
   const [words, setWords] = useState(channel.words.join(", "));
   const [rank, setRank] = useState(channel.rank ?? "week");
@@ -106,10 +326,14 @@ function ChannelRow({
   return (
     <>
       <div className={cn(
-        "grid grid-cols-[1fr_130px_150px_110px_50px] items-center gap-2 border-b px-3 py-2.5 max-lg:grid-cols-[1fr_50px]",
+        "grid grid-cols-[50px_1fr_130px_150px_110px_50px] items-center gap-2 border-b px-3 py-2.5 max-lg:grid-cols-[50px_1fr_50px]",
         open && "bg-accent/40",
       )}>
-        <div className={cn("flex min-w-0 items-center gap-2.5 cursor-pointer", open && "bg-accent/20 rounded-md p-1")} onClick={onToggle} role="button" tabIndex={0} aria-label={`Edit ${channel.name}`}>
+        <Checkbox checked={selected} onCheckedChange={() => onSelect(channel.id)} />
+        <div className={cn(
+          "flex min-w-0 items-center gap-2.5 cursor-pointer",
+          open && "bg-accent/20 rounded-md p-1",
+        )} onClick={onToggle} role="button" tabIndex={0} aria-label={`Edit ${channel.name}`}>
           {channel.logo ? (
             <img className="h-8 w-8 shrink-0 rounded-full object-cover" src={channel.logo} alt="" loading="lazy" referrerPolicy="no-referrer" />
           ) : (
@@ -222,7 +446,12 @@ function ChannelRow({
                     size="sm"
                     onClick={() =>
                       void act(
-                        () => api.ytSetMode(channel.id, "wordscan", words.split(",").map((word) => word.trim()).filter(Boolean)),
+                        () =>
+                          api.ytSetMode(
+                            channel.id,
+                            "wordscan",
+                            words.split(",").map((word) => word.trim()).filter(Boolean),
+                          ),
                         "WordScan terms saved",
                       )
                     }
@@ -257,8 +486,7 @@ function ChannelRow({
               <Select
                 value={channel.subdomainId ? String(channel.subdomainId) : "none"}
                 onValueChange={(value) =>
-                  void act(() => api.ytAssignChannel(channel.id, value === "none" ? null : Number(value)), "Category attached")
-                }
+                  void act(() => api.ytAssignChannel(channel.id, value === "none" ? null : Number(value)), "Category attached")}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -282,7 +510,9 @@ function ChannelRow({
                   aria-label={muted ? "Unmute channel" : "Mute channel"}
                   onCheckedChange={(next) => void act(() => api.ytSetActive(channel.id, next))}
                 />
-                <span className="text-xs text-muted-foreground">{muted ? "Muted — still subscribed, receiving nothing" : "Receiving"}</span>
+                <span className="text-xs text-muted-foreground">
+                  {muted ? "Muted — still subscribed, receiving nothing" : "Receiving"}
+                </span>
               </div>
             </div>
           </div>

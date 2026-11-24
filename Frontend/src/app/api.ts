@@ -134,6 +134,61 @@ export const ytDeleteChannel = (channelId: number) =>
     { id: channelId },
   );
 
+/* -------------------------------------------------------------- Batch YouTube */
+export const ytBatchSetMode = (
+  channelIds: number[],
+  kind: string,
+  words?: string[],
+  rank?: string,
+  withhold?: number | null,
+) =>
+  gql<{ ytBatchSetMode: number }>(
+    `mutation BatchSetMode($ids: [Int!]!, $kind: String!, $words: [String!], $rank: String, $withhold: Int) {
+      ytBatchSetMode(channelIds: $ids, kind: $kind, words: $words, rank: $rank, withhold: $withhold)
+    }`,
+    { ids: channelIds, kind, words, rank, withhold: withhold ?? null },
+  );
+
+export const ytBatchSetAlerts = (channelIds: number[], alerts: boolean) =>
+  gql<{ ytBatchSetAlerts: number }>(
+    `mutation BatchSetAlerts($ids: [Int!]!, $alerts: Boolean!) {
+      ytBatchSetAlerts(channelIds: $ids, alerts: $alerts)
+    }`,
+    { ids: channelIds, alerts },
+  );
+
+export const ytBatchSetActive = (channelIds: number[], active: boolean) =>
+  gql<{ ytBatchSetActive: number }>(
+    `mutation BatchSetActive($ids: [Int!]!, $active: Boolean!) {
+      ytBatchSetActive(channelIds: $ids, active: $active)
+    }`,
+    { ids: channelIds, active },
+  );
+
+export const ytBatchAssignChannel = (channelIds: number[], subdomainId: number | null) =>
+  gql<{ ytBatchAssignChannel: number }>(
+    `mutation BatchAssignChannel($ids: [Int!]!, $subdomainId: Int) {
+      ytBatchAssignChannel(channelIds: $ids, subdomainId: $subdomainId)
+    }`,
+    { ids: channelIds, subdomainId },
+  );
+
+export const ytBatchSetLabel = (channelIds: number[], label: string, reason?: string) =>
+  gql<{ ytBatchSetLabel: number }>(
+    `mutation BatchSetLabel($ids: [Int!]!, $label: String!, $reason: String) {
+      ytBatchSetLabel(channelIds: $ids, label: $label, reason: $reason)
+    }`,
+    { ids: channelIds, label, reason },
+  );
+
+export const ytBatchDeleteChannel = (channelIds: number[]) =>
+  gql<{ ytBatchDeleteChannel: number }>(
+    `mutation BatchDeleteChannel($ids: [Int!]!) {
+      ytBatchDeleteChannel(channelIds: $ids)
+    }`,
+    { ids: channelIds },
+  );
+
 export const ytMarkSeen = (videoIds: number[], seen = true) =>
   gql<{ ytMarkSeen: number }>(
     `mutation MarkSeen($ids: [Int!]!, $seen: Boolean!) { ytMarkSeen(videoIds: $ids, seen: $seen) }`,

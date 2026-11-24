@@ -412,6 +412,84 @@ class YtMutation:
         return True
 
     @strawberry.field
+    async def yt_batch_set_mode(
+        self,
+        info: Info,
+        channel_ids: List[int],
+        kind: str,
+        words: Optional[List[str]] = None,
+        rank: Optional[str] = None,
+        withhold: Optional[int] = None,
+    ) -> int:
+        """Bulk switch subscription type for multiple channels."""
+        user_id = await _uid(info)
+        changed = 0
+        for channel_id in channel_ids:
+            result = await _yt.switch_mode(user_id, channel_id, kind, words, rank, withhold)
+            if isinstance(result, Success):
+                changed += 1
+        return changed
+
+    @strawberry.field
+    async def yt_batch_set_alerts(self, info: Info, channel_ids: List[int], alerts: bool) -> int:
+        """Bulk mute/unmute multiple channels."""
+        user_id = await _uid(info)
+        changed = 0
+        for channel_id in channel_ids:
+            result = await _yt.set_channel_alerts(user_id, channel_id, alerts)
+            if isinstance(result, Success):
+                changed += 1
+        return changed
+
+    @strawberry.field
+    async def yt_batch_set_active(self, info: Info, channel_ids: List[int], active: bool) -> int:
+        """Bulk enable/disable multiple channels."""
+        user_id = await _uid(info)
+        changed = 0
+        for channel_id in channel_ids:
+            result = await _yt.set_channel_active(user_id, channel_id, active)
+            if isinstance(result, Success):
+                changed += 1
+        return changed
+
+    @strawberry.field
+    async def yt_batch_assign_channel(
+        self, info: Info, channel_ids: List[int], subdomain_id: Optional[int] = None
+    ) -> int:
+        """Bulk attach multiple channels to a subdomain."""
+        user_id = await _uid(info)
+        changed = 0
+        for channel_id in channel_ids:
+            result = await _yt.assign_channel(user_id, channel_id, subdomain_id)
+            if isinstance(result, Success):
+                changed += 1
+        return changed
+
+    @strawberry.field
+    async def yt_batch_set_label(
+        self, info: Info, channel_ids: List[int], label: str, reason: Optional[str] = None
+    ) -> int:
+        """Bulk set label (block/reserved/none) on multiple channels."""
+        user_id = await _uid(info)
+        changed = 0
+        for channel_id in channel_ids:
+            result = await _yt.set_label(user_id, channel_id, label, reason)
+            if isinstance(result, Success):
+                changed += 1
+        return changed
+
+    @strawberry.field
+    async def yt_batch_delete_channel(self, info: Info, channel_ids: List[int]) -> int:
+        """Bulk delete multiple channels."""
+        user_id = await _uid(info)
+        changed = 0
+        for channel_id in channel_ids:
+            result = await _yt.delete_channel(user_id, channel_id)
+            if isinstance(result, Success):
+                changed += 1
+        return changed
+
+    @strawberry.field
     async def yt_create_domain(self, info: Info, name: str) -> int:
         return int(_unwrap(await _yt.create_domain(await _uid(info), name))["id"])
 
