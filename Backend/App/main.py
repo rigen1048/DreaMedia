@@ -39,6 +39,8 @@ from Media.Yt import manager as yt_manager
 from Media.Yt.Access.cards_router import router as yt_cards_router
 from Media.Yt.Access.router import router as yt_access_router
 from Media.Yt.Feed.router import router as yt_feed_router
+from Media.Yt.Queue.router import router as yt_queue_router
+from Media.Yt.Queue.worker import stop_user_workers
 
 
 @asynccontextmanager
@@ -80,6 +82,10 @@ async def lifespan(app: FastAPI):
     for task in managers:
         task.cancel()
     await asyncio.gather(*managers, return_exceptions=True)
+    # Stop all per-user queue workers
+    from Media.Yt.Queue.worker import _user_workers, stop_user_workers
+    for user_id in list(_user_workers.keys()):
+        await stop_user_workers(user_id)
     await db.close()
 
 
@@ -158,6 +164,7 @@ app.include_router(yt_access_router)
 app.include_router(yt_cards_router)
 app.include_router(ani_feed_router)
 app.include_router(ani_access_router)
+app.include_router(yt_queue_router)
 
 
 from fastapi import Request

@@ -31,6 +31,21 @@ function send(
   });
 }
 
+/** Direct HTTP call to the backend REST API (extension token auth). */
+async function sendHttp(
+  path: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  const cfg = await chrome.storage.local.get(["backendUrl", "token"]);
+  const backendUrl = String(cfg.backendUrl || "http://127.0.0.1:8123").replace(/\/$/, "");
+  const token = String(cfg.token || "");
+  const headers: Record<string, string> = {
+    ...(init.headers as Record<string, string>),
+  };
+  if (token) headers["X-Extension-Token"] = token;
+  return fetch(`${backendUrl}${path}`, { ...init, headers });
+}
+
 function status(id: string, text: string, cls = ""): void {
   const el = $(id);
   el.textContent = text;
@@ -926,8 +941,74 @@ action(
         "err"
       );
     }
+  });
+
+// ── Import .json file upload ──────────────────────────────────────────
+let jsonImportStatusEl: HTMLElement | null = null;
+
+$("importJsonFile").addEventListener("change", async (event) => {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  jsonImportStatusEl = $("importJsonStatus");
+  jsonImportStatusEl.textContent = "Uploading…";
+  jsonImportStatusEl.className = "status";
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await sendHttp("/extension/sources/import", {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: "Upload failed" }));
+      throw new Error(err.detail || `HTTP ${response.status}`);
+    }
+    const result = await response.json();
+    const jobId = result.jobId;
+    jsonImportStatusEl.textContent = `Queued ${result.requested} source(s) — job ${jobId.slice(0, 8)}…`;
+    jsonImportStatusEl.className = "status ok";
+    // Reset the input so the same file can be re-selected next time.
+    input.value = "";
+    // Poll the job status so the user sees progress.
+    void pollJsonImportJob(jobId);
+  } catch (error) {
+    jsonImportStatusEl!.textContent = `Failed: ${(error as Error).message}`;
+    jsonImportStatusEl!.className = "status err";
   }
-);
+});
+
+async function pollJsonImportJob(jobId: string): Promise<void> {
+  const cfg = await chrome.storage.local.get(["backendUrl", "token"]);
+  const backendUrl = String(cfg.backendUrl || "http://127.0.0.1:8123").replace(/\/$/, "");
+  const token = String(cfg.token || "");
+  let polls = 0;
+  while (polls < 120) {
+    polls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    try {
+      const response = await fetch(
+        `${backendUrl}/extension/sources/status?jobId=${encodeURIComponent(jobId)}`,
+        { headers: token ? { "X-Extension-Token": token } : {} }
+      );
+      if (!response.ok) continue;
+      const data = await response.json();
+      if (data.status === "completed" || data.status === "partial") {
+        if (jsonImportStatusEl) {
+          jsonImportStatusEl.textContent = `Import done: ${data.added} added, ${data.failed} failed of ${data.requested}.`;
+          jsonImportStatusEl.className = "status ok";
+        }
+        return;
+      }
+    } catch (_e) {
+      /* ignore poll errors, keep trying */
+    }
+  }
+  if (jsonImportStatusEl) {
+    jsonImportStatusEl.textContent = "Import still running — check the import table.";
+    jsonImportStatusEl.className = "status";
+  }
+}
 
 action(
   "subscribe",

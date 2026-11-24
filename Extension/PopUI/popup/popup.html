@@ -125,6 +125,12 @@
       <div class="source-actions">
         <button id="scanSubscriptions" class="secondary" type="button">Scan subscriptions</button>
         <button id="subscribe" class="primary" type="button"><svg aria-hidden="true"><use href="#plus"/></svg><span id="subscribeLabel">Add source</span></button>
+        <label class="file-upload" style="display:inline-flex; align-items:center; gap:8px; margin-left:12px;">
+          <svg aria-hidden="true"><use href="#cloud-upload"/></svg>
+          <span>Import .json</span>
+          <input id="importJsonFile" type="file" accept=".json" hidden>
+        </label>
+        <p id="importJsonStatus" class="status" role="status" style="margin-left:12px; font-size:0.85em;"></p>
       </div>
       <ul id="importPreview" class="import-preview" hidden></ul>
       <p id="importStatus" class="status" role="status"></p>

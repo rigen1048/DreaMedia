@@ -1,10 +1,15 @@
-"""WebSocket policy for the extension's token-authenticated GraphQL lane."""
+"""WebSocket policy for the extension's token-authenticated GraphQL lane.
+
+Also provides best-effort broadcast of `success`/`news` messages to
+extension clients per user (used by the unified import queue workers).
+"""
+
 from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, MutableMapping
-from urllib.parse import urlsplit
 from typing import Any
+from urllib.parse import urlsplit
 
 from strawberry.exceptions import ConnectionRejectionError
 from strawberry.fastapi import GraphQLRouter
@@ -14,6 +19,11 @@ _EXTENSION_SCHEMES = frozenset(
     {"chrome-extension", "moz-extension", "safari-web-extension"}
 )
 _log = logging.getLogger("dreamedia.extension.websocket")
+
+# Best-effort pending messages per user, keyed by user_id.
+# The extension polls /extension/sources/status for missed messages;
+# this broadcast is a push-side best-effort when a WebSocket is open.
+_pending_messages: dict[int, list[dict]] = {}
 
 
 def is_browser_extension_origin(origin: str) -> bool:
@@ -38,6 +48,23 @@ def is_browser_extension_origin(origin: str) -> bool:
         and not parts.query
         and not parts.fragment
     )
+
+
+async def broadcast_to_user(user_id: int, message: dict) -> None:
+    """Best-effort: queue a `success`/`news` message for a user's extension.
+
+    Messages are stored per-user and delivered on the next WebSocket
+    receive cycle, or retrieved via the REST status endpoint.
+    """
+    _pending_messages.setdefault(user_id, []).append(message)
+    # Cap the pending list so it doesn't grow unbounded.
+    if len(_pending_messages[user_id]) > 100:
+        _pending_messages[user_id] = _pending_messages[user_id][-100:]
+
+
+def take_pending_messages(user_id: int) -> list[dict]:
+    """Drain and return all pending messages for a user (extension poll)."""
+    return _pending_messages.pop(user_id, [])
 
 
 class ExtensionGraphQLRouter(GraphQLRouter):
@@ -77,4 +104,10 @@ class ExtensionGraphQLRouter(GraphQLRouter):
             raise ConnectionRejectionError()
 
         context["ext_user_id"] = user_id
+
+        # Deliver any pending messages on connect (best-effort push).
+        pending = take_pending_messages(user_id)
+        if pending:
+            context["pending_messages"] = pending
+
         return await super().on_ws_connect(context)

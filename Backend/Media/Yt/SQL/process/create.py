@@ -43,6 +43,16 @@ CREATE TABLE IF NOT EXISTS yt_import_items (
 CREATE INDEX IF NOT EXISTS idx_yt_import_items_queue
     ON yt_import_items(job_id, status, ordinal);
 
+-- worker_section divides each user's queue into 8 sections so that 8
+-- per-user workers never claim the same item (section = ordinal % 8).
+-- user_id is denormalized here so workers can claim by user+section without
+-- joining yt_import_jobs on every poll.
+ALTER TABLE yt_import_items ADD COLUMN IF NOT EXISTS user_id INTEGER;
+ALTER TABLE yt_import_items ADD COLUMN IF NOT EXISTS worker_section SMALLINT NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_yt_import_items_section
+    ON yt_import_items(user_id, worker_section, status)
+    WHERE status = 'queued';
+
 -- Two-stage bulk YouTube imports. These migrations also upgrade the earlier
 -- single-stage queue without losing work: old in-flight rows are re-queued
 -- for resolution (writes use skip-existing, so replay is idempotent).
