@@ -163,45 +163,21 @@ def bundle_shared_scripts(source_dir: Path) -> str:
 
 def build_extensions() -> None:
     """Build both loadable packages from shared source and target manifests."""
-    # ── Step 1: Typecheck TypeScript ─────────────────────────────────
-    if not (EXTENSION / "tsconfig.json").is_file():
-        sys.exit("✗ Extension/tsconfig.json is missing")
+    # ── Step 1: bun install ───────────────────────────────────────────
+    if not (EXTENSION / "package.json").is_file():
+        sys.exit("✗ Extension/package.json is missing")
     subprocess.run(
-        ["npx", "tsc", "--noEmit"],
+        ["bun", "install"],
         cwd=EXTENSION,
         check=True,
     )
 
-    # ── Step 2: Bundle each entry point to classic-script JS via esbuild ─
-    BUILD_DIR = EXTENSION / ".build"
-    if BUILD_DIR.exists():
-        shutil.rmtree(BUILD_DIR)
-    BUILD_DIR.mkdir(parents=True)
-
-    entry_points = {
-        "shared/background.ts": "background.js",
-        "PopUI/popup/popup.ts": "popup.js",
-        "PopUI/imports/imports.ts": "imports.js",
-        "shared/core.ts": "core.js",
-    }
-    for src, out in entry_points.items():
-        src_path = EXTENSION / src
-        out_path = BUILD_DIR / out
-        if not src_path.is_file():
-            sys.exit(f"✗ Entry point missing: {src}")
-        subprocess.run(
-            [
-                "npx",
-                "esbuild",
-                str(src_path),
-                "--bundle",
-                "--outfile=" + str(out_path),
-                "--format=iife",
-                "--platform=browser",
-            ],
-            cwd=EXTENSION,
-            check=True,
-        )
+    # ── Step 2: bun run build (typecheck + bundle via bunx) ───────────
+    subprocess.run(
+        ["bun", "run", "build"],
+        cwd=EXTENSION,
+        check=True,
+    )
 
     if not SHARED.is_dir():
         sys.exit("✗ Extension/shared source is missing")
@@ -265,8 +241,14 @@ def build_extensions() -> None:
                 elif item.is_dir():
                     shutil.copytree(item, destination)
         # Copy bundled JS files from .build to dist
+        entry_points = {
+            "shared/background.ts": "background.js",
+            "PopUI/popup/popup.ts": "popup.js",
+            "PopUI/imports/imports.ts": "imports.js",
+            "shared/core.ts": "core.js",
+        }
         for out_name in entry_points.values():
-            src = BUILD_DIR / out_name
+            src = EXTENSION / ".build" / out_name
             if src.is_file():
                 shutil.copy2(src, target / out_name)
         shutil.copy2(manifest_source, target / "manifest.json")
