@@ -102,12 +102,69 @@ def lan_ip() -> str:
         return "127.0.0.1"
 
 
+# Explicit load order for bundled classic-script modules. Each bundle dir
+# contains files prefixed with a two-digit order (00-, 10-, ...); this list
+# pins the order so a future file added without a prefix cannot silently
+# change bundle semantics.
+BUNDLE_ORDER = {
+    "background": [
+        "00-domains-and-state.js",
+        "10-websocket-transport.js",
+        "20-live-progress.js",
+        "30-anime-anchor.js",
+        "40-blocked-cache.js",
+        "50-youtube-scan.js",
+        "60-message-router.js",
+        "70-lifecycle.js",
+    ],
+    "popup": [
+        "00-runtime.js",
+        "10-tracking.js",
+        "20-connection-tabs.js",
+        "30-configuration-site.js",
+        "40-source-fields.js",
+        "50-import-manager.js",
+        "60-subscriptions.js",
+        "70-playlist.js",
+        "80-lists-bootstrap.js",
+    ],
+}
+
+
 def bundle_shared_scripts(source_dir: Path) -> str:
-    """Concatenate ordered classic-script modules without changing boundaries."""
+    """Concatenate ordered classic-script modules without changing boundaries.
+
+    Modules are concatenated in BUNDLE_ORDER[source_dir.name] order. Every
+    .js file in the directory must be listed in that order — an unlisted or
+    missing file is a build error, never a silent reorder.
+    """
+    bundle_name = source_dir.name
+    if bundle_name not in BUNDLE_ORDER:
+        sys.exit(f"✗ No bundle order defined for {source_dir.relative_to(ROOT)}")
+
+    expected = BUNDLE_ORDER[bundle_name]
     sources = sorted(source_dir.glob("*.js"))
     if not sources:
         sys.exit(f"✗ No JavaScript source modules found in {source_dir.relative_to(ROOT)}")
-    return "".join(source.read_text(encoding="utf-8") for source in sources)
+
+    actual_names = {p.name for p in sources}
+    expected_names = set(expected)
+    missing = expected_names - actual_names
+    extra = actual_names - expected_names
+    if missing:
+        sys.exit(
+            f"✗ Missing bundle modules in {source_dir.relative_to(ROOT)}: "
+            + ", ".join(sorted(missing))
+        )
+    if extra:
+        sys.exit(
+            f"✗ Unlisted bundle modules in {source_dir.relative_to(ROOT)}: "
+            + ", ".join(sorted(extra))
+            + f" (add to BUNDLE_ORDER['{bundle_name}'] in setup.py)"
+        )
+
+    ordered = [source_dir / name for name in expected]
+    return "".join(source.read_text(encoding="utf-8") for source in ordered)
 
 
 def build_extensions() -> None:

@@ -1,10 +1,22 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { execSync } = require("node:child_process");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const popupSource = fs.readFileSync(path.join(__dirname, "../dist/mv3/popup.js"), "utf8");
+// Ensure the extension is built before loading the popup source. CI runs
+// `python3 setup.py --build-extensions-only` first, but local test runs
+// (and anyone running `node --test` directly) need a dist to read from.
+const distPopup = path.join(__dirname, "..", "dist", "mv3", "popup.js");
+if (!fs.existsSync(distPopup)) {
+  execSync("python3 setup.py --build-extensions-only", {
+    cwd: path.join(__dirname, "..", ".."),
+    stdio: "inherit",
+  });
+}
+
+const popupSource = fs.readFileSync(distPopup, "utf8");
 
 class Element {
   constructor(id = "", tagName = "div") {
