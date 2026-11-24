@@ -4,7 +4,8 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const pageSource = fs.readFileSync(path.join(__dirname, "../shared/imports.js"), "utf8");
+const distPage = path.join(__dirname, "..", "dist", "mv3", "imports.js");
+const pageSource = fs.readFileSync(distPage, "utf8");
 
 class Element {
   constructor(id = "", tagName = "div") {

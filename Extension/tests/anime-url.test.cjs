@@ -5,7 +5,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const source = fs.readFileSync(
-  path.join(__dirname, "../shared/modules/anime-url.js"),
+  path.join(__dirname, "../dist/mv3/modules/anime-url.js"),
   "utf8",
 );
 const sandbox = { window: {}, URL, URLSearchParams };

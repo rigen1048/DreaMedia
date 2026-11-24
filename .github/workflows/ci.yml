@@ -66,8 +66,11 @@ jobs:
                   assert manifest["background"]["service_worker"] == "background.js"
                   assert manifest["action"]["default_popup"] == "popup.html"
                   assert "default_icon" in manifest["action"], f"{variant} missing default_icon"
-              required = {"background.js", "popup.js", "imports.js", "core.js", "manifest.json"}
+              required = {"background.js", "popup.js", "imports.js", "scan-table.js", "core.js", "manifest.json"}
               actual = {path.name for path in output.iterdir() if path.is_file()}
               assert required.issubset(actual), (variant, sorted(required - actual))
+              # These are compiled package outputs from strict TypeScript sources.
+              for module in ("anime-url.js", "anime.js", "youtube.js", "youtube-import.js"):
+                  assert (output / "modules" / module).is_file(), f"{variant} missing modules/{module}"
           print("Both generated packages contain the required files and correct manifests.")
           PY

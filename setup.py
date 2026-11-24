@@ -109,18 +109,14 @@ def lan_ip() -> str:
 # change bundle semantics.
 BUNDLE_ORDER = {
     "background": [
-        "background.ts",
-    ],
-    "popup": [
-        "00-runtime.js",
-        "10-tracking.js",
-        "20-connection-tabs.js",
-        "30-configuration-site.js",
-        "40-source-fields.js",
-        "50-import-manager.js",
-        "60-subscriptions.js",
-        "70-playlist.js",
-        "80-lists-bootstrap.js",
+        "00-domains-and-state.ts",
+        "10-websocket-transport.ts",
+        "20-live-progress.ts",
+        "30-anime-anchor.ts",
+        "40-blocked-cache.ts",
+        "50-youtube-scan.ts",
+        "60-message-router.ts",
+        "70-lifecycle.ts",
     ],
 }
 
@@ -128,8 +124,8 @@ BUNDLE_ORDER = {
 def bundle_shared_scripts(source_dir: Path) -> str:
     """Concatenate ordered classic-script modules without changing boundaries.
 
-    Modules are concatenated in BUNDLE_ORDER[source_dir.name] order. Every
-    .js file in the directory must be listed in that order — an unlisted or
+    TypeScript modules are concatenated in BUNDLE_ORDER[source_dir.name] order. Every
+    .ts file in the directory must be listed in that order — an unlisted or
     missing file is a build error, never a silent reorder.
     """
     bundle_name = source_dir.name
@@ -137,9 +133,9 @@ def bundle_shared_scripts(source_dir: Path) -> str:
         sys.exit(f"✗ No bundle order defined for {source_dir.relative_to(ROOT)}")
 
     expected = BUNDLE_ORDER[bundle_name]
-    sources = sorted(source_dir.glob("*.js"))
+    sources = sorted(source_dir.glob("*.ts"))
     if not sources:
-        sys.exit(f"✗ No JavaScript source modules found in {source_dir.relative_to(ROOT)}")
+        sys.exit(f"✗ No TypeScript source modules found in {source_dir.relative_to(ROOT)}")
 
     actual_names = {p.name for p in sources}
     expected_names = set(expected)
@@ -172,15 +168,25 @@ def build_extensions() -> None:
         check=True,
     )
 
-    # ── Step 2: bun run build (typecheck + bundle via bunx) ───────────
+    if not SHARED.is_dir():
+        sys.exit("✗ Extension/shared source is missing")
+    runtime_background = EXTENSION / ".build" / "runtime-background.ts"
+    runtime_background.parent.mkdir(parents=True, exist_ok=True)
+    runtime_background.write_text(
+        bundle_shared_scripts(SHARED / "background"), encoding="utf-8"
+    )
+
+    # ── Step 2: bun run build (strict typecheck + browser bundles) ─────
     subprocess.run(
         ["bun", "run", "build"],
         cwd=EXTENSION,
         check=True,
     )
-
-    if not SHARED.is_dir():
-        sys.exit("✗ Extension/shared source is missing")
+    subprocess.run(
+        ["bun", "run", "build:runtime"],
+        cwd=EXTENSION,
+        check=True,
+    )
     if EXTENSION.is_symlink() or DIST.is_symlink():
         sys.exit("✗ Extension and Extension/dist must not be symlinks")
     extension_root = EXTENSION.resolve()
@@ -190,7 +196,7 @@ def build_extensions() -> None:
     if DIST.exists() and not DIST.is_dir():
         sys.exit("✗ Extension/dist exists but is not a directory")
 
-    bundled_dirs = {"background", "popup"}
+    bundled_dirs = {"background", "modules", "popup"}
     for variant, manifest_version in (("mv2", 2), ("mv3", 3)):
         manifest_source = TARGETS / variant / "manifest.json"
         if not manifest_source.is_file():
@@ -242,16 +248,25 @@ def build_extensions() -> None:
                     shutil.copytree(item, destination)
         # Copy bundled JS files from .build to dist
         entry_points = {
-            "shared/background.ts": "background.js",
-            "PopUI/popup/popup.ts": "popup.js",
-            "PopUI/imports/imports.ts": "imports.js",
-            "PopUI/scan-table/scan-table.ts": "scan-table.js",
-            "shared/core.ts": "core.js",
+            "runtime-background.js": "background.js",
+            "popup.js": "popup.js",
+            "imports.js": "imports.js",
+            "scan-table.js": "scan-table.js",
+            "core.js": "core.js",
         }
-        for out_name in entry_points.values():
-            src = EXTENSION / ".build" / out_name
-            if src.is_file():
-                shutil.copy2(src, target / out_name)
+        for source_name, out_name in entry_points.items():
+            src = EXTENSION / ".build" / source_name
+            if not src.is_file():
+                sys.exit(f"✗ Expected extension bundle is missing: {src.relative_to(ROOT)}")
+            shutil.copy2(src, target / out_name)
+        module_output = EXTENSION / ".build" / "modules"
+        target_modules = target / "modules"
+        target_modules.mkdir()
+        for module_name in ("anime-url.js", "anime.js", "youtube.js", "youtube-import.js"):
+            src = module_output / module_name
+            if not src.is_file():
+                sys.exit(f"✗ Expected content bundle is missing: {src.relative_to(ROOT)}")
+            shutil.copy2(src, target_modules / module_name)
         shutil.copy2(manifest_source, target / "manifest.json")
         print(f"→ extension built: Extension/dist/{variant}/ ({len(list(target.iterdir()))} entries)")
 

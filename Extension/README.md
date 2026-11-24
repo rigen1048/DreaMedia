@@ -84,16 +84,18 @@ for the original AGPL-3.0 license.
 
 ## Files
 
-- `shared/` — the single source of truth: content modules, popup/background
-  source modules, shared styles, icons, and the import table.
-- `shared/background/` and `shared/popup/` are concatenated in filename order;
-  numeric prefixes define their script order.
+- `shared/background/` — strict TypeScript classic-script runtime modules;
+  numeric prefixes define their concatenation order in `setup.py`.
+- `shared/modules/` — strict TypeScript content modules, compiled to JavaScript
+  for each target package and dynamically registered only for enabled sites.
+- `shared/` and `PopUI/` — TypeScript sources for the shared video core and
+  popup, imports, and scan-table pages; Bun builds their browser bundles.
 - `targets/mv2/manifest.json` and `targets/mv3/manifest.json` — the only
   browser-specific source files.
 - `dist/mv2/` and `dist/mv3/` — generated, ignored loadable packages. Do not
   edit them; rebuild with `python3 setup.py --build-extensions-only`.
-- After building, run `node --test Extension/tests/*.test.cjs` to exercise the
-  shared feature modules and generated popup bundle.
+- After building, run `bun test Extension/tests/*.test.cjs` to exercise the
+  generated content modules and popup/import-table bundles.
 
 The background worker is the only backend network lane: content, popup, and
 import manager scripts message it; all GraphQL queries and mutations use one

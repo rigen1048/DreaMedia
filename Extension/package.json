@@ -5,7 +5,8 @@
   "description": "DreaMedia browser extension (MV2/MV3) — TypeScript build",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit && esbuild shared/background.ts --bundle --outfile=.build/background.js --format=iife --platform=browser && esbuild PopUI/popup/popup.ts --bundle --outfile=.build/popup.js --format=iife --platform=browser && esbuild PopUI/imports/imports.ts --bundle --outfile=.build/imports.js --format=iife --platform=browser && esbuild shared/core.ts --bundle --outfile=.build/core.js --format=iife --platform=browser",
+    "build": "tsc --noEmit && esbuild PopUI/popup/popup.ts --bundle --outfile=.build/popup.js --format=iife --platform=browser && esbuild PopUI/imports/imports.ts --bundle --outfile=.build/imports.js --format=iife --platform=browser && esbuild PopUI/scan-table/scan-table.ts --bundle --outfile=.build/scan-table.js --format=iife --platform=browser && esbuild shared/core.ts --bundle --outfile=.build/core.js --format=iife --platform=browser && esbuild shared/modules/*.ts --outdir=.build/modules --format=iife --platform=browser",
+    "build:runtime": "esbuild .build/runtime-background.ts --bundle --outfile=.build/runtime-background.js --format=iife --platform=browser",
     "test": "bun test tests/*.test.cjs"
   },
   "devDependencies": {

@@ -6,7 +6,7 @@ const vm = require("node:vm");
 
 const extensionRoot = path.join(__dirname, "..");
 const animeSource = fs.readFileSync(
-  path.join(extensionRoot, "shared/modules/anime.js"),
+  path.join(extensionRoot, "dist/mv3/modules/anime.js"),
   "utf8",
 );
 
@@ -137,8 +137,8 @@ test("auto-matches the page title and reports the bound video's episode and time
 });
 
 test("anime bindings are per-tab memory and the popup has no manual bind control", () => {
-  const popup = fs.readFileSync(path.join(extensionRoot, "shared/popup.html"), "utf8");
-  const moduleSource = fs.readFileSync(path.join(extensionRoot, "shared/modules/anime.js"), "utf8");
+  const popup = fs.readFileSync(path.join(extensionRoot, "PopUI/popup/popup.html"), "utf8");
+  const moduleSource = fs.readFileSync(path.join(extensionRoot, "dist/mv3/modules/anime.js"), "utf8");
   assert.doesNotMatch(popup, /Bind anime|Bind tab|trackTab|trackPanel/);
   assert.doesNotMatch(moduleSource, /chrome\.storage\.(?:session|local)/);
   assert.match(popup, /id="trackingCard"/);
