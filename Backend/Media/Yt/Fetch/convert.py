@@ -56,7 +56,7 @@ def resolve_channel(link: str) -> Result[ChannelInfo, str]:
         # Handle forms: @HANDLE[/anything] or a bare handle
         handle = link
         if "youtube.com" in handle:
-            match = re.search(r"youtube\.com/(@[A-Za-z0-9_.-]+)", handle)
+            match = re.search(r"youtube\.com/(@[A-Za-z0-9_.%-]+)", handle)
             if not match:
                 return Failure(f"unrecognized channel link: {link}")
             handle = match.group(1)
