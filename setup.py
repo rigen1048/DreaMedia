@@ -27,6 +27,7 @@ BACKEND = ROOT / "Backend"
 FRONTEND = ROOT / "Frontend"
 EXTENSION = ROOT / "Extension"
 SHARED = EXTENSION / "shared"
+POPUI = EXTENSION / "PopUI"
 TARGETS = EXTENSION / "targets"
 DIST = EXTENSION / "dist"
 STATE = ROOT / ".last-pgpass-sha"
@@ -108,14 +109,7 @@ def lan_ip() -> str:
 # change bundle semantics.
 BUNDLE_ORDER = {
     "background": [
-        "00-domains-and-state.js",
-        "10-websocket-transport.js",
-        "20-live-progress.js",
-        "30-anime-anchor.js",
-        "40-blocked-cache.js",
-        "50-youtube-scan.js",
-        "60-message-router.js",
-        "70-lifecycle.js",
+        "background.ts",
     ],
     "popup": [
         "00-runtime.js",
@@ -169,6 +163,46 @@ def bundle_shared_scripts(source_dir: Path) -> str:
 
 def build_extensions() -> None:
     """Build both loadable packages from shared source and target manifests."""
+    # ── Step 1: Typecheck TypeScript ─────────────────────────────────
+    if not (EXTENSION / "tsconfig.json").is_file():
+        sys.exit("✗ Extension/tsconfig.json is missing")
+    subprocess.run(
+        ["npx", "tsc", "--noEmit"],
+        cwd=EXTENSION,
+        check=True,
+    )
+
+    # ── Step 2: Bundle each entry point to classic-script JS via esbuild ─
+    BUILD_DIR = EXTENSION / ".build"
+    if BUILD_DIR.exists():
+        shutil.rmtree(BUILD_DIR)
+    BUILD_DIR.mkdir(parents=True)
+
+    entry_points = {
+        "shared/background.ts": "background.js",
+        "PopUI/popup/popup.ts": "popup.js",
+        "PopUI/imports/imports.ts": "imports.js",
+        "shared/core.ts": "core.js",
+    }
+    for src, out in entry_points.items():
+        src_path = EXTENSION / src
+        out_path = BUILD_DIR / out
+        if not src_path.is_file():
+            sys.exit(f"✗ Entry point missing: {src}")
+        subprocess.run(
+            [
+                "npx",
+                "esbuild",
+                str(src_path),
+                "--bundle",
+                "--outfile=" + str(out_path),
+                "--format=iife",
+                "--platform=browser",
+            ],
+            cwd=EXTENSION,
+            check=True,
+        )
+
     if not SHARED.is_dir():
         sys.exit("✗ Extension/shared source is missing")
     if EXTENSION.is_symlink() or DIST.is_symlink():
@@ -202,18 +236,39 @@ def build_extensions() -> None:
                 sys.exit(f"✗ Unsafe generated target path: {target.relative_to(ROOT)}")
             shutil.rmtree(target)
         target.mkdir(parents=True)
+        # Copy shared assets (excluding bundled dirs, .ts files)
         for source in sorted(SHARED.iterdir()):
             if source.name in bundled_dirs:
                 continue
             destination = target / source.name
             if source.is_file():
+                if source.suffix == ".ts":
+                    continue
                 shutil.copy2(source, destination)
             elif source.is_dir():
-                shutil.copytree(source, destination)
-        for bundle in ("background", "popup"):
-            (target / f"{bundle}.js").write_text(
-                bundle_shared_scripts(SHARED / bundle), encoding="utf-8"
-            )
+                shutil.copytree(
+                    source,
+                    destination,
+                    ignore=shutil.ignore_patterns("*.ts"),
+                )
+        # Copy compiled PopUI pages (popup.html, popup.css, imports.*, etc.)
+        for popui_dir in ("popup", "imports"):
+            source = POPUI / popui_dir
+            if not source.is_dir():
+                continue
+            for item in sorted(source.iterdir()):
+                if item.suffix == ".ts":
+                    continue
+                destination = target / item.name
+                if item.is_file():
+                    shutil.copy2(item, destination)
+                elif item.is_dir():
+                    shutil.copytree(item, destination)
+        # Copy bundled JS files from .build to dist
+        for out_name in entry_points.values():
+            src = BUILD_DIR / out_name
+            if src.is_file():
+                shutil.copy2(src, target / out_name)
         shutil.copy2(manifest_source, target / "manifest.json")
         print(f"→ extension built: Extension/dist/{variant}/ ({len(list(target.iterdir()))} entries)")
 

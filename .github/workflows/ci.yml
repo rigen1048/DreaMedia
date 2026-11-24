@@ -29,7 +29,7 @@ jobs:
       - run: uv sync --frozen
       # Compile check only: the test suite needs live Postgres, YouTube and
       # AniList — those run locally, not in CI.
-      - run: uv run python -m compileall -q App Auth Admin Config Database Extension Gate Graphql Media Model Utility
+      - run: uv run python -m compileall -q App Auth Admin Config Database Gate Graphql Media Model Utility
 
   extension:
     runs-on: ubuntu-latest
@@ -38,12 +38,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: install extension dependencies
+        run: npm install
+        working-directory: Extension
       - name: build MV2 and MV3 from shared source
         run: python3 setup.py --build-extensions-only
       - name: run extension tests
         run: node --test Extension/tests/*.test.cjs
-      - name: syntax-check shared source and generated packages
-        run: find Extension/shared Extension/dist -type f -name '*.js' -print0 | xargs -0 -r -n1 node --check
+      - name: syntax-check generated packages
+        run: find Extension/dist -type f -name '*.js' -print0 | xargs -0 -r -n1 node --check
       - name: validate generated package contents
         run: |
           python3 - <<'PY'
@@ -51,19 +54,6 @@ jobs:
           from pathlib import Path
 
           root = Path("Extension")
-          shared = root / "shared"
-          bundle_sources = {"background", "popup"}
-          expected_shared = {
-              path.relative_to(shared).as_posix()
-              for path in shared.rglob("*")
-              if path.is_file() and path.relative_to(shared).parts[0] not in bundle_sources
-          }
-          expected = expected_shared | {"background.js", "popup.js", "manifest.json"}
-          def bundle(source_dir):
-              modules = sorted(source_dir.glob("*.js"))
-              return "".join(module.read_text() for module in modules)
-
-          bundles = {}
           for variant, version in (("mv2", 2), ("mv3", 3)):
               output = root / "dist" / variant
               manifest = json.loads((output / "manifest.json").read_text())
@@ -77,11 +67,8 @@ jobs:
                   assert manifest["background"]["service_worker"] == "background.js"
                   assert manifest["action"]["default_popup"] == "popup.html"
                   assert "default_icon" in manifest["action"], f"{variant} missing default_icon"
-              actual = {path.relative_to(output).as_posix() for path in output.rglob("*") if path.is_file()}
-              assert actual == expected, (variant, sorted(expected - actual), sorted(actual - expected))
-              assert (output / "background.js").read_text() == bundle(shared / "background")
-              assert (output / "popup.js").read_text() == bundle(shared / "popup")
-              bundles[variant] = ((output / "background.js").read_bytes(), (output / "popup.js").read_bytes())
-          assert bundles["mv2"] == bundles["mv3"], "shared bundles differ between targets"
-          print("Both generated packages contain the same shared runtime and their correct manifests.")
+              required = {"background.js", "popup.js", "imports.js", "core.js", "manifest.json"}
+              actual = {path.name for path in output.iterdir() if path.is_file()}
+              assert required.issubset(actual), (variant, sorted(required - actual))
+          print("Both generated packages contain the required files and correct manifests.")
           PY
