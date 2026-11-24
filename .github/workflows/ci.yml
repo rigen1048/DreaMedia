@@ -68,12 +68,15 @@ jobs:
               output = root / "dist" / variant
               manifest = json.loads((output / "manifest.json").read_text())
               assert manifest.get("manifest_version") == version, variant
+              assert manifest.get("icons"), f"{variant} missing icons"
               if version == 2:
                   assert manifest["background"]["scripts"] == ["background.js"]
                   assert manifest["browser_action"]["default_popup"] == "popup.html"
+                  assert "default_icon" in manifest["browser_action"], f"{variant} missing default_icon"
               else:
                   assert manifest["background"]["service_worker"] == "background.js"
                   assert manifest["action"]["default_popup"] == "popup.html"
+                  assert "default_icon" in manifest["action"], f"{variant} missing default_icon"
               actual = {path.relative_to(output).as_posix() for path in output.rglob("*") if path.is_file()}
               assert actual == expected, (variant, sorted(expected - actual), sorted(actual - expected))
               assert (output / "background.js").read_text() == bundle(shared / "background")
