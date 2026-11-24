@@ -228,7 +228,7 @@ def build_extensions() -> None:
                     ignore=shutil.ignore_patterns("*.ts"),
                 )
         # Copy compiled PopUI pages (popup.html, popup.css, imports.*, etc.)
-        for popui_dir in ("popup", "imports"):
+        for popui_dir in ("popup", "imports", "scan-table"):
             source = POPUI / popui_dir
             if not source.is_dir():
                 continue
@@ -245,6 +245,7 @@ def build_extensions() -> None:
             "shared/background.ts": "background.js",
             "PopUI/popup/popup.ts": "popup.js",
             "PopUI/imports/imports.ts": "imports.js",
+            "PopUI/scan-table/scan-table.ts": "scan-table.js",
             "shared/core.ts": "core.js",
         }
         for out_name in entry_points.values():

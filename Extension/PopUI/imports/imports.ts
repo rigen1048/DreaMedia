@@ -5,6 +5,8 @@
  * No `any` type permitted.
  */
 
+export {};
+
 const $ = (id: string): HTMLElement => {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Missing DOM element: #${id}`);

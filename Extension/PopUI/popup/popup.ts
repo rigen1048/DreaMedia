@@ -638,6 +638,17 @@ $("openImportTable").addEventListener("click", () => {
   );
 });
 
+$("openScanTable").addEventListener("click", () => {
+  chrome.tabs.create(
+    { url: chrome.runtime.getURL("scan-table.html") },
+    (tab) => {
+      if (tab?.id != null) {
+        chrome.storage.local.set({ importTableTabId: tab.id });
+      }
+    }
+  );
+});
+
 async function trackImportJob(jobId: string, requested: number): Promise<void> {
   if (activeImportJobs.has(jobId)) return;
   scanStatusMessage = "";
@@ -883,6 +894,17 @@ action(
       : [];
     subscriptionScanComplete =
       (response as { data?: { complete?: boolean } }).data?.complete === true;
+    const scanChannels = scannedSubscriptions.map((ch) => ({
+      url: ch.url,
+      name: ch.name,
+      status: "pending",
+      result: "Waiting to be added",
+      scannedAt: Date.now(),
+    }));
+    await chrome.storage.local.set({ youtubeScanChannels: scanChannels });
+    const scanButton = $("openScanTable");
+    scanButton.hidden = scanChannels.length === 0;
+    $("scanTableMeta").textContent = `${scanChannels.length} scanned`;
     renderSubscriptionPreview();
     if (!scannedSubscriptions.length) {
       setImportScanStatus(
@@ -1078,6 +1100,15 @@ async function initializePopup(): Promise<void> {
   }
   await loadLists(configured);
   if (configured) await resumeImportJobs();
+  // Restore scan table button visibility from stored channels
+  const stored = await chrome.storage.local.get(["youtubeScanChannels"]);
+  const savedChannels = Array.isArray(stored.youtubeScanChannels)
+    ? stored.youtubeScanChannels
+    : [];
+  if (savedChannels.length > 0) {
+    $("openScanTable").hidden = false;
+    $("scanTableMeta").textContent = `${savedChannels.length} scanned`;
+  }
   await refreshTrackingStatus();
   setInterval(() => void refreshTrackingStatus(), 1000);
 }

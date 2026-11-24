@@ -8,6 +8,8 @@
  * No `any` type permitted.
  */
 
+export {};
+
 interface VideoAttachHandlers {
   onAttach?: (video: HTMLVideoElement) => void;
   onEnded?: (video: HTMLVideoElement) => void;
