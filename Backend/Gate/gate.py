@@ -28,6 +28,10 @@ class _Gate:
     # immediately (nothing to space from yet).
     last_fetch: float = 0.0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # At most one fetch in flight per lane. The conveyor spaces fetch *starts*
+    # apart, but if a fetch takes longer than the slot interval two fetches
+    # would otherwise overlap — the semaphore prevents that.
+    in_flight: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(1))
 
 
 class GateRegistry:
@@ -91,14 +95,17 @@ class GateRegistry:
                             gate.last_fetch = slot
                         if slot > now:
                             await asyncio.sleep(slot - now)
-                        try:
-                            result = await fn()
-                        except Exception as exc:
-                            if not future.done():
-                                future.set_exception(exc)
-                        else:
-                            if not future.done():
-                                future.set_result(result)
+                        # One fetch in flight per lane — prevents overlap when a
+                        # fetch takes longer than the slot interval.
+                        async with gate.in_flight:
+                            try:
+                                result = await fn()
+                            except Exception as exc:
+                                if not future.done():
+                                    future.set_exception(exc)
+                            else:
+                                if not future.done():
+                                    future.set_result(result)
                 finally:
                     gate.queue.task_done()
         except asyncio.CancelledError:
