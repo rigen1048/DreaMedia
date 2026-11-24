@@ -419,6 +419,8 @@ function renderFailedImportJobs() {
   let total = 0;
   for (const job of failedImportJobs.values()) total += job.items.length;
   details.hidden = total === 0;
+  $("failedImportShortcut").hidden = total === 0;
+  $("failedImportShortcutLabel").textContent = `${total} failed`;
   $("failedImportSummary").textContent = `Failed channels (${total})`;
 
   for (const job of failedImportJobs.values()) {
@@ -433,8 +435,10 @@ function renderFailedImportJobs() {
     const retry = document.createElement("button");
     retry.type = "button";
     retry.className = "secondary failed-import-retry";
-    retry.textContent = retryableCount ? `Retry ${retryableCount}` : "No retryable links";
-    retry.disabled = retryableCount === 0;
+    retry.textContent = !retryableCount
+      ? "No retryable links"
+      : job.canRetry ? `Retry ${retryableCount}` : "Batch running";
+    retry.disabled = retryableCount === 0 || !job.canRetry;
     retry.addEventListener("click", () => void retryFailedImportJob(job.jobId, retry));
     heading.append(label, retry);
 
@@ -457,6 +461,36 @@ function renderFailedImportJobs() {
     list.append(jobRow);
   }
 }
+
+function syncFailedImportJob(jobId, job) {
+  const current = failedImportJobs.get(jobId);
+  const failures = Array.isArray(job.failedItems) ? job.failedItems : [];
+  const canRetry = job.status === "completed" || job.status === "partial";
+  let next = null;
+  if (failures.length) {
+    next = { jobId, items: failures, canRetry };
+  } else if (job.failed) {
+    next = { jobId, items: current?.items || [], canRetry };
+  } else if (current) {
+    failedImportJobs.delete(jobId);
+    return true;
+  } else {
+    return false;
+  }
+  if (!current || current.canRetry !== next.canRetry ||
+      JSON.stringify(current.items) !== JSON.stringify(next.items)) {
+    failedImportJobs.set(jobId, next);
+    return true;
+  }
+  return false;
+}
+
+$("failedImportShortcut").addEventListener("click", () => {
+  const details = $("failedImports");
+  if (details.hidden) return;
+  details.open = true;
+  $("failedImportSummary").focus();
+});
 
 async function retryFailedImportJob(jobId, button) {
   button.disabled = true;
@@ -549,14 +583,14 @@ async function pollImportJob(jobId) {
         setImportJobStatus(`Import job ${jobId.slice(0, 8)} was not found for this account.`, "err");
         break;
       }
+      const failuresChanged = syncFailedImportJob(jobId, job);
+      if (failuresChanged) {
+        renderFailedImportJobs();
+        await persistImportJobIds();
+      }
       const progress = `${job.resolved}/${job.requested} resolved · ${job.processed}/${job.requested} processed · ${job.added} added · ${job.skipped} already present · ${job.failed} failed`;
       if (job.status === "completed" || job.status === "partial") {
         activeImportJobs.delete(jobId);
-        const failures = Array.isArray(job.failedItems) ? job.failedItems : [];
-        if (failures.length) failedImportJobs.set(jobId, { jobId, items: failures });
-        else if (!job.failed) failedImportJobs.delete(jobId);
-        else failedImportJobs.set(jobId, { jobId, items: [] });
-        renderFailedImportJobs();
         await persistImportJobIds();
         const summary = `Import ${job.status === "completed" ? "complete" : "finished with errors"} (${jobId.slice(0, 8)}): ${progress}.`;
         setImportJobStatus(job.errors?.length ? `${summary} ${job.errors[0]}` : summary, job.failed ? "err" : "ok");
@@ -578,12 +612,8 @@ async function refreshFailedImportJob(jobId) {
   const job = response.data;
   if (!job) {
     failedImportJobs.delete(jobId);
-  } else if (job.failedItems?.length) {
-    failedImportJobs.set(jobId, { jobId, items: job.failedItems });
-  } else if (!job.failed) {
-    failedImportJobs.delete(jobId);
   } else {
-    failedImportJobs.set(jobId, { jobId, items: [] });
+    syncFailedImportJob(jobId, job);
   }
 }
 

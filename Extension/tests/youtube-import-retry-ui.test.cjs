@@ -29,7 +29,7 @@ class Element {
   querySelector() { return new Element("use"); }
 }
 
-function setupPopup(initialStorage = {}) {
+function setupPopup(initialStorage = {}, firstJobStatus = "partial") {
   const elements = new Map();
   const tabs = ["subscribeTab", "playlistTab"].map((id, index) => {
     const tab = new Element(id, "button");
@@ -70,17 +70,21 @@ function setupPopup(initialStorage = {}) {
       case "dreamedia:scanYoutubeSubscriptions":
         return {
           ok: true,
-          data: { complete: true, channels: [{ name: "Example Channel", url: "https://www.youtube.com/@example" }] },
+          data: { complete: true, channels: [
+            { name: "Example Channel", url: "https://www.youtube.com/@example" },
+            { name: "Second Channel", url: "https://www.youtube.com/@second" },
+          ] },
         };
       case "dreamedia:startYoutubeImport":
-        return { ok: true, data: { jobId: "original-job", requested: 1, status: "queued" } };
+        return { ok: true, data: { jobId: "original-job", requested: 2, status: "queued" } };
       case "dreamedia:youtubeImportStatus":
         if (message.jobId === "original-job") {
           return {
             ok: true,
             data: {
-              jobId: "original-job", status: "partial", requested: 1, processed: 1,
-              resolved: 0, added: 0, skipped: 0, failed: 1,
+              jobId: "original-job", status: firstJobStatus, requested: 2,
+              processed: firstJobStatus === "running" ? 1 : 2,
+              resolved: 1, added: 0, skipped: 0, failed: 1,
               failedItems: [{
                 link: "https://www.youtube.com/@example",
                 error: "https://www.youtube.com/@example: temporary resolver failure",
@@ -147,11 +151,16 @@ test("popup displays a failed channel and retries it as a new durable job", asyn
 
   const details = elements.get("failedImports");
   assert.equal(details.hidden, false);
+  assert.equal(elements.get("failedImportShortcut").hidden, false);
+  assert.equal(elements.get("failedImportShortcutLabel").textContent, "1 failed");
   assert.equal(elements.get("failedImportSummary").textContent, "Failed channels (1)");
   const row = elements.get("failedImportList").children[0];
   const retryButton = row.children[0].children[1];
   assert.equal(retryButton.textContent, "Retry 1");
   assert.match(row.children[1].children[0].children[0].textContent, /@example/);
+
+  elements.get("failedImportShortcut").listeners.get("click")();
+  assert.equal(details.open, true);
 
   retryButton.listeners.get("click")();
   await flushPopup();
@@ -168,4 +177,22 @@ test("popup restores the failed-channel list from stored job IDs after reopening
   assert.equal(elements.get("failedImports").hidden, false);
   assert.equal(elements.get("failedImportSummary").textContent, "Failed channels (1)");
   assert.match(elements.get("failedImportList").children[0].children[1].children[0].children[0].textContent, /@example/);
+});
+
+test("visible failed shortcut opens the live failure list while the batch is importing", async () => {
+  const { elements, storage } = setupPopup({}, "running");
+  await flushPopup();
+  await elements.get("scanSubscriptions").listeners.get("click")();
+  await elements.get("subscribe").listeners.get("click")();
+  await flushPopup();
+
+  assert.match(elements.get("importStatus").textContent, /Importing/);
+  assert.equal(elements.get("failedImportShortcut").hidden, false);
+  assert.equal(elements.get("failedImportList").children.length, 1);
+  const retryButton = elements.get("failedImportList").children[0].children[0].children[1];
+  assert.equal(retryButton.textContent, "Batch running");
+  assert.equal(retryButton.disabled, true);
+  elements.get("failedImportShortcut").listeners.get("click")();
+  assert.equal(elements.get("failedImports").open, true);
+  assert.ok(Array.from(storage.youtubeFailedImportJobIds).includes("original-job"));
 });
