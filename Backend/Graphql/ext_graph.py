@@ -124,14 +124,22 @@ class ExtQuery:
         ]
 
     @strawberry.field
-    async def youtube_import_job(self, info: Info, job_id: str) -> Optional[YoutubeImportStatus]:
+    async def youtube_import_job(
+        self, info: Info, job_id: str, include_items: bool = False,
+    ) -> Optional[YoutubeImportStatus]:
         """Owner-scoped progress for a queued bulk Add Source operation."""
-        status = await get_youtube_import_status(await _ext_uid(info), job_id)
+        status = await get_youtube_import_status(
+            await _ext_uid(info), job_id, include_items=include_items
+        )
         if not status:
             return None
         return YoutubeImportStatus(
             **{
                 **status,
+                "items": [
+                    YoutubeImportItem(**item)
+                    for item in (status.get("items") or [])
+                ],
                 "failed_items": [
                     YoutubeImportFailure(**failure)
                     for failure in (status.get("failed_items") or [])
@@ -230,6 +238,15 @@ class YoutubeImportFailure:
 
 
 @strawberry.type
+class YoutubeImportItem:
+    ordinal: int
+    link: str
+    status: str
+    error: Optional[str]
+    retryable: bool
+
+
+@strawberry.type
 class YoutubeImportStatus:
     job_id: str
     status: str
@@ -241,6 +258,7 @@ class YoutubeImportStatus:
     failed: int
     errors: List[str]
     failed_items: List[YoutubeImportFailure]
+    items: List[YoutubeImportItem]
 
 
 @strawberry.type

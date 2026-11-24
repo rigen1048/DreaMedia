@@ -12,3 +12,4 @@ backups/*
 qa/shots/
 Backend/backups/*.dump
 .last-pgpass-sha
+Extension/dist/

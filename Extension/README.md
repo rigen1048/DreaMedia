@@ -35,12 +35,14 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
 
 1. In DreaMedia (web): open **Ext → Token** and select **Issue new token**. The raw
    token is shown once — copy it.
-2. Load the extension:
+2. From the repository root, build both browser packages:
+   `python3 setup.py --build-extensions-only`.
+3. Load the generated extension:
    - **Chrome/Edge/Brave**: `chrome://extensions` → Developer mode →
-     "Load unpacked" → pick `mv3/`.
+     "Load unpacked" → pick `Extension/dist/mv3/`.
    - **Firefox**: `about:debugging#/runtime/this-firefox` →
-     "Load Temporary Add-on" → pick `mv2/manifest.json`.
-3. Open the popup’s **Connection settings** (gear icon). Enter your backend
+     "Load Temporary Add-on" → pick `Extension/dist/mv2/manifest.json`.
+4. Open the popup’s **Connection settings** (gear icon). Enter your backend
    URL (`http://127.0.0.1:8123` by default) and token, then select **Save & connect**.
    The footer reports the authenticated WebSocket connection state.
    The browser asks once for HTTP/HTTPS access to all sites at installation;
@@ -72,26 +74,32 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
   to a tracked anime, estimates its episode from the URL, and shows the attached
   video's live time. Matching and progress state are isolated per tab.
 
-This directory replaces `Extension/` in DreaMedia. `mv2/` and `mv3/` are
-ready to load without a frontend build. The surrounding Make project is a
-preview with sample data and is not needed by either browser package.
+This directory replaces `Extension/` in DreaMedia. The browser packages are
+generated from one shared source tree; no frontend build is needed. The
+surrounding Make project is a preview with sample data and is not needed by
+either browser package.
 The UI uses the dark zinc theme, `d/m` mark, and terminology from DreaMedia’s
 current frontend (upstream revision `a906e3f`). See `LICENSE`
 for the original AGPL-3.0 license.
 
 ## Files
 
-- `shared/` — the single source of truth (content/popup/background).
-- `mv3/`, `mv2/` — loadable packages (variant manifests/icons + synchronized
-  copies of the shared source).
-- After editing `shared/`, run `python3 setup.py --build-extensions-only` to
-  synchronize both packages without starting or resetting the DreaMedia stack.
+- `shared/` — the single source of truth: content modules, popup/background
+  source modules, shared styles, icons, and the import table.
+- `shared/background/` and `shared/popup/` are concatenated in filename order;
+  numeric prefixes define their script order.
+- `targets/mv2/manifest.json` and `targets/mv3/manifest.json` — the only
+  browser-specific source files.
+- `dist/mv2/` and `dist/mv3/` — generated, ignored loadable packages. Do not
+  edit them; rebuild with `python3 setup.py --build-extensions-only`.
+- After building, run `node --test Extension/tests/*.test.cjs` to exercise the
+  shared feature modules and generated popup bundle.
 
-The background worker is the only backend network lane: content and popup
-scripts message it, and all GraphQL queries and mutations use one persistent
-`graphql-transport-ws` connection to `/ext/graphql`. The extension sends its
-token once in `connection_init`; the backend validates it for the socket and
-reuses that identity until the connection closes. The worker sends a ping every
+The background worker is the only backend network lane: content, popup, and
+import manager scripts message it; all GraphQL queries and mutations use one
+persistent `graphql-transport-ws` connection to `/ext/graphql`. The extension
+sends its token once in `connection_init`; the backend validates it for the
+socket and reuses that identity until the connection closes. The worker sends a ping every
 20 seconds and requires the server's pong within 10 seconds. The popup shows green
 only for an authenticated, responsive socket; it shows yellow while reconnecting
 and red only after a 30-second outage. The socket starts only while at least one

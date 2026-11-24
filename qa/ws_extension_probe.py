@@ -1,4 +1,4 @@
-"""Client-side probe mirroring Extension/shared/background.js.
+"""Client-side probe mirroring Extension/shared/background/10-websocket-transport.js.
 
 Start qa/ws_test_server.py first, then run from the repository root:
     cd Backend

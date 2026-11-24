@@ -117,11 +117,62 @@ async def test_status_is_owner_scoped_and_reports_progress(monkeypatch):
     assert result == {
         "job_id": "job-1", "status": "running", "requested": 4,
         "processed": 2, "resolved": 3, "added": 1, "skipped": 1,
-        "failed": 0, "errors": [], "failed_items": [],
+        "failed": 0, "errors": [], "failed_items": [], "items": [],
     }
     query = next(call for call in connection.calls if call[0] == "fetchrow")
     assert "WHERE job_id = $1 AND user_id = $2" in query[1]
     assert query[2] == ("job-1", 12)
+    item_query = next(call for call in connection.calls if call[0] == "fetch")
+    assert "AND status = 'failed'" in item_query[1]
+
+
+@pytest.mark.asyncio
+async def test_status_returns_ordered_rows_for_each_channel(monkeypatch):
+    states = ["queued", "resolving", "resolved", "processing", "added", "skipped", "failed"]
+    connection = FakeConnection(
+        job={
+            "job_id": "job-1", "status": "running", "requested": len(states),
+            "processed": 3, "resolved": 3, "added": 1, "skipped": 1, "failed": 1,
+        },
+        errors=[
+            {
+                "ordinal": ordinal,
+                "link_enc": f"link-{ordinal}".encode(),
+                "error_enc": b"failed to add" if state == "failed" else None,
+                "status": state,
+            }
+            for ordinal, state in enumerate(states)
+        ],
+    )
+
+    async def get_pool():
+        return FakePool(connection)
+
+    async def vault_key(_user_id):
+        return b"test-vault-key"
+
+    def decrypt(_key, value):
+        if value is None:
+            return None
+        if value == b"failed to add":
+            return "failed to add"
+        return "https://youtube.com/@channel" if value.startswith(b"link-") else None
+
+    monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
+    monkeypatch.setattr(youtube_imports.vault, "get", vault_key)
+    monkeypatch.setattr(youtube_imports, "decrypt", decrypt)
+
+    result = await youtube_imports.get_youtube_import_status(12, "job-1", include_items=True)
+
+    assert [item["status"] for item in result["items"]] == states
+    assert [item["ordinal"] for item in result["items"]] == list(range(len(states)))
+    assert result["items"][-1] == {
+        "ordinal": 6,
+        "link": "https://youtube.com/@channel",
+        "status": "failed",
+        "error": "failed to add",
+        "retryable": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -407,8 +458,8 @@ async def test_status_returns_owner_scoped_failed_links_and_retryability(monkeyp
             "processed": 2, "resolved": 1, "added": 0, "skipped": 0, "failed": 2,
         },
         errors=[
-            {"link_enc": b"valid-link", "error_enc": b"valid-error"},
-            {"link_enc": b"music-link", "error_enc": b"music-error"},
+            {"ordinal": 0, "status": "failed", "link_enc": b"valid-link", "error_enc": b"valid-error"},
+            {"ordinal": 1, "status": "failed", "link_enc": b"music-link", "error_enc": b"music-error"},
         ],
     )
 
@@ -428,7 +479,7 @@ async def test_status_returns_owner_scoped_failed_links_and_retryability(monkeyp
     monkeypatch.setattr(youtube_imports.vault, "get", vault_key)
     monkeypatch.setattr(youtube_imports, "decrypt", lambda _key, value: cleartext[value])
 
-    status = await youtube_imports.get_youtube_import_status(12, "job-1")
+    status = await youtube_imports.get_youtube_import_status(12, "job-1", include_items=True)
 
     assert status["failed_items"] == [
         {
@@ -438,6 +489,22 @@ async def test_status_returns_owner_scoped_failed_links_and_retryability(monkeyp
         },
         {
             "link": "https://music.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa",
+            "error": "unsupported host",
+            "retryable": False,
+        },
+    ]
+    assert status["items"] == [
+        {
+            "ordinal": 0,
+            "link": "https://youtube.com/@channel",
+            "status": "failed",
+            "error": "https://youtube.com/@channel: timed out",
+            "retryable": True,
+        },
+        {
+            "ordinal": 1,
+            "link": "https://music.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "failed",
             "error": "unsupported host",
             "retryable": False,
         },

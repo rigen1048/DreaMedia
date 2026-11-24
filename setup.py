@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import signal
@@ -26,6 +27,8 @@ BACKEND = ROOT / "Backend"
 FRONTEND = ROOT / "Frontend"
 EXTENSION = ROOT / "Extension"
 SHARED = EXTENSION / "shared"
+TARGETS = EXTENSION / "targets"
+DIST = EXTENSION / "dist"
 STATE = ROOT / ".last-pgpass-sha"
 BACKEND_LOG = ROOT / ".backend.log"
 
@@ -99,36 +102,63 @@ def lan_ip() -> str:
         return "127.0.0.1"
 
 
-def build_extensions() -> None:
-    """Build the browser extension for both Chrome (mv3) and Firefox (mv2).
+def bundle_shared_scripts(source_dir: Path) -> str:
+    """Concatenate ordered classic-script modules without changing boundaries."""
+    sources = sorted(source_dir.glob("*.js"))
+    if not sources:
+        sys.exit(f"✗ No JavaScript source modules found in {source_dir.relative_to(ROOT)}")
+    return "".join(source.read_text(encoding="utf-8") for source in sources)
 
-    `shared/` is the single source of truth; this copies it over both variants
-    so `python3 setup.py` produces a loadable mv2 and mv3 extension (the
-    variant-specific manifest.json already lives in each variant dir).
-    """
+
+def build_extensions() -> None:
+    """Build both loadable packages from shared source and target manifests."""
     if not SHARED.is_dir():
-        print("✗ Extension shared/ missing — skipping extension build")
-        return
-    for variant in ("mv2", "mv3"):
-        target = EXTENSION / variant
-        target.mkdir(parents=True, exist_ok=True)
-        shared_names = {src.name for src in SHARED.iterdir()}
-        variant_only = {"manifest.json"}
-        if "icons" not in shared_names:
-            variant_only.add("icons")
-        for existing in target.iterdir():
-            if existing.name in variant_only:
+        sys.exit("✗ Extension/shared source is missing")
+    if EXTENSION.is_symlink() or DIST.is_symlink():
+        sys.exit("✗ Extension and Extension/dist must not be symlinks")
+    extension_root = EXTENSION.resolve()
+    dist_root = DIST.resolve()
+    if ROOT.resolve() not in extension_root.parents or dist_root.parent != extension_root:
+        sys.exit("✗ Extension/dist must resolve inside this repository")
+    if DIST.exists() and not DIST.is_dir():
+        sys.exit("✗ Extension/dist exists but is not a directory")
+
+    bundled_dirs = {"background", "popup"}
+    for variant, manifest_version in (("mv2", 2), ("mv3", 3)):
+        manifest_source = TARGETS / variant / "manifest.json"
+        if not manifest_source.is_file():
+            sys.exit(f"✗ Extension target manifest is missing: {manifest_source.relative_to(ROOT)}")
+        try:
+            manifest = json.loads(manifest_source.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            sys.exit(f"✗ Invalid extension manifest {manifest_source.relative_to(ROOT)}: {error}")
+        if not isinstance(manifest, dict) or manifest.get("manifest_version") != manifest_version:
+            sys.exit(
+                f"✗ {manifest_source.relative_to(ROOT)} must declare manifest_version {manifest_version}"
+            )
+
+        target = DIST / variant
+        if target.is_symlink():
+            sys.exit(f"✗ Generated target must not be a symlink: {target.relative_to(ROOT)}")
+        if target.exists():
+            if not target.is_dir() or target.resolve().parent != dist_root:
+                sys.exit(f"✗ Unsafe generated target path: {target.relative_to(ROOT)}")
+            shutil.rmtree(target)
+        target.mkdir(parents=True)
+        for source in sorted(SHARED.iterdir()):
+            if source.name in bundled_dirs:
                 continue
-            if existing.is_dir():
-                shutil.rmtree(existing)
-            else:
-                existing.unlink()
-        for src in sorted(SHARED.iterdir()):
-            if src.is_file():
-                shutil.copy2(src, target / src.name)
-            elif src.is_dir():
-                shutil.copytree(src, target / src.name, dirs_exist_ok=True)
-        print(f"→ extension built: {variant}/ ({len(list(target.iterdir()))} entries)")
+            destination = target / source.name
+            if source.is_file():
+                shutil.copy2(source, destination)
+            elif source.is_dir():
+                shutil.copytree(source, destination)
+        for bundle in ("background", "popup"):
+            (target / f"{bundle}.js").write_text(
+                bundle_shared_scripts(SHARED / bundle), encoding="utf-8"
+            )
+        shutil.copy2(manifest_source, target / "manifest.json")
+        print(f"→ extension built: Extension/dist/{variant}/ ({len(list(target.iterdir()))} entries)")
 
 
 def db_running(env) -> bool:
@@ -311,7 +341,7 @@ def main() -> None:
                         help="dev mode: local uvicorn + bun dev in the foreground "
                              "(default: full docker stack — db, backend, frontend)")
     parser.add_argument("--build-extensions-only", action="store_true",
-                        help="synchronize Extension/shared into the mv2 and mv3 packages, then exit")
+                        help="build loadable MV2 and MV3 packages from shared sources, then exit")
     args = parser.parse_args()
 
     updating = args.command == "update"

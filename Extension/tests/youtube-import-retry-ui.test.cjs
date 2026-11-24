@@ -4,7 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const popupSource = fs.readFileSync(path.join(__dirname, "../shared/popup.js"), "utf8");
+const popupSource = fs.readFileSync(path.join(__dirname, "../dist/mv3/popup.js"), "utf8");
 
 class Element {
   constructor(id = "", tagName = "div") {
@@ -51,9 +51,11 @@ function setupPopup(initialStorage = {}, firstJobStatus = "partial") {
     token: "test-token",
     youtubeImportJobIds: [],
     youtubeFailedImportJobIds: [],
+    youtubeRecentImportJobIds: [],
     ...initialStorage,
   };
   const messages = [];
+  const openedUrls = [];
   const sendResponse = (message) => {
     messages.push(message);
     switch (message.type) {
@@ -109,6 +111,7 @@ function setupPopup(initialStorage = {}, firstJobStatus = "partial") {
     runtime: {
       lastError: null,
       getManifest: () => ({ version: "test" }),
+      getURL: (name) => `chrome-extension://test/${name}`,
       sendMessage(message, callback) { queueMicrotask(() => callback(sendResponse(message))); },
       onMessage: { addListener() {} },
     },
@@ -122,7 +125,10 @@ function setupPopup(initialStorage = {}, firstJobStatus = "partial") {
         async remove(name) { delete storage[name]; },
       },
     },
-    tabs: { async query() { return [{ id: 5, url: "https://www.youtube.com/feed/channels" }]; } },
+    tabs: {
+      async query() { return [{ id: 5, url: "https://www.youtube.com/feed/channels" }]; },
+      create({ url }) { openedUrls.push(url); },
+    },
   };
   const context = vm.createContext({
     chrome,
@@ -134,52 +140,39 @@ function setupPopup(initialStorage = {}, firstJobStatus = "partial") {
     console,
   });
   vm.runInContext(popupSource, context, { filename: "popup.js" });
-  return { document, elements, messages, storage };
+  return { document, elements, messages, openedUrls, storage };
 }
 
 async function flushPopup() {
   for (let i = 0; i < 8; i += 1) await new Promise((resolve) => setImmediate(resolve));
 }
 
-test("popup displays a failed channel and retries it as a new durable job", async () => {
-  const { document, elements, messages, storage } = setupPopup();
+test("popup opens the import table when a batch finishes with failures", async () => {
+  const { elements, openedUrls, storage } = setupPopup();
   await flushPopup();
 
   await elements.get("scanSubscriptions").listeners.get("click")();
   await elements.get("subscribe").listeners.get("click")();
   await flushPopup();
 
-  const details = elements.get("failedImports");
-  assert.equal(details.hidden, false);
-  assert.equal(elements.get("failedImportShortcut").hidden, false);
-  assert.equal(elements.get("failedImportShortcutLabel").textContent, "1 failed");
-  assert.equal(elements.get("failedImportSummary").textContent, "Failed channels (1)");
-  const row = elements.get("failedImportList").children[0];
-  const retryButton = row.children[0].children[1];
-  assert.equal(retryButton.textContent, "Retry 1");
-  assert.match(row.children[1].children[0].children[0].textContent, /@example/);
-
-  elements.get("failedImportShortcut").listeners.get("click")();
-  assert.equal(details.open, true);
-
-  retryButton.listeners.get("click")();
-  await flushPopup();
-
-  assert.ok(messages.some((message) => message.type === "dreamedia:retryYoutubeImport" && message.jobId === "original-job"));
-  assert.deepEqual(Array.from(storage.youtubeFailedImportJobIds), []);
-  assert.deepEqual(Array.from(storage.youtubeImportJobIds), ["retry-job"]);
+  const tableButton = elements.get("openImportTable");
+  assert.equal(tableButton.hidden, false);
+  assert.equal(elements.get("importTableMeta").textContent, "1 with failures");
+  tableButton.listeners.get("click")();
+  assert.deepEqual(openedUrls, ["chrome-extension://test/imports.html"]);
+  assert.deepEqual(Array.from(storage.youtubeFailedImportJobIds), ["original-job"]);
+  assert.deepEqual(Array.from(storage.youtubeRecentImportJobIds), ["original-job"]);
 });
 
-test("popup restores the failed-channel list from stored job IDs after reopening", async () => {
+test("popup restores the import-table action from stored job IDs", async () => {
   const { elements } = setupPopup({ youtubeFailedImportJobIds: ["original-job"] });
   await flushPopup();
 
-  assert.equal(elements.get("failedImports").hidden, false);
-  assert.equal(elements.get("failedImportSummary").textContent, "Failed channels (1)");
-  assert.match(elements.get("failedImportList").children[0].children[1].children[0].children[0].textContent, /@example/);
+  assert.equal(elements.get("openImportTable").hidden, false);
+  assert.equal(elements.get("importTableMeta").textContent, "1 with failures");
 });
 
-test("visible failed shortcut opens the live failure list while the batch is importing", async () => {
+test("popup offers the import table while a batch is importing without storing it as a failure", async () => {
   const { elements, storage } = setupPopup({}, "running");
   await flushPopup();
   await elements.get("scanSubscriptions").listeners.get("click")();
@@ -187,12 +180,8 @@ test("visible failed shortcut opens the live failure list while the batch is imp
   await flushPopup();
 
   assert.match(elements.get("importStatus").textContent, /Importing/);
-  assert.equal(elements.get("failedImportShortcut").hidden, false);
-  assert.equal(elements.get("failedImportList").children.length, 1);
-  const retryButton = elements.get("failedImportList").children[0].children[0].children[1];
-  assert.equal(retryButton.textContent, "Batch running");
-  assert.equal(retryButton.disabled, true);
-  elements.get("failedImportShortcut").listeners.get("click")();
-  assert.equal(elements.get("failedImports").open, true);
-  assert.ok(Array.from(storage.youtubeFailedImportJobIds).includes("original-job"));
+  assert.equal(elements.get("openImportTable").hidden, false);
+  assert.equal(elements.get("importTableMeta").textContent, "1 active");
+  assert.ok(Array.from(storage.youtubeImportJobIds).includes("original-job"));
+  assert.ok(!Array.from(storage.youtubeFailedImportJobIds).includes("original-job"));
 });

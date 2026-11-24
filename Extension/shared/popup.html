@@ -14,7 +14,6 @@
     <symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="3.75" ry="8.5"/><path d="M3.5 12h17"/></symbol>
     <symbol id="bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9m-8 12a2.2 2.2 0 0 0 4 0"/></symbol>
     <symbol id="list" viewBox="0 0 24 24"><path d="M3.5 6h14m-14 6h14m-14 6h8m6-3 4 3-4 3z"/></symbol>
-    <symbol id="alert" viewBox="0 0 24 24"><path d="M12 3.5 22 20.5H2L12 3.5Z"/><path d="M12 9v5m0 3h.01"/></symbol>
     <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
     <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
@@ -128,17 +127,12 @@
         <button id="subscribe" class="primary" type="button"><svg aria-hidden="true"><use href="#plus"/></svg><span id="subscribeLabel">Add source</span></button>
       </div>
       <ul id="importPreview" class="import-preview" hidden></ul>
-      <details id="failedImports" class="failed-imports" hidden>
-        <summary id="failedImportSummary">Failed channels</summary>
-        <ul id="failedImportList" class="failed-import-list" aria-label="Failed channels"></ul>
-      </details>
-      <div class="import-status-row">
-        <p id="importStatus" class="status" role="status"></p>
-        <button id="failedImportShortcut" class="failed-import-shortcut" type="button" aria-label="View failed channels" title="View failed channels" hidden>
-          <svg aria-hidden="true"><use href="#alert"/></svg>
-          <span id="failedImportShortcutLabel">1 failed</span>
-        </button>
-      </div>
+      <p id="importStatus" class="status" role="status"></p>
+      <button id="openImportTable" class="import-table-button" type="button" hidden>
+        <svg aria-hidden="true"><use href="#list"/></svg>
+        <span>View import table</span>
+        <span id="importTableMeta" class="import-table-meta"></span>
+      </button>
       <p id="subStatus" class="status" role="status"></p>
     </section>
 

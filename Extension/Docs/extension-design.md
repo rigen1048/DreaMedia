@@ -54,13 +54,16 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
 
 ## 2) Modular extension source (Youtube / Anime)
 
-- `shared/` splits into `modules/youtube.js`, `modules/anime.js`, and a
-  small shared core (video finding, messaging, storage).
+- `shared/` contains the feature modules (`modules/youtube.js`,
+  `modules/anime.js`), common core, and ordered background/popup source files.
 - The `media` column of `ext_domains` decides which module is registered
   for a domain: youtube.com gets only the youtube module; an anime site
   gets only the anime module.
-- `python3 setup.py --build-extensions-only` copies shared/ (including
-  modules/) into mv2/ and mv3/; manifests and variant-only icons stay put.
+- `targets/mv2/manifest.json` and `targets/mv3/manifest.json` hold only the
+  browser-specific declarations. Icons and runtime code stay in `shared/`.
+- `python3 setup.py --build-extensions-only` bundles the ordered background and
+  popup modules, then builds loadable `dist/mv2/` and `dist/mv3/` packages.
+  `dist/` is generated output and is not maintained in Git.
 
 ## 3) Anchor detection (auto-binding)
 

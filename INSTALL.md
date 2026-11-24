@@ -103,10 +103,14 @@ When using LAN access, put DreaMedia behind a trusted reverse proxy with TLS whe
 
 1. Open DreaMedia and go to Settings → Extension.
 2. Issue an extension token and copy it. The raw token is shown once.
-3. For Chrome/Edge/Brave, open `chrome://extensions`, enable Developer mode, and load `Extension/mv3/` as an unpacked extension.
-4. For Firefox, open `about:debugging#/runtime/this-firefox`, choose Load Temporary Add-on, and select `Extension/mv2/manifest.json`.
-5. Enter the DreaMedia backend URL and extension token in the popup.
-6. Add only the media domains on which you want the extension to operate.
+3. From the repository root, build both packages with:
+   `python3 setup.py --build-extensions-only`.
+4. For Chrome/Edge/Brave, open `chrome://extensions`, enable Developer mode,
+   and load `Extension/dist/mv3/` as an unpacked extension.
+5. For Firefox, open `about:debugging#/runtime/this-firefox`, choose Load
+   Temporary Add-on, and select `Extension/dist/mv2/manifest.json`.
+6. Enter the DreaMedia backend URL and extension token in the popup.
+7. Add only the media domains on which you want the extension to operate.
 
 Read [Extension/README.md](Extension/README.md) for extension-specific behavior.
 

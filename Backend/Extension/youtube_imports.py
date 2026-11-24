@@ -368,7 +368,12 @@ async def enqueue_youtube_import(
     }
 
 
-async def get_youtube_import_status(user_id: int, job_id: str) -> Optional[Dict[str, Any]]:
+async def get_youtube_import_status(
+    user_id: int,
+    job_id: str,
+    *,
+    include_items: bool = False,
+) -> Optional[Dict[str, Any]]:
     pool = await get_pool()
     async with pool.acquire() as con:
         job = await con.fetchrow(
@@ -382,17 +387,35 @@ async def get_youtube_import_status(user_id: int, job_id: str) -> Optional[Dict[
         key = await vault.get(user_id)
         errors: List[str] = []
         failures: List[Dict[str, Any]] = []
+        items: List[Dict[str, Any]] = []
         if key is not None:
+            item_filter = "" if include_items else " AND status = 'failed'"
             rows = await con.fetch(
-                "SELECT link_enc, error_enc FROM yt_import_items "
-                "WHERE job_id = $1 AND status = 'failed' ORDER BY ordinal",
+                "SELECT ordinal, link_enc, error_enc, status FROM yt_import_items "
+                "WHERE job_id = $1" + item_filter + " ORDER BY ordinal",
                 job_id,
             )
             for row in rows:
                 link = decrypt(key, row["link_enc"]) or ""
-                error = decrypt(key, row["error_enc"]) or "Import failed"
-                retryable = bool(link and _prepare_items([link])[0]["status"] == "queued")
-                failures.append({"link": link, "error": error, "retryable": retryable})
+                error = decrypt(key, row["error_enc"])
+                retryable = row["status"] == "failed" and bool(
+                    link and _prepare_items([link])[0]["status"] == "queued"
+                )
+                item = {
+                    "ordinal": row["ordinal"],
+                    "link": link,
+                    "status": row["status"],
+                    "error": error or ("Import failed" if row["status"] == "failed" else None),
+                    "retryable": retryable,
+                }
+                if include_items:
+                    items.append(item)
+                if row["status"] == "failed":
+                    failures.append({
+                        "link": item["link"],
+                        "error": item["error"],
+                        "retryable": item["retryable"],
+                    })
             errors = [failure["error"] for failure in failures[:MAX_STATUS_ERRORS]]
     return {
         "job_id": job["job_id"],
@@ -405,6 +428,7 @@ async def get_youtube_import_status(user_id: int, job_id: str) -> Optional[Dict[
         "failed": job["failed"],
         "errors": errors,
         "failed_items": failures,
+        "items": items,
     }
 
 

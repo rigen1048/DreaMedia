@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube imports · DreaMedia</title>
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="imports.css">
+</head>
+<body>
+  <header class="page-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">d<span>/</span>m</span>
+      <span class="brand-name">DreaMedia</span>
+      <span class="brand-separator">/</span>
+      <span class="brand-section">YouTube imports</span>
+    </div>
+    <button id="closePage" class="back-button" type="button" title="Return to YouTube">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m11 5-7 7 7 7m-7-7h16"/></svg>
+      <span>Back</span>
+    </button>
+  </header>
+
+  <main class="page-shell">
+    <div class="page-title-row">
+      <div>
+        <p class="eyebrow">SUBSCRIPTION IMPORT</p>
+        <h1>Import table</h1>
+      </div>
+      <button id="refreshJobs" class="refresh-button" type="button" aria-label="Refresh imports" title="Refresh">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.8-2L20 12M4 12l2.6 5a7 7 0 0 0 11.8-2"/></svg>
+      </button>
+    </div>
+
+    <p id="pageMessage" class="page-message" role="status" aria-live="polite">Loading imports…</p>
+
+    <section id="importView" class="import-view" hidden>
+      <div class="batch-toolbar">
+        <label for="jobSelect">Batch</label>
+        <select id="jobSelect" aria-label="Select import batch"></select>
+        <button id="retryFailed" class="retry-button" type="button" hidden></button>
+      </div>
+
+      <div class="batch-summary">
+        <div class="batch-heading">
+          <span id="batchStatus" class="batch-status"></span>
+          <span id="batchProgress" class="batch-progress"></span>
+        </div>
+        <div class="progress-track" role="progressbar" aria-label="Import progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <span id="progressFill"></span>
+        </div>
+        <div class="summary-counts" aria-live="polite">
+          <span id="doneCount"></span>
+          <span id="workingCount"></span>
+          <span id="failedCount"></span>
+        </div>
+      </div>
+
+      <div class="table-frame">
+        <p id="rowAnnouncement" class="visually-hidden" aria-live="polite" aria-atomic="true"></p>
+        <table>
+          <thead>
+            <tr><th scope="col" class="number-column">#</th><th scope="col">Status</th><th scope="col">Channel</th><th scope="col">Result</th></tr>
+          </thead>
+          <tbody id="itemRows"></tbody>
+        </table>
+        <p id="noRows" class="empty-rows" hidden>Channel rows are unavailable. Reconnect to DreaMedia and refresh.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="imports.js"></script>
+</body>
+</html>

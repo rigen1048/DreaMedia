@@ -321,8 +321,9 @@ async def test_import_progress_query_uses_authenticated_owner(monkeypatch, exten
     async def user_id(_info):
         return 12
 
-    async def get_status(owner, job_id):
+    async def get_status(owner, job_id, include_items=False):
         calls.append((owner, job_id))
+        assert include_items is True
         return {
             "job_id": job_id, "status": "partial", "requested": 4,
             "processed": 4, "resolved": 3, "added": 1, "skipped": 1, "failed": 1,
@@ -330,14 +331,24 @@ async def test_import_progress_query_uses_authenticated_owner(monkeypatch, exten
             "failed_items": [{
                 "link": "https://youtube.com/@channel", "error": "timed out", "retryable": True,
             }],
+            "items": [
+                {
+                    "ordinal": 0, "link": "https://youtube.com/@channel", "status": "added",
+                    "error": None, "retryable": False,
+                },
+                {
+                    "ordinal": 1, "link": "https://youtube.com/@other", "status": "failed",
+                    "error": "timed out", "retryable": True,
+                },
+            ],
         }
 
     monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
     monkeypatch.setattr(ext_graph, "get_youtube_import_status", get_status)
 
     result = await ext_graph.ext_schema.execute(
-        'query { youtubeImportJob(jobId: "job-123") { jobId status processed failed errors '
-        'failedItems { link error retryable } } }'
+        'query { youtubeImportJob(jobId: "job-123", includeItems: true) { jobId status processed failed errors '
+        'failedItems { link error retryable } items { ordinal link status error retryable } } }'
     )
 
     assert calls == [(12, "job-123")]
@@ -347,6 +358,16 @@ async def test_import_progress_query_uses_authenticated_owner(monkeypatch, exten
     assert result.data["youtubeImportJob"]["failedItems"] == [{
         "link": "https://youtube.com/@channel", "error": "timed out", "retryable": True,
     }]
+    assert result.data["youtubeImportJob"]["items"] == [
+        {
+            "ordinal": 0, "link": "https://youtube.com/@channel", "status": "added",
+            "error": None, "retryable": False,
+        },
+        {
+            "ordinal": 1, "link": "https://youtube.com/@other", "status": "failed",
+            "error": "timed out", "retryable": True,
+        },
+    ]
 
 
 @pytest.mark.asyncio
@@ -382,8 +403,9 @@ async def test_import_progress_query_returns_null_for_unknown_or_other_owner(mon
     async def user_id(_info):
         return 12
 
-    async def get_status(owner, job_id):
+    async def get_status(owner, job_id, include_items=False):
         assert owner == 12 and job_id == "hidden-job"
+        assert include_items is False
         return None
 
     monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
