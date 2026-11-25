@@ -20,6 +20,7 @@ from returns.result import Failure, Result, Success
 from Database import vault
 from Database.crypto import decrypt, encrypt, index_hash
 from Database.db import get_pool
+from Media.Yt.SQL.import_leases import ImportWorkerLeaseLost, renew_import_worker_lease
 from Model.video import FetchPayload
 from Utility.logs import log
 from Media.Yt.Config.Model.subscription import PgSubscription
@@ -120,6 +121,8 @@ class YtUserSQL:
         subdomain: Optional[str] = None,
         logo: Optional[str] = None,
         skip_existing: bool = False,
+        worker_section: Optional[int] = None,
+        worker_lease_token: Optional[str] = None,
     ) -> Result[Dict[str, Any], str]:
         """Create/update an extension source and all its settings atomically.
 
@@ -138,6 +141,8 @@ class YtUserSQL:
         subdomain = subdomain.strip() if subdomain and subdomain.strip() else None
         if bool(domain) != bool(subdomain):
             return Failure("choose both a domain and subdomain, or leave both empty")
+        if (worker_section is None) != (worker_lease_token is None):
+            return Failure("worker section and lease token must be supplied together")
 
         key = await vault.get(user_id)
         if key is None:
@@ -145,6 +150,12 @@ class YtUserSQL:
         pool = await get_pool()
         async with pool.acquire() as con:
             async with con.transaction():
+                if worker_lease_token is not None and not await renew_import_worker_lease(
+                    con, user_id, worker_section, worker_lease_token
+                ):
+                    raise ImportWorkerLeaseLost(
+                        "lost the durable YouTube import section lease"
+                    )
                 channel_id = None
                 if skip_existing:
                     channel_hash = index_hash(key, channel_url)
@@ -1100,4 +1111,3 @@ class YtUserSQL:
             "RETURNING id",
             d_id, encrypt(key, subdomain), index_hash(key, subdomain.lower()),
         )
-

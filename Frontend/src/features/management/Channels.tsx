@@ -67,7 +67,7 @@ type Props = { search: string; filter: "all" | "muted"; onAdd: () => void };
 type BatchAction = "mode" | "category" | "alerts" | "active" | "label" | "delete";
 
 export default function Channels({ search, filter, onAdd }: Props) {
-  const { act, notify } = useApp();
+  const { act, notify, refresh } = useApp();
   const workspace = useWorkspace();
   const [openId, setOpenId] = useState<number | null>(null);
   const [selectedChannels, setSelectedChannels] = useState<Set<number>>(new Set());
@@ -143,7 +143,11 @@ export default function Channels({ search, filter, onAdd }: Props) {
     const requestSucceeded = await act(async () => {
       changed = await operation();
     });
-    if (!requestSucceeded) return false;
+    if (!requestSucceeded) {
+      // The server may have committed before a transport error obscured its response.
+      await refresh();
+      return false;
+    }
     if (changed !== ids.length) {
       const updated = Math.max(0, Math.min(changed, ids.length));
       const deleting = batchAction === "delete";
@@ -268,7 +272,7 @@ export default function Channels({ search, filter, onAdd }: Props) {
       {hasSelection && (
         <div
           className="flex flex-wrap items-center gap-2 border-b bg-card p-2"
-          role="toolbar"
+          role="group"
           aria-label="Batch source actions"
         >
           <span className="text-xs font-medium text-muted-foreground" aria-live="polite">
@@ -288,7 +292,7 @@ export default function Channels({ search, filter, onAdd }: Props) {
               <SelectItem value="choose">Choose action</SelectItem>
               <SelectItem value="mode">Change type</SelectItem>
               <SelectItem value="category">Change category</SelectItem>
-              <SelectItem value="alerts">Mute / unmute</SelectItem>
+              <SelectItem value="alerts">Set alert preference</SelectItem>
               <SelectItem value="active">Enable / disable</SelectItem>
               <SelectItem value="label">Set label</SelectItem>
               <SelectItem value="delete">Delete</SelectItem>
@@ -393,27 +397,33 @@ export default function Channels({ search, filter, onAdd }: Props) {
             </div>
           )}
           {batchAction === "alerts" && (
-            <div className="flex items-center gap-2">
-              <Label>Alerts</Label>
-              <Switch
-                disabled={isApplyingBatch}
-                checked={batchAlerts}
-                onCheckedChange={setBatchAlerts}
-                aria-label="Receive alerts for selected sources"
-              />
-              <span className="text-xs text-muted-foreground">
-                {batchAlerts ? "Receiving alerts" : "Muted"}
-              </span>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="batch-alerts">Channel alert preference</Label>
+                <Switch
+                  id="batch-alerts"
+                  disabled={isApplyingBatch}
+                  checked={batchAlerts}
+                  onCheckedChange={setBatchAlerts}
+                  aria-describedby="batch-alert-help"
+                />
+                <span className="text-xs text-muted-foreground">
+                  {batchAlerts ? "On" : "Off"}
+                </span>
+              </div>
+              <p id="batch-alert-help" className="text-xs text-muted-foreground">
+                Paused sources or muted categories can still suppress delivery.
+              </p>
             </div>
           )}
           {batchAction === "active" && (
             <div className="flex items-center gap-2">
-              <Label>State</Label>
+              <Label htmlFor="batch-active">Active state</Label>
               <Switch
+                id="batch-active"
                 disabled={isApplyingBatch}
                 checked={batchActive}
                 onCheckedChange={setBatchActive}
-                aria-label="Set selected sources active"
               />
               <span className="text-xs text-muted-foreground">
                 {batchActive ? "Active" : "Inactive"}

@@ -59,3 +59,19 @@ test("serializes concurrent cross-context deletions and a new-job update without
   assert.ok(!storage.youtubeFailedImportJobIds.includes("deleted-during-poll"));
   assert.ok(!storage.youtubeRecentImportJobIds.includes("deleted-during-poll"));
 });
+
+
+test("bounds deleted-job tombstones while keeping the newest deletion", async () => {
+  const { context, storage } = setupHistoryStore();
+  storage.youtubeHiddenImportJobIds = Array.from(
+    { length: 250 },
+    (_, index) => `old-job-${index}`,
+  );
+
+  await context.hideYoutubeImportHistory("latest-deletion");
+
+  assert.equal(storage.youtubeHiddenImportJobIds.length, 200);
+  assert.equal(storage.youtubeHiddenImportJobIds[0], "old-job-51");
+  assert.ok(storage.youtubeHiddenImportJobIds.includes("latest-deletion"));
+  assert.ok(!storage.youtubeHiddenImportJobIds.includes("old-job-0"));
+});

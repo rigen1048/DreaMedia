@@ -12,6 +12,7 @@ from typing import List, Optional
 
 import strawberry
 from returns.result import Failure
+from strawberry.scalars import JSON
 from strawberry.types import Info
 
 from Media.Ani.SQL.store import AniStore
@@ -22,6 +23,7 @@ from Extension.tokens import user_for_token
 from Extension.youtube_imports import (
     add_youtube_channel_source,
     enqueue_youtube_import,
+    normalize_source_payload,
     get_youtube_import_status,
     delete_youtube_import as delete_youtube_import_job,
     rerun_youtube_import as rerun_youtube_import_job,
@@ -353,15 +355,21 @@ class ExtMutation:
 
     @strawberry.field
     async def start_youtube_import(
-        self, info: Info, links: List[str], kind: str = "tracking",
+        self, info: Info, payload: Optional[JSON] = None,
+        links: Optional[List[str]] = None, kind: str = "tracking",
         words: Optional[List[str]] = None, rank: Optional[str] = None,
         withhold: Optional[int] = None, domain: Optional[str] = None,
         subdomain: Optional[str] = None,
     ) -> YoutubeImportStarted:
-        """Queue a bulk Add Source job and return without resolving channels."""
+        """Queue JSON imports; accept links for already-released extension clients."""
+        if payload is not None and links is not None:
+            raise ValueError("provide either the JSON payload or legacy links, not both")
+        source_links = normalize_source_payload(payload) if payload is not None else links
+        if source_links is None:
+            raise ValueError("provide a JSON payload or legacy links")
         result = await enqueue_youtube_import(
             await _ext_uid(info),
-            links,
+            source_links,
             kind=kind,
             words=words,
             rank=rank,

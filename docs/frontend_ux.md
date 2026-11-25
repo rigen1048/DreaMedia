@@ -63,7 +63,10 @@ Header counters track sources / categories / anime / muted.
 - **Fetch now** nudges every active subscription due immediately (the worker's
   claim discipline is untouched — it's a wake-up, not a second worker).
 - **Channel batch actions** appear as soon as one or more rows are selected:
-  change type/category, mute or unmute, enable or pause, set a label, or delete.
+  change type/category, set the channel alert preference on/off, enable or pause,
+  set a label, or delete. The alert preference is not the effective delivery
+  state: a paused source or muted category can still suppress notifications; the
+  batch action does not add a separate per-channel mute state.
   The select-all checkbox applies to visible rows; bulk deletion requires a
   confirmation. Partial non-delete mutations keep the selection for retry;
   partial deletion reports the changed count and clears the selection so any

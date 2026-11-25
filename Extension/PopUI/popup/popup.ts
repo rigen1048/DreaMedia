@@ -31,21 +31,6 @@ function send(
   });
 }
 
-/** Direct HTTP call to the backend REST API (extension token auth). */
-async function sendHttp(
-  path: string,
-  init: RequestInit = {}
-): Promise<Response> {
-  const cfg = await chrome.storage.local.get(["backendUrl", "token"]);
-  const backendUrl = String(cfg.backendUrl || "http://127.0.0.1:8123").replace(/\/$/, "");
-  const token = String(cfg.token || "");
-  const headers: Record<string, string> = {
-    ...(init.headers as Record<string, string>),
-  };
-  if (token) headers["X-Extension-Token"] = token;
-  return fetch(`${backendUrl}${path}`, { ...init, headers });
-}
-
 function status(id: string, text: string, cls = ""): void {
   const el = $(id);
   el.textContent = text;
@@ -737,10 +722,32 @@ async function trackImportJob(jobId: string, requested: number): Promise<void> {
   void pollImportJob(jobId);
 }
 
+async function startYoutubeImport(
+  sourcePayload: unknown,
+  options: SubscriptionOptions,
+  requestedFallback: number
+): Promise<void> {
+  const response = await send("dreamedia:startYoutubeImport", {
+    sourcePayload,
+    ...options,
+  });
+  if (!response.ok) {
+    throw new Error(response.error ?? "Could not queue the import.");
+  }
+  const result = response.data as { jobId?: string; requested?: number } | undefined;
+  if (!result?.jobId) {
+    throw new Error("The backend did not return an import job ID.");
+  }
+  const requested = Number.isFinite(result.requested)
+    ? Number(result.requested)
+    : requestedFallback;
+  await trackImportJob(result.jobId, requested);
+}
+
 function selectedSourceOptions(forBulk = false): SubscriptionOptions {
   const kind = ($("kind") as HTMLSelectElement).value;
   if (forBulk && kind === "playlist") {
-    throw new Error("Choose a channel mode, not Playlist, for scanned channels.");
+    throw new Error("Choose a channel mode, not Playlist, for source batches.");
   }
   const domain = ($("domain") as HTMLInputElement).value.trim();
   const subdomain = ($("subdomain") as HTMLInputElement).value.trim();
@@ -1001,72 +1008,53 @@ action(
     }
   });
 
-// ── Import .json file upload ──────────────────────────────────────────
-let jsonImportStatusEl: HTMLElement | null = null;
+// ── JSON file import ──────────────────────────────────────────────────
+const jsonFileInput = $("importJsonFile") as HTMLInputElement;
+const jsonDropTarget = $("jsonDropTarget") as HTMLButtonElement;
+let jsonImportInFlight = false;
 
-$("importJsonFile").addEventListener("change", async (event) => {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) return;
-  jsonImportStatusEl = $("importJsonStatus");
-  jsonImportStatusEl.textContent = "Uploading…";
-  jsonImportStatusEl.className = "status";
+async function importJsonFile(file: File): Promise<void> {
+  if (jsonImportInFlight) return;
+  jsonImportInFlight = true;
+  jsonDropTarget.disabled = true;
+  jsonDropTarget.setAttribute("aria-busy", "true");
+  setImportScanStatus("");
+  setImportJobStatus("Reading JSON file…");
   try {
-    const formData = new FormData();
-    formData.append("file", file);
-    const response = await sendHttp("/extension/sources/import", {
-      method: "POST",
-      body: formData,
-    });
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ detail: "Upload failed" }));
-      throw new Error(err.detail || `HTTP ${response.status}`);
+    if (!/\.json$/i.test(file.name)) {
+      throw new Error("Choose a .json file.");
     }
-    const result = await response.json();
-    const jobId = result.jobId;
-    jsonImportStatusEl.textContent = `Queued ${result.requested} source(s) — job ${jobId.slice(0, 8)}…`;
-    jsonImportStatusEl.className = "status ok";
-    // Reset the input so the same file can be re-selected next time.
-    input.value = "";
-    // Poll the job status so the user sees progress.
-    void pollJsonImportJob(jobId);
+    const options = selectedSourceOptions(true);
+    const sourcePayload: unknown = JSON.parse(await file.text());
+    await startYoutubeImport(sourcePayload, options, 0);
   } catch (error) {
-    jsonImportStatusEl!.textContent = `Failed: ${(error as Error).message}`;
-    jsonImportStatusEl!.className = "status err";
-  }
-});
-
-async function pollJsonImportJob(jobId: string): Promise<void> {
-  const cfg = await chrome.storage.local.get(["backendUrl", "token"]);
-  const backendUrl = String(cfg.backendUrl || "http://127.0.0.1:8123").replace(/\/$/, "");
-  const token = String(cfg.token || "");
-  let polls = 0;
-  while (polls < 120) {
-    polls += 1;
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    try {
-      const response = await fetch(
-        `${backendUrl}/extension/sources/status?jobId=${encodeURIComponent(jobId)}`,
-        { headers: token ? { "X-Extension-Token": token } : {} }
-      );
-      if (!response.ok) continue;
-      const data = await response.json();
-      if (data.status === "completed" || data.status === "partial") {
-        if (jsonImportStatusEl) {
-          jsonImportStatusEl.textContent = `Import done: ${data.added} added, ${data.failed} failed of ${data.requested}.`;
-          jsonImportStatusEl.className = "status ok";
-        }
-        return;
-      }
-    } catch (_e) {
-      /* ignore poll errors, keep trying */
-    }
-  }
-  if (jsonImportStatusEl) {
-    jsonImportStatusEl.textContent = "Import still running — check the import table.";
-    jsonImportStatusEl.className = "status";
+    setImportJobStatus(`Failed: ${(error as Error).message}`, "err");
+  } finally {
+    jsonFileInput.value = "";
+    jsonDropTarget.disabled = false;
+    jsonDropTarget.removeAttribute("aria-busy");
+    jsonImportInFlight = false;
   }
 }
+
+jsonDropTarget.addEventListener("click", () => jsonFileInput.click());
+jsonDropTarget.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  jsonDropTarget.classList.add("is-dragging");
+});
+jsonDropTarget.addEventListener("dragleave", () => {
+  jsonDropTarget.classList.remove("is-dragging");
+});
+jsonDropTarget.addEventListener("drop", (event) => {
+  event.preventDefault();
+  jsonDropTarget.classList.remove("is-dragging");
+  const file = (event as DragEvent).dataTransfer?.files[0];
+  if (file) void importJsonFile(file);
+});
+jsonFileInput.addEventListener("change", (event) => {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (file) void importJsonFile(file);
+});
 
 action(
   "subscribe",
@@ -1082,23 +1070,15 @@ action(
         throw new Error("Scan the channel list before adding sources.");
       }
       const options = selectedSourceOptions(true);
-      const response = await send("dreamedia:startYoutubeImport", {
-        links: scannedSubscriptions.map((channel) => channel.url),
-        ...options,
-      });
-      if (!response.ok) {
-        throw new Error(response.error ?? "Could not queue the channel import.");
-      }
-      const jobId = (response as { data?: { jobId?: string } }).data?.jobId;
-      if (!jobId) {
-        throw new Error("The backend did not return an import job ID.");
-      }
       const count = scannedSubscriptions.length;
+      const sourcePayload = {
+        sources: scannedSubscriptions.map((channel) => ({ link: channel.url })),
+      };
+      await startYoutubeImport(sourcePayload, options, count);
       scannedSubscriptions = [];
       subscriptionScanComplete = false;
       renderSubscriptionPreview();
       setAddSourceLabel("Add source");
-      await trackImportJob(jobId, count);
       return;
     }
     const tab = await currentTab();

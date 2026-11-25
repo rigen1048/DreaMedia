@@ -15,11 +15,11 @@ export async function startYouTubeImport(
   options: SubscriptionOptions
 ): Promise<ImportJob> {
   const data = await sendGraphQL(
-    `mutation StartYouTubeImport($links: [String!]!, $kind: String!, $words: [String!], $rank: String, $withhold: Int, $domain: String, $subdomain: String) {
-      startYoutubeImport(links: $links, kind: $kind, words: $words, rank: $rank, withhold: $withhold, domain: $domain, subdomain: $subdomain) { jobId status requested processed resolved added skipped failed }
+    `mutation StartYouTubeImport($payload: JSON!, $kind: String!, $words: [String!], $rank: String, $withhold: Int, $domain: String, $subdomain: String) {
+      startYoutubeImport(payload: $payload, kind: $kind, words: $words, rank: $rank, withhold: $withhold, domain: $domain, subdomain: $subdomain) { jobId status requested processed resolved added skipped failed }
     }`,
     {
-      links,
+      payload: { sources: links.map((link) => ({ link })) },
       kind: options.kind,
       words: options.words ?? null,
       rank: options.rank ?? null,

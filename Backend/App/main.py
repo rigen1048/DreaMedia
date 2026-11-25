@@ -1,7 +1,7 @@
 """DreaMedia app entry — uv run -m App.main (owner's -m standard).
 
-Lifespan: migrate schema, seed admin settings, start both managers as
-background tasks (yt + ani). Serves: REST (Feed/Access per plugin, auth,
+Lifespan: migrate schema, seed admin settings, and start the media managers,
+scheduler, and per-user import worker manager as background tasks. Serves: REST (Feed/Access per plugin, auth,
 admin), children GraphQL (/graphql/yt, /graphql/ani), and the supergraph
 (/graphql).
 """
@@ -28,10 +28,7 @@ from Media.Ani.Feed.router import router as ani_feed_router
 from Extension import live as ext_live
 from Extension.tokens import user_for_token
 from Extension.youtube_imports import (
-    import_worker_count,
-    process_worker_count,
-    run_youtube_import_processor_worker,
-    run_youtube_import_resolver_worker,
+    run_youtube_import_worker_manager,
 )
 from Extension.ws_router import ExtensionGraphQLRouter
 from Graphql.ext_graph import ext_context, ext_schema
@@ -39,8 +36,6 @@ from Media.Yt import manager as yt_manager
 from Media.Yt.Access.cards_router import router as yt_cards_router
 from Media.Yt.Access.router import router as yt_access_router
 from Media.Yt.Feed.router import router as yt_feed_router
-from Media.Yt.Queue.router import router as yt_queue_router
-from Media.Yt.Queue.worker import stop_user_workers
 
 
 @asynccontextmanager
@@ -69,23 +64,12 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(yt_manager.run_forever()),
         asyncio.create_task(ani_manager.run_forever()),
         asyncio.create_task(scheduler.run_forever()),
-        *(
-            asyncio.create_task(run_youtube_import_resolver_worker())
-            for _ in range(import_worker_count())
-        ),
-        *(
-            asyncio.create_task(run_youtube_import_processor_worker())
-            for _ in range(process_worker_count())
-        ),
+        asyncio.create_task(run_youtube_import_worker_manager()),
     ]
     yield
     for task in managers:
         task.cancel()
     await asyncio.gather(*managers, return_exceptions=True)
-    # Stop all per-user queue workers
-    from Media.Yt.Queue.worker import _user_workers, stop_user_workers
-    for user_id in list(_user_workers.keys()):
-        await stop_user_workers(user_id)
     await db.close()
 
 
@@ -160,11 +144,10 @@ async def _restore_gate(request, call_next):
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(yt_feed_router)
-app.include_router(yt_access_router)
 app.include_router(yt_cards_router)
+app.include_router(yt_access_router)
 app.include_router(ani_feed_router)
 app.include_router(ani_access_router)
-app.include_router(yt_queue_router)
 
 
 from fastapi import Request

@@ -53,6 +53,31 @@ CREATE INDEX IF NOT EXISTS idx_yt_import_items_section
     ON yt_import_items(user_id, worker_section, status)
     WHERE status = 'queued';
 
+-- Backfill older jobs and keep each user's items evenly divided across the
+-- eight async import workers. New rows receive the same values at enqueue.
+UPDATE yt_import_items i
+SET user_id = j.user_id, worker_section = (i.ordinal % 8)::SMALLINT
+FROM yt_import_jobs j
+WHERE i.job_id = j.job_id
+  AND (i.user_id IS DISTINCT FROM j.user_id
+       OR i.worker_section IS DISTINCT FROM (i.ordinal % 8)::SMALLINT);
+ALTER TABLE yt_import_items ALTER COLUMN user_id SET NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_yt_import_items_active_section
+    ON yt_import_items(user_id, worker_section, status, claimed_at, job_id, ordinal)
+    WHERE status IN ('queued', 'resolving', 'resolved', 'processing');
+
+-- One expiring lease per user/section keeps the eight-worker limit global when
+-- multiple API containers serve the same user's authenticated WebSocket.
+CREATE TABLE IF NOT EXISTS yt_import_worker_leases (
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    worker_section SMALLINT NOT NULL CHECK (worker_section BETWEEN 0 AND 7),
+    owner_token   TEXT NOT NULL,
+    lease_until   TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, worker_section)
+);
+CREATE INDEX IF NOT EXISTS idx_yt_import_worker_leases_expiry
+    ON yt_import_worker_leases(lease_until);
+
 -- Two-stage bulk YouTube imports. These migrations also upgrade the earlier
 -- single-stage queue without losing work: old in-flight rows are re-queued
 -- for resolution (writes use skip-existing, so replay is idempotent).
@@ -77,8 +102,8 @@ WHERE status = 'running';
 CREATE INDEX IF NOT EXISTS idx_yt_import_items_stage
     ON yt_import_items(status, claimed_at, job_id, ordinal);
 
--- Existing item-row claims plus GateRegistry provide durable work and
--- per-user network pacing; legacy global slots/dispatcher are no longer used.
+-- Per-user section workers use durable item claims and a one-second async
+-- pause after each source; legacy global slots/dispatcher are removed.
 DROP TABLE IF EXISTS yt_import_worker_slots;
 DROP TABLE IF EXISTS yt_import_dispatcher;
 

@@ -9,7 +9,7 @@ interface BgRuntimeMessage {
   rank?: string | null; withhold?: number | null; domain?: string | null;
   subdomain?: string | null; jobId?: string; includeItems?: boolean; cardId?: unknown;
   active?: boolean; failed?: boolean; recent?: boolean;
-  payload?: BgLiveProgressPayload; candidates?: string[]; url?: string; urlHint?: BgUrlHint; media?: string;
+  payload?: BgLiveProgressPayload; sourcePayload?: unknown; candidates?: string[]; url?: string; urlHint?: BgUrlHint; media?: string;
 }
 
 chrome.runtime.onMessage.addListener((rawMessage: unknown, sender, sendResponse) => {
@@ -65,11 +65,11 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown, sender, sendResponse)
         }
         case "dreamedia:startYoutubeImport": {
           const data = await gqlWs<{ startYoutubeImport: Record<string, unknown> }>(
-            `mutation StartYouTubeImport($links: [String!]!, $kind: String!, $words: [String!], $rank: String, $withhold: Int, $domain: String, $subdomain: String) {
-              startYoutubeImport(links: $links, kind: $kind, words: $words, rank: $rank, withhold: $withhold, domain: $domain, subdomain: $subdomain) { jobId status requested processed resolved added skipped failed }
+            `mutation StartYouTubeImport($payload: JSON!, $kind: String!, $words: [String!], $rank: String, $withhold: Int, $domain: String, $subdomain: String) {
+              startYoutubeImport(payload: $payload, kind: $kind, words: $words, rank: $rank, withhold: $withhold, domain: $domain, subdomain: $subdomain) { jobId status requested processed resolved added skipped failed }
             }`,
             {
-              links: msg.links,
+              payload: msg.sourcePayload,
               kind: msg.kind,
               words: msg.words ?? null,
               rank: msg.rank ?? null,

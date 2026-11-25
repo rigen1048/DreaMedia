@@ -3,6 +3,7 @@ const YOUTUBE_IMPORT_FAILED_KEY = "youtubeFailedImportJobIds";
 const YOUTUBE_IMPORT_RECENT_KEY = "youtubeRecentImportJobIds";
 const YOUTUBE_IMPORT_HIDDEN_KEY = "youtubeHiddenImportJobIds";
 const YOUTUBE_IMPORT_RECENT_LIMIT = 10;
+const YOUTUBE_IMPORT_HIDDEN_LIMIT = 200;
 const YOUTUBE_IMPORT_HISTORY_KEYS = [
   YOUTUBE_IMPORT_ACTIVE_KEY,
   YOUTUBE_IMPORT_FAILED_KEY,
@@ -53,6 +54,7 @@ async function updateYoutubeImportHistory(
         [YOUTUBE_IMPORT_ACTIVE_KEY]: updateYoutubeImportMembership(activeIds, jobId, false),
         [YOUTUBE_IMPORT_FAILED_KEY]: updateYoutubeImportMembership(failedIds, jobId, false),
         [YOUTUBE_IMPORT_RECENT_KEY]: updateYoutubeImportMembership(recentIds, jobId, false),
+        [YOUTUBE_IMPORT_HIDDEN_KEY]: hiddenIds.slice(-YOUTUBE_IMPORT_HIDDEN_LIMIT),
       });
       return false;
     }
@@ -64,6 +66,7 @@ async function updateYoutubeImportHistory(
       [YOUTUBE_IMPORT_ACTIVE_KEY]: updateYoutubeImportMembership(activeIds, jobId, active),
       [YOUTUBE_IMPORT_FAILED_KEY]: updateYoutubeImportMembership(failedIds, jobId, failed),
       [YOUTUBE_IMPORT_RECENT_KEY]: recent,
+      [YOUTUBE_IMPORT_HIDDEN_KEY]: hiddenIds.slice(-YOUTUBE_IMPORT_HIDDEN_LIMIT),
     });
     return true;
   });
@@ -89,7 +92,9 @@ async function hideYoutubeImportHistory(jobId: string): Promise<void> {
         jobId,
         false,
       ),
-      [YOUTUBE_IMPORT_HIDDEN_KEY]: [...new Set([...hiddenIds, jobId])],
+      [YOUTUBE_IMPORT_HIDDEN_KEY]: [...new Set([...hiddenIds, jobId])].slice(
+        -YOUTUBE_IMPORT_HIDDEN_LIMIT,
+      ),
     });
   });
 }

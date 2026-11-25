@@ -12,10 +12,11 @@ from Extension import youtube_imports
 
 
 class FakeConnection:
-    def __init__(self, job=None, errors=None, update_result="UPDATE 1"):
+    def __init__(self, job=None, errors=None, update_result="UPDATE 1", fetchval_result=1):
         self.job = job
         self.errors = errors or []
         self.update_result = update_result
+        self.fetchval_result = fetchval_result
         self.calls = []
 
     @asynccontextmanager
@@ -32,6 +33,10 @@ class FakeConnection:
     async def fetchrow(self, query, *args):
         self.calls.append(("fetchrow", query, args))
         return self.job
+
+    async def fetchval(self, query, *args):
+        self.calls.append(("fetchval", query, args))
+        return self.fetchval_result
 
     async def fetch(self, query, *args):
         self.calls.append(("fetch", query, args))
@@ -83,8 +88,10 @@ async def test_enqueue_is_fast_encrypted_validated_and_persists_one_batch(monkey
     assert result["resolved"] == 0 and result["added"] == 0
     assert result["skipped"] == 1 and result["failed"] == 1
     inserted_items = next(call[2] for call in connection.calls if call[0] == "executemany")
-    assert [row[3] for row in inserted_items] == ["queued", "skipped", "failed"]
-    assert all(row[2].startswith(b"cipher:") for row in inserted_items)
+    assert [row[5] for row in inserted_items] == ["queued", "skipped", "failed"]
+    assert [row[1] for row in inserted_items] == [12, 12, 12]
+    assert [row[2] for row in inserted_items] == [0, 1, 2]
+    assert all(row[4].startswith(b"cipher:") for row in inserted_items)
     prune = next(
         call for call in connection.calls
         if call[0] == "execute" and "DELETE FROM yt_import_jobs" in call[1]
@@ -203,24 +210,64 @@ async def test_status_hides_jobs_not_owned_by_requester(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_worker_section_lease_is_expiring_and_owner_token_checked(monkeypatch):
+    connection = FakeConnection(job={"owner_token": "section-owner"})
+
+    async def get_pool():
+        return FakePool(connection)
+
+    monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
+    token = await youtube_imports._acquire_worker_section_lease(12, 4)
+
+    assert token and isinstance(token, str)
+    acquire = next(call for call in connection.calls if call[0] == "fetchrow")
+    assert "ON CONFLICT (user_id, worker_section) DO UPDATE SET" in acquire[1]
+    assert "WHERE yt_import_worker_leases.lease_until <= now()" in acquire[1]
+    assert acquire[2][0:2] == (12, 4)
+    assert acquire[2][2] == token
+    assert acquire[2][3] == youtube_imports.IMPORT_SECTION_LEASE_SECONDS
+
+    await youtube_imports._release_worker_section_lease(12, 4, token)
+    release = next(call for call in connection.calls if call[0] == "execute")
+    assert "owner_token = $3" in release[1]
+    assert release[2] == (12, 4, token)
+
+
+@pytest.mark.asyncio
+async def test_section_lease_is_not_acquired_while_another_process_owns_it(monkeypatch):
+    connection = FakeConnection(job=None)
+
+    async def get_pool():
+        return FakePool(connection)
+
+    monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
+    assert await youtube_imports._acquire_worker_section_lease(12, 4) is None
+
+
+@pytest.mark.asyncio
 async def test_claim_uses_durable_row_lock_without_global_slot(monkeypatch):
     connection = FakeConnection(job={
         "id": 99, "job_id": "job-1", "link_enc": b"link",
-        "options_enc": b"options", "resolved_enc": None,
+        "options_enc": b"options", "resolved_enc": None, "status": "queued",
     })
 
     async def get_pool():
         return FakePool(connection)
 
     monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
-    item = await youtube_imports._claim_stage_item(12, "resolve")
+    item = await youtube_imports._claim_user_import_item(12, 3, "section-owner")
 
     assert item["user_id"] == 12 and item["stage"] == "resolve"
+    assert item["worker_section"] == 3
+    assert item["worker_lease_token"] == "section-owner"
     assert item["id"] == 99 and item["claim_token"]
     fetch = next(call for call in connection.calls if call[0] == "fetchrow")
-    assert "FOR UPDATE OF i SKIP LOCKED" in fetch[1]
-    assert "make_interval(mins => $2)" in fetch[1]
-    assert fetch[2][1] == youtube_imports.CLAIM_STALE_AFTER_MINUTES == 2
+    assert "JOIN yt_import_worker_leases l" in fetch[1]
+    assert "FOR UPDATE OF i, l SKIP LOCKED" in fetch[1]
+    assert "i.worker_section = $2" in fetch[1]
+    assert "owner_token = $3" in fetch[1]
+    assert "make_interval(mins => $4)" in fetch[1]
+    assert fetch[2] == (12, 3, "section-owner", youtube_imports.CLAIM_STALE_AFTER_MINUTES)
     assert "j.options_enc" in fetch[1]
     assert "yt_import_worker_slots" not in fetch[1]
     updates = [call for call in connection.calls if call[0] == "execute"]
@@ -236,7 +283,7 @@ async def test_empty_claim_queue_does_not_claim_anything(monkeypatch):
         return FakePool(connection)
 
     monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
-    assert await youtube_imports._claim_stage_item(12, "process") is None
+    assert await youtube_imports._claim_user_import_item(12, 0, "section-owner") is None
     assert len([call for call in connection.calls if call[0] == "fetchrow"]) == 1
 
 
@@ -249,7 +296,10 @@ async def test_resolution_completion_updates_progress_without_slot_release(monke
 
     monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
     monkeypatch.setattr(youtube_imports, "encrypt", lambda _key, value: f"cipher:{value}".encode())
-    item = {"id": 7, "job_id": "job-1", "claim_token": "claim-1"}
+    item = {
+        "id": 7, "job_id": "job-1", "claim_token": "claim-1", "user_id": 12,
+        "worker_section": 1, "worker_lease_token": "section-owner",
+    }
     metadata = {"rss_id": "UCx", "name": "Channel", "url": "https://youtube.com/@x", "logo": None}
 
     await youtube_imports._complete_resolution(item, b"key", metadata)
@@ -272,7 +322,10 @@ async def test_processing_completion_counts_final_write_without_slot_release(mon
 
     monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
     monkeypatch.setattr(youtube_imports, "encrypt", lambda _key, value: f"cipher:{value}".encode())
-    item = {"id": 7, "job_id": "job-1", "claim_token": "claim-1"}
+    item = {
+        "id": 7, "job_id": "job-1", "claim_token": "claim-1", "user_id": 12,
+        "worker_section": 1, "worker_lease_token": "section-owner",
+    }
 
     await youtube_imports._complete_processing(item, b"key", "failed", "DB write failed")
 
@@ -293,7 +346,10 @@ async def test_stale_completion_does_not_increment_job_progress(monkeypatch):
     monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
     monkeypatch.setattr(youtube_imports, "encrypt", lambda _key, value: f"cipher:{value}".encode())
     await youtube_imports._complete_resolution(
-        {"id": 7, "job_id": "job-1", "claim_token": "old-claim"},
+        {
+            "id": 7, "job_id": "job-1", "claim_token": "old-claim", "user_id": 12,
+            "worker_section": 1, "worker_lease_token": "section-owner",
+        },
         b"key",
         {"rss_id": "UCx", "name": "Channel", "url": "https://youtube.com/@x", "logo": None},
     )
@@ -303,13 +359,36 @@ async def test_stale_completion_does_not_increment_job_progress(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_terminal_progress_is_fenced_when_section_lease_is_lost(monkeypatch):
+    from Media.Yt.SQL.import_leases import ImportWorkerLeaseLost
+
+    connection = FakeConnection(fetchval_result=None)
+
+    async def get_pool():
+        return FakePool(connection)
+
+    monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
+    monkeypatch.setattr(youtube_imports, "encrypt", lambda _key, value: f"cipher:{value}".encode())
+    item = {
+        "id": 7, "job_id": "job-1", "claim_token": "claim-1", "user_id": 12,
+        "worker_section": 1, "worker_lease_token": "expired-owner",
+    }
+
+    with pytest.raises(ImportWorkerLeaseLost):
+        await youtube_imports._complete_processing(item, b"key", "added")
+
+    assert not any(call[0] == "execute" for call in connection.calls)
+
+
+@pytest.mark.asyncio
 async def test_canceled_resolution_requeues_token_checked_claim(monkeypatch):
     connection = FakeConnection()
 
     async def get_pool():
         return FakePool(connection)
 
-    async def canceled_resolve(_link, _user_id):
+    async def canceled_resolve(user_id, _link):
+        assert user_id == 12
         raise asyncio.CancelledError()
 
     monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
@@ -348,7 +427,8 @@ async def test_processing_uses_shared_add_source_write_helper(monkeypatch):
     item = {
         "id": 1, "job_id": "job-1", "user_id": 12,
         "link_enc": b"link", "options_enc": b"options", "resolved_enc": b"resolved",
-        "claim_token": "claim-1",
+        "claim_token": "claim-1", "worker_section": 2,
+        "worker_lease_token": "section-owner",
     }
     store = object()
 
@@ -356,9 +436,42 @@ async def test_processing_uses_shared_add_source_write_helper(monkeypatch):
 
     assert calls[0] == (12, metadata, {
         "kind": "withhold", "withhold": 3, "domain": "Media", "subdomain": "Animation",
-        "skip_existing": True, "store": store,
+        "skip_existing": True, "store": store, "worker_section": 2,
+        "worker_lease_token": "section-owner",
     })
     assert calls[1] == ("complete", "skipped", None)
+
+
+@pytest.mark.asyncio
+async def test_add_source_refuses_to_write_after_section_lease_is_lost(monkeypatch):
+    from Media.Yt.SQL.import_leases import ImportWorkerLeaseLost
+    from Media.Yt.SQL.user import store as user_store
+
+    connection = FakeConnection(fetchval_result=None)
+
+    async def get_pool():
+        return FakePool(connection)
+
+    async def vault_key(_user_id):
+        return b"vault-key"
+
+    monkeypatch.setattr(user_store, "get_pool", get_pool)
+    monkeypatch.setattr(user_store.vault, "get", vault_key)
+
+    with pytest.raises(ImportWorkerLeaseLost):
+        await user_store.YtUserSQL().add_extension_subscription(
+            12,
+            channel_name="Example",
+            channel_url="https://youtube.com/@example",
+            kind="tracking",
+            rss_id="UCexample",
+            skip_existing=True,
+            worker_section=2,
+            worker_lease_token="expired-owner",
+        )
+
+    assert len([call for call in connection.calls if call[0] == "fetchval"]) == 1
+    assert not any(call[0] == "execute" for call in connection.calls)
 
 
 @pytest.mark.asyncio
@@ -366,8 +479,8 @@ async def test_single_add_and_bulk_share_resolution_and_persistence_helpers(monk
     calls = []
     metadata = {"rss_id": "UCx", "name": "Channel", "url": "https://youtube.com/@x", "logo": None}
 
-    async def resolve(link, user_id):
-        calls.append(("resolve", link, user_id))
+    async def resolve(user_id, link):
+        calls.append(("resolve", user_id, link))
         return metadata
 
     class Store:
@@ -381,14 +494,14 @@ async def test_single_add_and_bulk_share_resolution_and_persistence_helpers(monk
     )
 
     assert result == {"channel_id": 14, "created": True}
-    assert calls[0] == ("resolve", "https://youtube.com/@x", 12)
+    assert calls[0] == ("resolve", 12, "https://youtube.com/@x")
     assert calls[1][0:2] == ("write", 12)
     assert calls[1][2]["rss_id"] == "UCx"
     assert calls[1][2]["kind"] == "tracking"
 
 
 @pytest.mark.asyncio
-async def test_shared_resolver_uses_the_users_network_lane(monkeypatch):
+async def test_shared_resolver_uses_authenticated_youtube_network_lane(monkeypatch):
     from Media.Yt.Fetch import convert
 
     expected = SimpleNamespace(
@@ -396,18 +509,26 @@ async def test_shared_resolver_uses_the_users_network_lane(monkeypatch):
     )
     calls = []
 
-    async def network(user_id, fn, link):
+    async def run_youtube_network(user_id, fn, link):
         calls.append((user_id, fn, link))
         return Success(expected)
 
     monkeypatch.setattr(convert, "resolve_channel", lambda _link: Success(expected))
-    monkeypatch.setattr(youtube_imports, "run_youtube_network", network)
+    monkeypatch.setattr(youtube_imports, "run_youtube_network", run_youtube_network)
 
-    result = await youtube_imports.resolve_youtube_channel("https://youtube.com/@x", 12)
+    result = await youtube_imports.resolve_youtube_channel(12, "https://youtube.com/@x")
     assert result == {
         "rss_id": "UCx", "name": "Channel", "url": "https://youtube.com/@x", "logo": None,
     }
     assert calls == [(12, convert.resolve_channel, "https://youtube.com/@x")]
+
+
+def test_worker_retry_backoff_is_jittered_and_capped(monkeypatch):
+    monkeypatch.setattr(youtube_imports.random, "uniform", lambda low, high: high)
+
+    assert youtube_imports._worker_retry_delay(1) == pytest.approx(2.4)
+    assert youtube_imports._worker_retry_delay(2) == pytest.approx(4.8)
+    assert youtube_imports._worker_retry_delay(20) == 60.0
 
 
 def test_import_schema_is_idempotent_and_drops_legacy_global_pacing_tables():
@@ -421,30 +542,39 @@ def test_import_schema_is_idempotent_and_drops_legacy_global_pacing_tables():
     assert "DROP TABLE IF EXISTS yt_import_dispatcher" in schema
     assert "CREATE TABLE IF NOT EXISTS yt_import_worker_slots" not in schema
     assert "CREATE TABLE IF NOT EXISTS yt_import_dispatcher" not in schema
+    assert "worker_section = (i.ordinal % 8)::SMALLINT" in schema
+    assert "ALTER COLUMN user_id SET NOT NULL" in schema
+    assert "CREATE TABLE IF NOT EXISTS yt_import_worker_leases" in schema
+    assert "PRIMARY KEY (user_id, worker_section)" in schema
+
+
+def test_import_workers_are_fixed_at_eight_per_user_with_one_second_break():
+    assert youtube_imports.IMPORT_WORKERS_PER_USER == 8
+    assert youtube_imports.IMPORT_ITEM_DELAY_SECONDS == 1.0
 
 
 @pytest.mark.parametrize(
-    ("setting", "expected"),
-    [(None, 64), ("5", 5), ("0", 1), ("80", 64), ("invalid", 64)],
+    ("payload", "expected"),
+    [
+        ({"link": "https://youtube.com/@one"}, ["https://youtube.com/@one"]),
+        ([{"link": "https://youtube.com/@one"}, "https://youtube.com/@two"],
+         ["https://youtube.com/@one", "https://youtube.com/@two"]),
+        ({"sources": [{"url": "https://youtube.com/@one"}]},
+         ["https://youtube.com/@one"]),
+        ("https://youtube.com/@one", ["https://youtube.com/@one"]),
+    ],
 )
-def test_claim_consumer_count_is_independent_of_network_pacing(monkeypatch, setting, expected):
-    if setting is None:
-        monkeypatch.delenv("DREAMEDIA_YT_IMPORT_WORKERS", raising=False)
-    else:
-        monkeypatch.setenv("DREAMEDIA_YT_IMPORT_WORKERS", setting)
-    assert youtube_imports.import_worker_count() == expected
+def test_json_source_payload_accepts_one_or_many_records(payload, expected):
+    assert youtube_imports.normalize_source_payload(payload) == expected
 
 
 @pytest.mark.parametrize(
-    ("setting", "expected"),
-    [(None, 16), ("6", 6), ("0", 1), ("40", 16), ("invalid", 16)],
+    "payload",
+    [None, {}, {"sources": "not-an-array"}, ["https://youtube.com/@one", {}], 3],
 )
-def test_async_write_worker_count_has_no_network_cooldown(monkeypatch, setting, expected):
-    if setting is None:
-        monkeypatch.delenv("DREAMEDIA_YT_IMPORT_PROCESS_WORKERS", raising=False)
-    else:
-        monkeypatch.setenv("DREAMEDIA_YT_IMPORT_PROCESS_WORKERS", setting)
-    assert youtube_imports.process_worker_count() == expected
+def test_json_source_payload_rejects_malformed_or_empty_batches(payload):
+    with pytest.raises(ValueError):
+        youtube_imports.normalize_source_payload(payload)
 
 
 def test_channel_link_validation_deduplicates_handles_without_folding_channel_ids():
@@ -566,7 +696,8 @@ async def test_retry_creates_separate_job_with_only_valid_failed_links_and_origi
     assert lookup[2] == ("job-1", 12)
     inserted = next(call for call in connection.calls if call[0] == "executemany")
     assert len(inserted[2]) == 1
-    assert inserted[2][0][2] == b"cipher:https://www.youtube.com/@channel"
+    assert inserted[2][0][1:4] == (12, 0, 0)
+    assert inserted[2][0][4] == b"cipher:https://www.youtube.com/@channel"
     insert_job = next(
         call for call in connection.calls
         if call[0] == "execute" and "INSERT INTO yt_import_jobs" in call[1]
@@ -614,7 +745,7 @@ async def test_rerun_creates_separate_job_with_all_links_and_original_options(mo
     assert "WHERE job_id = $1 AND user_id = $2" in lookup[1]
     assert lookup[2] == ("job-1", 12)
     inserted = next(call for call in connection.calls if call[0] == "executemany")
-    assert [row[2] for row in inserted[2]] == [
+    assert [row[4] for row in inserted[2]] == [
         b"cipher:https://www.youtube.com/@one",
         b"cipher:https://youtube.com/@two",
     ]
@@ -664,6 +795,19 @@ async def test_delete_finished_import_history_is_owner_scoped(monkeypatch, statu
 
 
 @pytest.mark.asyncio
+async def test_delete_missing_import_history_is_idempotent(monkeypatch):
+    connection = FakeConnection(job=None)
+
+    async def get_pool():
+        return FakePool(connection)
+
+    monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
+
+    assert await youtube_imports.delete_youtube_import(12, "already-deleted") is True
+    assert not any(call[0] == "execute" for call in connection.calls)
+
+
+@pytest.mark.asyncio
 async def test_delete_rejects_an_active_import(monkeypatch):
     connection = FakeConnection(job={"status": "running"})
 
@@ -678,63 +822,214 @@ async def test_delete_rejects_an_active_import(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_claim_lease_refresh_is_token_checked_and_frequent(monkeypatch):
+async def test_claim_and_section_lease_refresh_are_token_checked(monkeypatch):
     connection = FakeConnection()
 
     async def get_pool():
         return FakePool(connection)
 
     monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
-    item = {"id": 9, "stage": "resolve", "claim_token": "lease-token"}
+    item = {
+        "id": 9,
+        "stage": "resolve",
+        "claim_token": "item-owner",
+        "user_id": 12,
+        "worker_section": 3,
+        "worker_lease_token": "section-owner",
+    }
 
     assert await youtube_imports._refresh_claim_lease(item) is True
     assert youtube_imports.CLAIM_LEASE_REFRESH_SECONDS < youtube_imports.CLAIM_STALE_AFTER_MINUTES * 60
-    update = next(call for call in connection.calls if call[0] == "execute")
-    assert "WHERE id = $1 AND status = $2 AND claim_token = $3" in update[1]
-    assert update[2] == (9, "resolving", "lease-token")
+    updates = [call for call in connection.calls if call[0] == "execute"]
+    renewal = next(call for call in connection.calls if call[0] == "fetchval")
+    assert "WHERE id = $1 AND status = $2 AND claim_token = $3" in updates[0][1]
+    assert updates[0][2] == (9, "resolving", "item-owner")
+    assert "owner_token = $3" in renewal[1]
+    assert "lease_until > now()" in renewal[1]
+    assert renewal[2] == (12, 3, "section-owner", youtube_imports.IMPORT_SECTION_LEASE_SECONDS)
 
 
-def test_stage_poll_backoff_grows_with_jitter_and_is_capped(monkeypatch):
+@pytest.mark.asyncio
+async def test_claim_heartbeat_survives_item_completion_race(monkeypatch):
+    connection = FakeConnection(update_result="UPDATE 0")
+
+    async def get_pool():
+        return FakePool(connection)
+
+    monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
+    item = {
+        "id": 9, "stage": "process", "claim_token": "finished-item",
+        "user_id": 12, "worker_section": 3, "worker_lease_token": "section-owner",
+    }
+
+    assert await youtube_imports._refresh_claim_lease(item) is True
+
+
+@pytest.mark.asyncio
+async def test_claim_heartbeat_database_error_fails_closed(monkeypatch):
+    sleeps = []
+
+    async def immediate_sleep(seconds):
+        sleeps.append(seconds)
+
+    async def failed_refresh(_item):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(youtube_imports.asyncio, "sleep", immediate_sleep)
+    monkeypatch.setattr(youtube_imports, "_refresh_claim_lease", failed_refresh)
+
+    await youtube_imports._keep_claim_alive({"id": 9})
+
+    assert sleeps == [youtube_imports.CLAIM_LEASE_REFRESH_SECONDS]
+
+
+@pytest.mark.asyncio
+async def test_lost_section_lease_cancels_active_source_work(monkeypatch):
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    blocked = asyncio.Event()
+
+    async def lease_lost(_item):
+        await asyncio.sleep(0)
+
+    async def resolve(_item, _key):
+        started.set()
+        try:
+            await blocked.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(youtube_imports, "_keep_claim_alive", lease_lost)
+    monkeypatch.setattr(youtube_imports, "_resolve_claim", resolve)
+
+    with pytest.raises(RuntimeError, match="lost the durable"):
+        await youtube_imports._run_claim_with_lease({"stage": "resolve"}, b"key", object())
+
+    assert started.is_set() and cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_each_user_gets_exactly_eight_section_workers(monkeypatch):
+    started = []
+    never = asyncio.Event()
+
+    async def worker(user_id, section):
+        started.append((user_id, section))
+        await never.wait()
+
+    monkeypatch.setattr(youtube_imports, "_run_user_import_worker", worker)
+    tasks = youtube_imports._ensure_user_import_workers(12)
+    await asyncio.sleep(0)
+
+    assert len(tasks) == 8
+    assert sorted(started) == [(12, section) for section in range(8)]
+    await youtube_imports.stop_youtube_import_workers()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("claim_error", [None, RuntimeError("database error")])
+async def test_user_worker_releases_section_lease_on_empty_queue_or_error(
+    monkeypatch, claim_error
+):
+    released = []
+
+    async def vault_key(_user_id):
+        return b"key"
+
+    async def acquire(_user_id, _section):
+        return "section-owner"
+
+    async def release(_user_id, _section, token):
+        released.append(token)
+
+    async def claim(_user_id, _section, _token):
+        if claim_error is not None:
+            raise claim_error
+        return None
+
+    async def sleep(_seconds):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(youtube_imports.vault, "get", vault_key)
+    monkeypatch.setattr(youtube_imports, "_acquire_worker_section_lease", acquire)
+    monkeypatch.setattr(youtube_imports, "_release_worker_section_lease", release)
+    monkeypatch.setattr(youtube_imports, "_claim_user_import_item", claim)
+    monkeypatch.setattr(youtube_imports, "_worker_sleep", sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await youtube_imports._run_user_import_worker(12, 0)
+
+    assert released == ["section-owner"]
+
+
+@pytest.mark.asyncio
+async def test_user_worker_backoff_grows_across_repeated_claim_faults(monkeypatch):
+    sleeps = []
+
+    async def vault_key(_user_id):
+        return b"key"
+
+    async def acquire(_user_id, _section):
+        return "section-owner"
+
+    async def release(_user_id, _section, _token):
+        return None
+
+    async def claim(_user_id, _section, _token):
+        raise RuntimeError("database unavailable")
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(youtube_imports.vault, "get", vault_key)
+    monkeypatch.setattr(youtube_imports, "_acquire_worker_section_lease", acquire)
+    monkeypatch.setattr(youtube_imports, "_release_worker_section_lease", release)
+    monkeypatch.setattr(youtube_imports, "_claim_user_import_item", claim)
+    monkeypatch.setattr(youtube_imports, "_worker_sleep", sleep)
     monkeypatch.setattr(youtube_imports.random, "uniform", lambda low, high: high)
-    assert youtube_imports._worker_retry_delay(1) == pytest.approx(2.4)
-    assert youtube_imports._worker_retry_delay(2) == pytest.approx(4.8)
-    assert youtube_imports._worker_retry_delay(20) == 60.0
+
+    with pytest.raises(asyncio.CancelledError):
+        await youtube_imports._run_user_import_worker(12, 0)
+
+    assert sleeps == [2.4, 4.8]
 
 
 @pytest.mark.asyncio
-async def test_idle_stage_workers_share_one_pending_scan(monkeypatch):
-    scans = 0
+async def test_user_worker_awaits_one_second_after_a_completed_source(monkeypatch):
+    item = {"stage": "process", "id": 1, "claim_token": "claim"}
+    sleeps = []
 
-    async def no_pending_work(stage):
-        nonlocal scans
-        assert stage == "process"
-        scans += 1
-        await asyncio.sleep(0.01)
-        return []
+    async def vault_key(_user_id):
+        return b"key"
 
-    monkeypatch.setattr(youtube_imports, "_pending_user_ids", no_pending_work)
-    results = await asyncio.gather(*(
-        youtube_imports._claim_next_stage_item("process") for _ in range(16)
-    ))
-    assert scans == 1
-    assert all(item is None and key is None and delay > 0 for item, key, delay in results)
+    async def acquire(_user_id, _section):
+        return "section-owner"
 
+    async def release(_user_id, _section, token):
+        assert token == "section-owner"
 
-@pytest.mark.asyncio
-async def test_stage_poll_recovers_after_a_transient_database_timeout(monkeypatch):
-    scans = 0
+    async def claim(_user_id, _section, token):
+        assert token == "section-owner"
+        return item
 
-    async def timeout_once(stage):
-        nonlocal scans
-        assert stage == "resolve"
-        scans += 1
-        if scans == 1:
-            raise TimeoutError("injected database connect timeout")
-        return []
+    async def run_claim(_item, _key, _store):
+        return None
 
-    monkeypatch.setattr(youtube_imports, "_pending_user_ids", timeout_once)
-    monkeypatch.setattr(youtube_imports, "_worker_retry_delay", lambda _attempt: 0.0)
-    with pytest.raises(TimeoutError):
-        await youtube_imports._claim_next_stage_item("resolve")
-    item, key, delay = await youtube_imports._claim_next_stage_item("resolve")
-    assert scans == 2 and item is None and key is None and delay > 0
+    async def sleep(seconds):
+        sleeps.append(seconds)
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(youtube_imports.vault, "get", vault_key)
+    monkeypatch.setattr(youtube_imports, "_acquire_worker_section_lease", acquire)
+    monkeypatch.setattr(youtube_imports, "_release_worker_section_lease", release)
+    monkeypatch.setattr(youtube_imports, "_claim_user_import_item", claim)
+    monkeypatch.setattr(youtube_imports, "_run_claim_with_lease", run_claim)
+    monkeypatch.setattr(youtube_imports, "_worker_sleep", sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await youtube_imports._run_user_import_worker(12, 0)
+
+    assert sleeps == [1.0]
