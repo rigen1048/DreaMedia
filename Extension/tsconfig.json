@@ -22,8 +22,7 @@
   "include": [
     "shared/**/*.ts",
     "Media/**/*.ts",
-    "PopUI/**/*.ts",
-    "automation.ts"
+    "PopUI/**/*.ts"
   ],
   "exclude": [
     "node_modules",

@@ -32,6 +32,19 @@
   color: var(--foreground);
 }
 
+.delete-button {
+  min-height: 2.25rem;
+  padding: 0 .8rem;
+  border: 1px solid color-mix(in oklab, var(--destructive) 42%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--destructive) 9%, var(--card));
+  color: var(--foreground);
+  font-size: .75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.delete-button:hover:not(:disabled) { background: color-mix(in oklab, var(--destructive) 17%, var(--card)); }
+
 .batch-summary {
   padding: 0.875rem 1rem;
   border: 1px solid var(--border);

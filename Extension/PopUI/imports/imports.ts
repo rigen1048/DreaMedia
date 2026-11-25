@@ -33,6 +33,7 @@ const ACTIVE_KEY = "youtubeImportJobIds";
 const FAILED_KEY = "youtubeFailedImportJobIds";
 const RECENT_KEY = "youtubeRecentImportJobIds";
 const HIDDEN_KEY = "youtubeHiddenImportJobIds";
+const IMPORT_TAB_KEY = "importTableTabId";
 const FINISHED_STATUSES = new Set(["completed", "partial"]);
 
 interface ImportItem {
@@ -75,6 +76,14 @@ function uniqueIds(...lists: string[][]): string[] {
 function terminal(job: ImportJob | { jobId: string } | undefined): job is ImportJob {
   if (!job) return false;
   return "status" in job && FINISHED_STATUSES.has(job.status);
+}
+
+function deletable(job: ImportJob): boolean {
+  if (job.missing) return true;
+  if (job.status !== "completed" || Number(job.failed) !== 0) return false;
+  const requested = Number(job.requested) || (Array.isArray(job.items) ? job.items.length : 0);
+  if ((Number(job.processed) || 0) < requested) return false;
+  return !Array.isArray(job.items) || job.items.every((item) => item.status === "added" || item.status === "skipped");
 }
 
 function itemCounts(job: ImportJob): { added: number; skipped: number; failed: number; working: number } {
@@ -303,10 +312,11 @@ function renderCurrent(): void {
   runButton.textContent = job.rerunning ? "Queueing batch…" : "Run batch again";
   runButton.title = "Queue every original channel link again with the same source settings";
   const deleteButton = $("deleteBatch") as HTMLButtonElement;
-  deleteButton.hidden = !job.missing && !FINISHED_STATUSES.has(job.status);
+  deleteButton.hidden = !deletable(job);
   deleteButton.disabled = Boolean(job.deleting);
-  deleteButton.textContent = job.deleting ? "Deleting…" : "Delete batch";
-  deleteButton.title = "Delete this finished batch's progress history; existing sources remain";
+  deleteButton.textContent = job.deleting ? "…" : "×";
+  deleteButton.title = "Delete this completed batch's progress history; existing sources remain";
+  deleteButton.setAttribute("aria-label", "Delete completed batch");
   renderRows(job);
 }
 
@@ -451,7 +461,7 @@ async function rerunJob(): Promise<void> {
 
 async function deleteJob(): Promise<void> {
   const job = jobs.get(selectedJobId);
-  if (!job || (!job.missing && !FINISHED_STATUSES.has(job.status)) || job.deleting) return;
+  if (!job || !deletable(job) || job.deleting) return;
   const label = `Job ${job.jobId.slice(0, 8)}`;
   if (!window.confirm(`Delete ${label} and its import progress history? Sources already added to DreaMedia will remain.`)) return;
 
@@ -535,10 +545,13 @@ $("retryFailed").addEventListener("click", () => void retryJob());
 $("runBatch").addEventListener("click", () => void rerunJob());
 $("deleteBatch").addEventListener("click", () => void deleteJob());
 $("closePage").addEventListener("click", () => {
-  chrome.storage.local.get("importTableTabId", (result) => {
-    const tabId = result.importTableTabId;
-    if (tabId != null) chrome.tabs.remove(tabId);
-    chrome.storage.local.remove("importTableTabId");
+  chrome.tabs.getCurrent((tab) => {
+    const tabId = tab?.id;
+    if (tabId == null) return;
+    chrome.storage.local.get(IMPORT_TAB_KEY, (result) => {
+      if (result[IMPORT_TAB_KEY] === tabId) chrome.storage.local.remove(IMPORT_TAB_KEY);
+    });
+    chrome.tabs.remove(tabId);
   });
 });
 void loadJobs();

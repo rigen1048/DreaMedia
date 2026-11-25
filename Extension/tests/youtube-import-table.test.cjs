@@ -45,9 +45,12 @@ function setupPage({ holdOtherStatus = false, holdOtherDetailStatus = false } = 
     youtubeImportJobIds: ["job-123"],
     youtubeFailedImportJobIds: [],
     youtubeRecentImportJobIds: ["job-123", "job-456"],
+    importTableTabId: 999,
+    scanTableTabId: 888,
   };
   const messages = [];
   const confirmations = [];
+  const removedTabs = [];
   const storedIds = (key) => Array.isArray(storage[key]) ? storage[key] : [];
   const updateMembership = (ids, jobId, include) => include
     ? [...new Set([...ids, jobId])]
@@ -141,16 +144,19 @@ function setupPage({ holdOtherStatus = false, holdOtherDetailStatus = false } = 
     },
     storage: {
       local: {
-        async get(keys) {
+        get(keys, callback) {
           const names = Array.isArray(keys) ? keys : [keys];
-          return Object.fromEntries(names.map((name) => [name, storage[name]]));
+          const result = Object.fromEntries(names.map((name) => [name, storage[name]]));
+          if (typeof callback === "function") callback(result);
+          return Promise.resolve(result);
         },
         async set(values) { Object.assign(storage, values); },
       },
     },
     tabs: {
       query(_options, callback) { callback([{ id: 9 }]); },
-      remove() {},
+      getCurrent(callback) { callback({ id: 10 }); },
+      remove(tabId) { removedTabs.push(tabId); },
     },
   };
   const context = vm.createContext({
@@ -160,7 +166,7 @@ function setupPage({ holdOtherStatus = false, holdOtherDetailStatus = false } = 
   });
   vm.runInContext(pageSource, context, { filename: "imports.js" });
   return {
-    elements, messages, storage, confirmations,
+    elements, messages, storage, confirmations, removedTabs,
     setJob(value) { job = value; },
     releaseOtherStatus() { pendingOtherStatus?.(); pendingOtherStatus = null; },
     releaseOtherDetailStatus() { pendingOtherDetailStatus?.(); pendingOtherDetailStatus = null; },
@@ -289,6 +295,33 @@ test("finished batch can be deleted from the table without deleting its imported
   assert.ok(!Array.from(page.storage.youtubeRecentImportJobIds).includes("job-456"));
   assert.ok(Array.from(page.storage.youtubeHiddenImportJobIds).includes("job-456"));
   assert.equal(page.elements.get("jobSelect").value, "job-123");
+});
+
+test("completed status cannot be deleted until every requested channel is processed", async () => {
+  const page = setupPage();
+  await flushPage();
+  page.setJob({
+    jobId: "job-123", status: "completed", requested: 3, processed: 2,
+    resolved: 2, added: 1, skipped: 1, failed: 0,
+    items: [
+      { ordinal: 0, link: "https://www.youtube.com/@done", status: "added", error: null, retryable: false },
+      { ordinal: 1, link: "https://www.youtube.com/@duplicate", status: "skipped", error: null, retryable: false },
+      { ordinal: 2, link: "https://www.youtube.com/@pending", status: "processing", error: null, retryable: false },
+    ],
+  });
+  page.elements.get("refreshJobs").listeners.get("click")();
+  await flushPage();
+  assert.equal(page.elements.get("deleteBatch").hidden, true);
+});
+
+test("closing the import table closes its own current tab, not another stored table tab", async () => {
+  const page = setupPage();
+  await flushPage();
+  page.elements.get("closePage").listeners.get("click")();
+  await flushPage();
+  assert.deepEqual(page.removedTabs, [10]);
+  assert.equal(page.storage.importTableTabId, 999);
+  assert.equal(page.storage.scanTableTabId, 888);
 });
 
 test("a detail response arriving after deletion cannot restore the batch", async () => {

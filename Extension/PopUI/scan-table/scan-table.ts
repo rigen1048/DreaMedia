@@ -25,9 +25,11 @@ interface ScanChannel {
 }
 
 const SCAN_CHANNELS_KEY = "youtubeScanChannels";
+const SCAN_TAB_KEY = "scanTableTabId";
 
 let channels: ScanChannel[] = [];
 let statusFilter = "all";
+let hasSavedScan = false;
 
 function filterChannels(): ScanChannel[] {
   if (statusFilter === "all") return channels;
@@ -115,33 +117,65 @@ function render(): void {
 }
 
 async function loadChannels(): Promise<void> {
-  const stored = await chrome.storage.local.get([SCAN_CHANNELS_KEY]);
-  const raw = stored[SCAN_CHANNELS_KEY];
-  if (Array.isArray(raw)) {
-    channels = raw.filter(
-      (c): c is ScanChannel =>
-        typeof c === "object" &&
-        c !== null &&
-        typeof (c as Record<string, unknown>).url === "string" &&
-        typeof (c as Record<string, unknown>).name === "string",
-    );
-  } else {
+  try {
+    const stored = await chrome.storage.local.get([SCAN_CHANNELS_KEY]);
+    const raw = stored[SCAN_CHANNELS_KEY];
+    hasSavedScan = Array.isArray(raw);
+    if (hasSavedScan) {
+      channels = (raw as unknown[]).filter(
+        (c): c is ScanChannel =>
+          typeof c === "object" &&
+          c !== null &&
+          typeof (c as Record<string, unknown>).url === "string" &&
+          typeof (c as Record<string, unknown>).name === "string",
+      );
+    } else {
+      channels = [];
+    }
+    render();
+    $("scanView").hidden = !hasSavedScan;
+    $("pageMessage").hidden = hasSavedScan;
+    if (!hasSavedScan) {
+      $("pageMessage").textContent = "No saved scan results. Run a subscription scan from the DreaMedia popup.";
+    }
+  } catch {
+    hasSavedScan = false;
     channels = [];
+    $("scanView").hidden = true;
+    $("pageMessage").hidden = false;
+    $("pageMessage").className = "page-message error";
+    $("pageMessage").textContent = "Could not load scan results. Refresh the page and try again.";
   }
+}
+
+async function deleteScan(): Promise<void> {
+  if (!hasSavedScan) return;
+  if (!window.confirm("Delete this scan preview? Sources already added to DreaMedia will remain.")) return;
+  await chrome.storage.local.remove(SCAN_CHANNELS_KEY);
+  channels = [];
+  hasSavedScan = false;
   render();
+  $("pageMessage").textContent = "Scan deleted. Run a new subscription scan from the DreaMedia popup.";
+  $("pageMessage").hidden = false;
+  $("scanView").hidden = true;
 }
 
 $("closePage").addEventListener("click", () => {
-  chrome.storage.local.get("importTableTabId", (result) => {
-    const tabId = result.importTableTabId;
-    if (tabId != null) chrome.tabs.remove(tabId);
-    chrome.storage.local.remove("importTableTabId");
+  chrome.tabs.getCurrent((tab) => {
+    const tabId = tab?.id;
+    if (tabId == null) return;
+    chrome.storage.local.get(SCAN_TAB_KEY, (result) => {
+      if (result[SCAN_TAB_KEY] === tabId) chrome.storage.local.remove(SCAN_TAB_KEY);
+    });
+    chrome.tabs.remove(tabId);
   });
 });
 
 $("refreshScan").addEventListener("click", () => {
   void loadChannels();
 });
+
+$("deleteScan").addEventListener("click", () => void deleteScan());
 
 $("statusFilter").addEventListener("change", (event) => {
   const target = event.target as HTMLSelectElement;

@@ -9,6 +9,9 @@ import type { SubscriptionOptions } from "../../Media/Yt/Config/Model/types";
 import type { DomainRow } from "../../Media/Yt/Config/Model/types";
 import type { CategoryRow } from "../../Media/Yt/Config/Model/types";
 
+const IMPORT_TAB_KEY = "importTableTabId";
+const SCAN_TAB_KEY = "scanTableTabId";
+
 const $ = (id: string): HTMLElement => {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Missing DOM element: #${id}`);
@@ -666,6 +669,15 @@ chrome.storage.onChanged?.addListener((changes, areaName) => {
   renderImportStatus();
 });
 
+chrome.storage.onChanged?.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes.youtubeScanChannels) return;
+  const savedChannels = changes.youtubeScanChannels.newValue;
+  const scanButton = $("openScanTable");
+  const count = Array.isArray(savedChannels) ? savedChannels.length : 0;
+  scanButton.hidden = count === 0;
+  $("scanTableMeta").textContent = count ? `${count} scanned` : "";
+});
+
 function syncFailedImportJob(
   jobId: string,
   job: { status: string; failed: number; failedItems?: unknown[] }
@@ -682,7 +694,7 @@ $("openImportTable").addEventListener("click", () => {
     { url: chrome.runtime.getURL("imports.html") },
     (tab) => {
       if (tab?.id != null) {
-        chrome.storage.local.set({ importTableTabId: tab.id });
+        chrome.storage.local.set({ [IMPORT_TAB_KEY]: tab.id });
       }
     }
   );
@@ -693,7 +705,7 @@ $("openScanTable").addEventListener("click", () => {
     { url: chrome.runtime.getURL("scan-table.html") },
     (tab) => {
       if (tab?.id != null) {
-        chrome.storage.local.set({ importTableTabId: tab.id });
+        chrome.storage.local.set({ [SCAN_TAB_KEY]: tab.id });
       }
     }
   );

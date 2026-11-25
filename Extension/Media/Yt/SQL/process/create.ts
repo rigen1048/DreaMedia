@@ -13,7 +13,6 @@ import type { ImportJob } from "../../Config/Model/types";
 export const YT_STORAGE_KEYS = {
   DOMAINS: "domains",
   BLOCKED_YT: "blockedYt",
-  IMPORT_TABLE_TAB_ID: "importTableTabId",
 } as const;
 
 /**

@@ -44,7 +44,7 @@ h1 { margin: 0; font-size: clamp(1.35rem, 3vw, 1.75rem); font-weight: 650; lette
 .batch-toolbar select { min-width: 12rem; max-width: 25rem; min-height: 2.25rem; flex: 1; padding: .375rem .625rem; border: 1px solid var(--input); border-radius: var(--radius-md); background: var(--card); }
 .run-button, .delete-button { min-height: 2.25rem; padding: 0 .8rem; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--secondary); color: var(--foreground); font-size: .75rem; font-weight: 600; white-space: nowrap; }
 .run-button:hover:not(:disabled) { background: var(--accent); }
-.delete-button { border-color: color-mix(in oklab, var(--destructive) 42%, var(--border)); background: color-mix(in oklab, var(--destructive) 9%, var(--card)); }
+.delete-button { width: 2.25rem; padding: 0; border-color: color-mix(in oklab, var(--destructive) 42%, var(--border)); background: color-mix(in oklab, var(--destructive) 9%, var(--card)); font-size: 1.1rem; line-height: 1; }
 .delete-button:hover:not(:disabled) { background: color-mix(in oklab, var(--destructive) 17%, var(--card)); }
 .run-button:disabled, .delete-button:disabled { cursor: wait; opacity: .6; }
 .retry-button { min-height: 2.25rem; padding: 0 .8rem; border: 1px solid color-mix(in oklab, var(--destructive) 42%, var(--border)); border-radius: var(--radius-md); background: color-mix(in oklab, var(--destructive) 9%, var(--card)); color: var(--foreground); font-size: .75rem; font-weight: 600; white-space: nowrap; }
