@@ -270,6 +270,8 @@ def test_extension_schema_exposes_category_and_withhold_contract():
     assert "startYoutubeImport" in schema
     assert "youtubeImportJob" in schema
     assert "retryYoutubeImport" in schema
+    assert "rerunYoutubeImport" in schema
+    assert "deleteYoutubeImport" in schema
     assert "failedItems" in schema
     assert "retryable: Boolean!" in schema
     assert "resolved: Int!" in schema
@@ -396,6 +398,57 @@ async def test_retry_import_mutation_uses_authenticated_owner_and_returns_new_jo
     assert result.data["retryYoutubeImport"] == {
         "jobId": "retry-456", "status": "queued", "requested": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_rerun_import_mutation_uses_authenticated_owner_and_returns_new_job(monkeypatch, extension_info):
+    calls = []
+
+    async def user_id(_info):
+        return 12
+
+    async def rerun(owner, job_id):
+        calls.append((owner, job_id))
+        return {
+            "job_id": "rerun-456", "status": "queued", "requested": 3,
+            "processed": 0, "resolved": 0, "added": 0, "skipped": 0, "failed": 0,
+        }
+
+    monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
+    monkeypatch.setattr(ext_graph, "rerun_youtube_import_job", rerun)
+
+    result = await ext_graph.ext_schema.execute(
+        'mutation { rerunYoutubeImport(jobId: "old-123") { jobId status requested } }'
+    )
+
+    assert calls == [(12, "old-123")]
+    assert result.errors is None
+    assert result.data["rerunYoutubeImport"] == {
+        "jobId": "rerun-456", "status": "queued", "requested": 3,
+    }
+
+
+@pytest.mark.asyncio
+async def test_delete_import_mutation_uses_authenticated_owner(monkeypatch, extension_info):
+    calls = []
+
+    async def user_id(_info):
+        return 12
+
+    async def delete(owner, job_id):
+        calls.append((owner, job_id))
+        return True
+
+    monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
+    monkeypatch.setattr(ext_graph, "delete_youtube_import_job", delete)
+
+    result = await ext_graph.ext_schema.execute(
+        'mutation { deleteYoutubeImport(jobId: "done-123") }'
+    )
+
+    assert calls == [(12, "done-123")]
+    assert result.errors is None
+    assert result.data["deleteYoutubeImport"] is True
 
 
 @pytest.mark.asyncio

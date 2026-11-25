@@ -173,6 +173,11 @@ The current production lanes are pictured in [`docs/diagrams/extension-internals
 - The popup stores outstanding backend job IDs only so progress can resume when
   it reopens. That browser storage is status tracking, not a second work queue;
   job progress is read from the backend over the authenticated WebSocket.
+- The import table can replay a finished batch as a new durable job using the
+  original links and saved source options, or delete a finished batch's progress
+  record. Replaying does not duplicate existing subscriptions; deletion leaves
+  source rows already added to DreaMedia untouched, and active jobs cannot be
+  deleted.
 - Because the subscriptions page loads dynamically, the import button remains
   disabled unless the scan observes a stable end. If the list is still growing
   at the scan limit, the user must scroll/scan again.

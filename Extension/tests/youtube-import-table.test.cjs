@@ -28,7 +28,7 @@ class Element {
   replaceChildren(...children) { this.children = [...children]; }
 }
 
-function setupPage({ holdOtherStatus = false } = {}) {
+function setupPage({ holdOtherStatus = false, holdOtherDetailStatus = false } = {}) {
   const elements = new Map();
   const document = {
     getElementById(id) {
@@ -47,7 +47,42 @@ function setupPage({ holdOtherStatus = false } = {}) {
     youtubeRecentImportJobIds: ["job-123", "job-456"],
   };
   const messages = [];
+  const confirmations = [];
+  const storedIds = (key) => Array.isArray(storage[key]) ? storage[key] : [];
+  const updateMembership = (ids, jobId, include) => include
+    ? [...new Set([...ids, jobId])]
+    : ids.filter((id) => id !== jobId);
+  const updateHistory = (message) => {
+    const { jobId } = message;
+    if (storedIds("youtubeHiddenImportJobIds").includes(jobId)) {
+      Object.assign(storage, {
+        youtubeImportJobIds: updateMembership(storedIds("youtubeImportJobIds"), jobId, false),
+        youtubeFailedImportJobIds: updateMembership(storedIds("youtubeFailedImportJobIds"), jobId, false),
+        youtubeRecentImportJobIds: updateMembership(storedIds("youtubeRecentImportJobIds"), jobId, false),
+      });
+      return false;
+    }
+    const recent = message.recent
+      ? [jobId, ...storedIds("youtubeRecentImportJobIds").filter((id) => id !== jobId)].slice(0, 10)
+      : storedIds("youtubeRecentImportJobIds");
+    Object.assign(storage, {
+      youtubeImportJobIds: updateMembership(storedIds("youtubeImportJobIds"), jobId, message.active === true),
+      youtubeFailedImportJobIds: updateMembership(storedIds("youtubeFailedImportJobIds"), jobId, message.failed === true),
+      youtubeRecentImportJobIds: recent,
+    });
+    return true;
+  };
+  const hideHistory = (jobId) => {
+    Object.assign(storage, {
+      youtubeImportJobIds: updateMembership(storedIds("youtubeImportJobIds"), jobId, false),
+      youtubeFailedImportJobIds: updateMembership(storedIds("youtubeFailedImportJobIds"), jobId, false),
+      youtubeRecentImportJobIds: updateMembership(storedIds("youtubeRecentImportJobIds"), jobId, false),
+      youtubeHiddenImportJobIds: [...new Set([...storedIds("youtubeHiddenImportJobIds"), jobId])],
+    });
+    return true;
+  };
   let pendingOtherStatus;
+  let pendingOtherDetailStatus;
   const otherJob = {
     jobId: "job-456", status: "completed", requested: 1, processed: 1,
     resolved: 1, added: 1, skipped: 0, failed: 0,
@@ -68,6 +103,10 @@ function setupPage({ holdOtherStatus = false } = {}) {
       sendMessage(message, callback) {
         messages.push(message);
         if (message.type === "dreamedia:youtubeImportStatus") {
+          if (message.jobId === "job-456" && holdOtherDetailStatus && message.includeItems) {
+            pendingOtherDetailStatus = () => callback({ ok: true, data: otherJob });
+            return;
+          }
           if (message.jobId === "job-456" && holdOtherStatus && !message.includeItems) {
             pendingOtherStatus = () => callback({ ok: true, data: otherJob });
             return;
@@ -84,6 +123,17 @@ function setupPage({ holdOtherStatus = false } = {}) {
             jobId: "retry-456", status: "queued", requested: 1,
             processed: 0, resolved: 0, added: 0, skipped: 0, failed: 0,
           } }));
+        } else if (message.type === "dreamedia:rerunYoutubeImport") {
+          queueMicrotask(() => callback({ ok: true, data: {
+            jobId: "rerun-789", status: "queued", requested: 3,
+            processed: 0, resolved: 0, added: 0, skipped: 0, failed: 0,
+          } }));
+        } else if (message.type === "dreamedia:deleteYoutubeImport") {
+          queueMicrotask(() => callback({ ok: true, data: true }));
+        } else if (message.type === "dreamedia:updateYoutubeImportHistory") {
+          queueMicrotask(() => callback({ ok: true, data: updateHistory(message) }));
+        } else if (message.type === "dreamedia:hideYoutubeImportHistory") {
+          queueMicrotask(() => callback({ ok: true, data: hideHistory(message.jobId) }));
         } else {
           queueMicrotask(() => callback({ ok: true, data: {} }));
         }
@@ -105,13 +155,15 @@ function setupPage({ holdOtherStatus = false } = {}) {
   };
   const context = vm.createContext({
     chrome, document, URL, console,
+    window: { confirm(message) { confirmations.push(message); return true; } },
     setInterval() { return 1; },
   });
   vm.runInContext(pageSource, context, { filename: "imports.js" });
   return {
-    elements, messages, storage,
+    elements, messages, storage, confirmations,
     setJob(value) { job = value; },
     releaseOtherStatus() { pendingOtherStatus?.(); pendingOtherStatus = null; },
+    releaseOtherDetailStatus() { pendingOtherDetailStatus?.(); pendingOtherDetailStatus = null; },
   };
 }
 
@@ -192,4 +244,69 @@ test("finished batch enables retry and retry opens a new durable table batch", a
   assert.equal(elements.get("itemRows").children.length, 1);
   assert.ok(Array.from(page.storage.youtubeImportJobIds).includes("retry-456"));
   assert.ok(Array.from(page.storage.youtubeRecentImportJobIds).includes("retry-456"));
+});
+
+test("finished batch can be rerun with the backend creating a new tracked job", async () => {
+  const page = setupPage();
+  await flushPage();
+  page.setJob({
+    jobId: "job-123", status: "completed", requested: 3, processed: 3,
+    resolved: 3, added: 2, skipped: 1, failed: 0,
+    items: [
+      { ordinal: 0, link: "https://www.youtube.com/@one", status: "added", error: null, retryable: false },
+      { ordinal: 1, link: "https://www.youtube.com/@two", status: "skipped", error: null, retryable: false },
+      { ordinal: 2, link: "https://www.youtube.com/@three", status: "added", error: null, retryable: false },
+    ],
+  });
+  page.elements.get("refreshJobs").listeners.get("click")();
+  await flushPage();
+
+  const runButton = page.elements.get("runBatch");
+  assert.equal(runButton.hidden, false);
+  runButton.listeners.get("click")();
+  await flushPage();
+
+  assert.match(page.confirmations[0], /Run all 3 original channel links again/);
+  assert.ok(page.messages.some((message) => message.type === "dreamedia:rerunYoutubeImport" && message.jobId === "job-123"));
+  assert.equal(page.elements.get("jobSelect").value, "rerun-789");
+  assert.ok(Array.from(page.storage.youtubeImportJobIds).includes("rerun-789"));
+  assert.ok(Array.from(page.storage.youtubeRecentImportJobIds).includes("rerun-789"));
+});
+
+test("finished batch can be deleted from the table without deleting its imported sources", async () => {
+  const page = setupPage();
+  await flushPage();
+  page.elements.get("jobSelect").listeners.get("change")({ target: { value: "job-456" } });
+  await flushPage();
+
+  const deleteButton = page.elements.get("deleteBatch");
+  assert.equal(deleteButton.hidden, false);
+  deleteButton.listeners.get("click")();
+  await flushPage();
+
+  assert.match(page.confirmations[0], /Sources already added to DreaMedia will remain/);
+  assert.ok(page.messages.some((message) => message.type === "dreamedia:deleteYoutubeImport" && message.jobId === "job-456"));
+  assert.ok(!Array.from(page.storage.youtubeRecentImportJobIds).includes("job-456"));
+  assert.ok(Array.from(page.storage.youtubeHiddenImportJobIds).includes("job-456"));
+  assert.equal(page.elements.get("jobSelect").value, "job-123");
+});
+
+test("a detail response arriving after deletion cannot restore the batch", async () => {
+  const page = setupPage({ holdOtherDetailStatus: true });
+  await flushPage();
+  page.elements.get("jobSelect").listeners.get("change")({ target: { value: "job-456" } });
+  await flushPage();
+
+  assert.ok(page.messages.some((message) =>
+    message.type === "dreamedia:youtubeImportStatus" && message.jobId === "job-456" && message.includeItems,
+  ));
+  page.elements.get("deleteBatch").listeners.get("click")();
+  await flushPage();
+  page.releaseOtherDetailStatus();
+  await flushPage();
+
+  assert.equal(page.elements.get("jobSelect").value, "job-123");
+  assert.ok(!page.elements.get("jobSelect").children.some((option) => option.value === "job-456"));
+  assert.ok(!Array.from(page.storage.youtubeRecentImportJobIds).includes("job-456"));
+  assert.ok(Array.from(page.storage.youtubeHiddenImportJobIds).includes("job-456"));
 });

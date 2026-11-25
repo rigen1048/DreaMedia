@@ -25,6 +25,7 @@ from Utility.media_executor import run_youtube_network
 
 MAX_IMPORT_CHANNELS = 2000
 MAX_STATUS_ERRORS = 10
+FINISHED_IMPORT_STATUSES = ("partial", "completed")
 CLAIM_STALE_AFTER_MINUTES = 2
 CLAIM_LEASE_REFRESH_SECONDS = 30
 DEFAULT_IMPORT_WORKERS = 64
@@ -325,8 +326,9 @@ async def enqueue_youtube_import(
         async with con.transaction():
             await con.execute(
                 "DELETE FROM yt_import_jobs "
-                "WHERE status IN ('completed', 'partial') "
-                "AND created_at < now() - INTERVAL '30 days'"
+                "WHERE status = ANY($1::text[]) "
+                "AND created_at < now() - INTERVAL '30 days'",
+                list(FINISHED_IMPORT_STATUSES),
             )
             await con.execute(
                 "INSERT INTO yt_import_jobs "
@@ -432,6 +434,17 @@ async def get_youtube_import_status(
     }
 
 
+def _saved_import_options(key: bytes, options_enc: bytes) -> Dict[str, Any]:
+    """Decode and normalize the source settings saved with an import batch."""
+    try:
+        options = json.loads(decrypt(key, options_enc) or "{}")
+        if not isinstance(options, dict):
+            raise TypeError("saved source settings must be an object")
+        return normalize_source_options(**options)
+    except (TypeError, ValueError) as error:
+        raise ValueError("saved import settings could not be read") from error
+
+
 async def retry_youtube_import(user_id: int, job_id: str) -> Dict[str, Any]:
     """Queue only valid failed links again, preserving the original options."""
     key = await vault.get(user_id)
@@ -447,7 +460,7 @@ async def retry_youtube_import(user_id: int, job_id: str) -> Dict[str, Any]:
         )
         if job is None:
             raise ValueError("import job was not found for this account")
-        if job["status"] not in {"partial", "completed"}:
+        if job["status"] not in FINISHED_IMPORT_STATUSES:
             raise ValueError("wait for the import to finish before retrying failures")
         rows = await con.fetch(
             "SELECT link_enc FROM yt_import_items "
@@ -461,8 +474,62 @@ async def retry_youtube_import(user_id: int, job_id: str) -> Dict[str, Any]:
     ]
     if not retry_links:
         raise ValueError("this import has no retryable failed channel links")
-    options = json.loads(decrypt(key, job["options_enc"]) or "{}")
+    options = _saved_import_options(key, job["options_enc"])
     return await enqueue_youtube_import(user_id, retry_links, **options)
+
+
+async def rerun_youtube_import(user_id: int, job_id: str) -> Dict[str, Any]:
+    """Queue every original link again with the batch's saved source options."""
+    key = await vault.get(user_id)
+    if key is None:
+        raise ValueError("vault locked; sign in again before rerunning this import")
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        job = await con.fetchrow(
+            "SELECT status, options_enc FROM yt_import_jobs "
+            "WHERE job_id = $1 AND user_id = $2",
+            job_id,
+            user_id,
+        )
+        if job is None:
+            raise ValueError("import job was not found for this account")
+        if job["status"] not in FINISHED_IMPORT_STATUSES:
+            raise ValueError("wait for the import to finish before running it again")
+        rows = await con.fetch(
+            "SELECT link_enc FROM yt_import_items "
+            "WHERE job_id = $1 ORDER BY ordinal",
+            job_id,
+        )
+    links = [decrypt(key, row["link_enc"]) or "" for row in rows]
+    if not any(links):
+        raise ValueError("this import has no channel links to run again")
+    options = _saved_import_options(key, job["options_enc"])
+    return await enqueue_youtube_import(user_id, links, **options)
+
+
+async def delete_youtube_import(user_id: int, job_id: str) -> bool:
+    """Delete a finished import's progress rows without changing its sources."""
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        async with con.transaction():
+            job = await con.fetchrow(
+                "SELECT status FROM yt_import_jobs "
+                "WHERE job_id = $1 AND user_id = $2 FOR UPDATE",
+                job_id,
+                user_id,
+            )
+            if job is None:
+                return False
+            if job["status"] not in FINISHED_IMPORT_STATUSES:
+                raise ValueError("wait for the import to finish before deleting its history")
+            result = await con.execute(
+                "DELETE FROM yt_import_jobs WHERE job_id = $1 AND user_id = $2 "
+                "AND status = ANY($3::text[])",
+                job_id,
+                user_id,
+                list(FINISHED_IMPORT_STATUSES),
+            )
+    return result != "DELETE 0"
 
 
 def _stage_poll_lock(stage: str) -> asyncio.Lock:

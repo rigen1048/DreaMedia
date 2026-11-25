@@ -28,7 +28,9 @@ Site-agnostic watch tracking + subscribe-from-page, for Chrome (MV3) and Firefox
    can submit another batch while earlier jobs run.
    A background job reports resolved and fully processed counts separately,
    and the popup can be closed and reopened while processing continues. Scan
-   again if the page does not reach a stable end.
+   again if the page does not reach a stable end. The import table can run a
+   finished batch again with its saved source settings or delete that batch's
+   progress history; deleting history does not remove sources already added.
 4. **Add the current video to a playlist card.**
 
 ## Setup

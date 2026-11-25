@@ -32,8 +32,8 @@ function send(
 const ACTIVE_KEY = "youtubeImportJobIds";
 const FAILED_KEY = "youtubeFailedImportJobIds";
 const RECENT_KEY = "youtubeRecentImportJobIds";
-const RECENT_LIMIT = 10;
-const TERMINAL = new Set(["completed", "partial", "failed"]);
+const HIDDEN_KEY = "youtubeHiddenImportJobIds";
+const FINISHED_STATUSES = new Set(["completed", "partial"]);
 
 interface ImportItem {
   ordinal: number;
@@ -58,10 +58,13 @@ interface ImportJob {
   missing?: boolean;
   viewSignature?: string;
   retrying?: boolean;
+  rerunning?: boolean;
+  deleting?: boolean;
 }
 
 const jobs = new Map<string, ImportJob>();
 const refreshingJobs = new Set<string>();
+const hiddenJobIds = new Set<string>();
 let selectedJobId = "";
 let polling = false;
 
@@ -71,7 +74,7 @@ function uniqueIds(...lists: string[][]): string[] {
 
 function terminal(job: ImportJob | { jobId: string } | undefined): job is ImportJob {
   if (!job) return false;
-  return "status" in job && TERMINAL.has(job.status);
+  return "status" in job && FINISHED_STATUSES.has(job.status);
 }
 
 function itemCounts(job: ImportJob): { added: number; skipped: number; failed: number; working: number } {
@@ -294,38 +297,56 @@ function renderCurrent(): void {
   retryButton.title = retryButton.disabled && !job.retrying
     ? "Wait for this batch to finish"
     : "Retry retryable failed channels";
+  const runButton = $("runBatch") as HTMLButtonElement;
+  runButton.hidden = !FINISHED_STATUSES.has(job.status) || Boolean(job.missing);
+  runButton.disabled = !FINISHED_STATUSES.has(job.status) || Boolean(job.rerunning);
+  runButton.textContent = job.rerunning ? "Queueing batch…" : "Run batch again";
+  runButton.title = "Queue every original channel link again with the same source settings";
+  const deleteButton = $("deleteBatch") as HTMLButtonElement;
+  deleteButton.hidden = !job.missing && !FINISHED_STATUSES.has(job.status);
+  deleteButton.disabled = Boolean(job.deleting);
+  deleteButton.textContent = job.deleting ? "Deleting…" : "Delete batch";
+  deleteButton.title = "Delete this finished batch's progress history; existing sources remain";
   renderRows(job);
 }
 
 async function updateStoredJob(job: ImportJob, starting = false): Promise<void> {
-  const isTerminal = TERMINAL.has(job.status);
+  if (hiddenJobIds.has(job.jobId)) return;
+  const isTerminal = FINISHED_STATUSES.has(job.status);
   if (!isTerminal && !starting) return;
-  const stored = await chrome.storage.local.get([ACTIVE_KEY, FAILED_KEY, RECENT_KEY]);
-  let active = Array.isArray(stored[ACTIVE_KEY]) ? (stored[ACTIVE_KEY] as string[]) : [];
-  let failed = Array.isArray(stored[FAILED_KEY]) ? (stored[FAILED_KEY] as string[]) : [];
-  let recent = Array.isArray(stored[RECENT_KEY]) ? (stored[RECENT_KEY] as string[]) : [];
-  recent = uniqueIds([job.jobId], recent).slice(0, RECENT_LIMIT);
-  if (isTerminal) {
-    active = active.filter((id) => id !== job.jobId);
-    failed = job.failed > 0 ? uniqueIds(failed, [job.jobId]) : failed.filter((id) => id !== job.jobId);
-  } else {
-    active = uniqueIds(active, [job.jobId]);
-    failed = failed.filter((id) => id !== job.jobId);
-  }
-  await chrome.storage.local.set({
-    [ACTIVE_KEY]: active,
-    [FAILED_KEY]: failed,
-    [RECENT_KEY]: recent,
+  const response = await send("dreamedia:updateYoutubeImportHistory", {
+    jobId: job.jobId,
+    active: !isTerminal,
+    failed: isTerminal && job.failed > 0,
+    recent: starting,
   });
+  if (!response.ok) {
+    job.error = response.error ?? "Could not update local import history.";
+    return;
+  }
+  if (response.data === false) {
+    hiddenJobIds.add(job.jobId);
+    jobs.delete(job.jobId);
+    if (selectedJobId === job.jobId) selectedJobId = [...jobs.keys()][0] ?? "";
+    renderCurrent();
+  }
 }
 
 async function refreshJob(jobId: string): Promise<void> {
+  if (hiddenJobIds.has(jobId)) {
+    jobs.delete(jobId);
+    return;
+  }
   if (refreshingJobs.has(jobId)) return;
   refreshingJobs.add(jobId);
   let loadDetails = false;
   try {
     const includeItems = jobId === selectedJobId;
     const response = await send("dreamedia:youtubeImportStatus", { jobId, includeItems });
+    if (hiddenJobIds.has(jobId)) {
+      jobs.delete(jobId);
+      return;
+    }
     const current = jobs.get(jobId) ?? ({ jobId, status: "queued", requested: 0, processed: 0, resolved: 0, added: 0, skipped: 0, failed: 0, errors: [], items: null } as ImportJob);
     if (!response.ok) {
       current.error = (response as { error?: string }).error ?? "Could not load import status. Check the DreaMedia connection and refresh.";
@@ -393,12 +414,83 @@ async function retryJob(): Promise<void> {
   await refreshJob(retry.jobId);
 }
 
+async function rerunJob(): Promise<void> {
+  const job = jobs.get(selectedJobId);
+  if (!job || !FINISHED_STATUSES.has(job.status) || job.rerunning) return;
+  const requested = Number(job.requested) || (Array.isArray(job.items) ? job.items.length : 0);
+  if (!window.confirm(`Run all ${requested} original channel links again? Existing sources will be skipped.`)) return;
+
+  job.rerunning = true;
+  renderCurrent();
+  const response = await send("dreamedia:rerunYoutubeImport", { jobId: job.jobId });
+  job.rerunning = false;
+  const retryData = (response as { data?: ImportJob }).data;
+  if (!response.ok || !retryData?.jobId) {
+    job.error = (response as { error?: string }).error ?? "Could not queue this batch again.";
+    renderCurrent();
+    return;
+  }
+  const rerun: ImportJob = {
+    jobId: retryData.jobId,
+    status: retryData.status ?? "queued",
+    requested: Number(retryData.requested) || requested,
+    processed: Number(retryData.processed) || 0,
+    resolved: Number(retryData.resolved) || 0,
+    added: Number(retryData.added) || 0,
+    skipped: Number(retryData.skipped) || 0,
+    failed: Number(retryData.failed) || 0,
+    errors: [],
+    items: null,
+  };
+  jobs.set(rerun.jobId, rerun);
+  selectedJobId = rerun.jobId;
+  await updateStoredJob(rerun, true);
+  renderCurrent();
+  await refreshJob(rerun.jobId);
+}
+
+async function deleteJob(): Promise<void> {
+  const job = jobs.get(selectedJobId);
+  if (!job || (!job.missing && !FINISHED_STATUSES.has(job.status)) || job.deleting) return;
+  const label = `Job ${job.jobId.slice(0, 8)}`;
+  if (!window.confirm(`Delete ${label} and its import progress history? Sources already added to DreaMedia will remain.`)) return;
+
+  job.deleting = true;
+  renderCurrent();
+  if (!job.missing) {
+    const response = await send("dreamedia:deleteYoutubeImport", { jobId: job.jobId });
+    if (!response.ok || (response as { data?: unknown }).data !== true) {
+      job.deleting = false;
+      job.error = (response as { error?: string }).error ?? "Could not delete this batch history.";
+      renderCurrent();
+      return;
+    }
+  }
+
+  const historyResponse = await send("dreamedia:hideYoutubeImportHistory", {
+    jobId: job.jobId,
+  });
+  if (!historyResponse.ok || historyResponse.data !== true) {
+    job.deleting = false;
+    job.missing = true;
+    job.error = historyResponse.error ?? "The batch is deleted on the backend; retry to clear its local history.";
+    renderCurrent();
+    return;
+  }
+  hiddenJobIds.add(job.jobId);
+  jobs.delete(job.jobId);
+  selectedJobId = [...jobs.keys()][0] ?? "";
+  renderCurrent();
+}
+
 async function loadJobs(): Promise<void> {
-  const stored = await chrome.storage.local.get([ACTIVE_KEY, FAILED_KEY, RECENT_KEY]);
+  const stored = await chrome.storage.local.get([RECENT_KEY, ACTIVE_KEY, FAILED_KEY, HIDDEN_KEY]);
   const recentIds = Array.isArray(stored[RECENT_KEY]) ? (stored[RECENT_KEY] as string[]) : [];
   const activeIds = Array.isArray(stored[ACTIVE_KEY]) ? (stored[ACTIVE_KEY] as string[]) : [];
   const failedIds = Array.isArray(stored[FAILED_KEY]) ? (stored[FAILED_KEY] as string[]) : [];
-  const ids = uniqueIds(recentIds, activeIds, failedIds);
+  const hiddenIds = Array.isArray(stored[HIDDEN_KEY]) ? (stored[HIDDEN_KEY] as string[]) : [];
+  hiddenIds.forEach((jobId) => hiddenJobIds.add(jobId));
+  const ids = uniqueIds(recentIds, activeIds, failedIds).filter((jobId) => !hiddenJobIds.has(jobId));
   for (const jobId of ids) {
     jobs.set(jobId, { jobId, status: "queued", requested: 0, processed: 0, resolved: 0, added: 0, skipped: 0, failed: 0, errors: [], items: null });
   }
@@ -410,7 +502,7 @@ async function loadJobs(): Promise<void> {
     polling = true;
     setInterval(() => {
       for (const [jobId, job] of jobs) {
-        const isTerminal = TERMINAL.has(job.status);
+        const isTerminal = FINISHED_STATUSES.has(job.status);
         if (!isTerminal && !job.missing) void refreshJob(jobId);
       }
     }, 1500);
@@ -423,11 +515,25 @@ $("jobSelect").addEventListener("change", (event) => {
   renderCurrent();
   void refreshJob(selectedJobId);
 });
+chrome.storage.onChanged?.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes[HIDDEN_KEY]) return;
+  const hidden = changes[HIDDEN_KEY].newValue;
+  if (!Array.isArray(hidden)) return;
+  for (const jobId of hidden) {
+    if (typeof jobId !== "string") continue;
+    hiddenJobIds.add(jobId);
+    jobs.delete(jobId);
+  }
+  if (hiddenJobIds.has(selectedJobId)) selectedJobId = [...jobs.keys()][0] ?? "";
+  renderCurrent();
+});
 $("refreshJobs").addEventListener("click", () => {
   for (const jobId of jobs.keys()) void refreshJob(jobId);
   if (!jobs.size) void loadJobs();
 });
 $("retryFailed").addEventListener("click", () => void retryJob());
+$("runBatch").addEventListener("click", () => void rerunJob());
+$("deleteBatch").addEventListener("click", () => void deleteJob());
 $("closePage").addEventListener("click", () => {
   chrome.storage.local.get("importTableTabId", (result) => {
     const tabId = result.importTableTabId;

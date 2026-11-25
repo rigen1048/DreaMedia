@@ -8,6 +8,7 @@ interface BgRuntimeMessage {
   tabId?: unknown; links?: string[]; kind?: string; words?: string[] | null;
   rank?: string | null; withhold?: number | null; domain?: string | null;
   subdomain?: string | null; jobId?: string; includeItems?: boolean; cardId?: unknown;
+  active?: boolean; failed?: boolean; recent?: boolean;
   payload?: BgLiveProgressPayload; candidates?: string[]; url?: string; urlHint?: BgUrlHint; media?: string;
 }
 
@@ -101,6 +102,43 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown, sender, sendResponse)
             { jobId: msg.jobId },
           );
           sendResponse({ ok: true, data: data.retryYoutubeImport });
+          break;
+        }
+        case "dreamedia:rerunYoutubeImport": {
+          const data = await gqlWs<{ rerunYoutubeImport: Record<string, unknown> }>(
+            `mutation RerunYouTubeImport($jobId: String!) {
+              rerunYoutubeImport(jobId: $jobId) { jobId status requested processed resolved added skipped failed }
+            }`,
+            { jobId: msg.jobId },
+          );
+          sendResponse({ ok: true, data: data.rerunYoutubeImport });
+          break;
+        }
+        case "dreamedia:deleteYoutubeImport": {
+          const data = await gqlWs<{ deleteYoutubeImport: boolean }>(
+            `mutation DeleteYouTubeImport($jobId: String!) {
+              deleteYoutubeImport(jobId: $jobId)
+            }`,
+            { jobId: msg.jobId },
+          );
+          sendResponse({ ok: true, data: data.deleteYoutubeImport });
+          break;
+        }
+        case "dreamedia:updateYoutubeImportHistory": {
+          if (!msg.jobId) throw new Error("Missing import job ID");
+          const updated = await updateYoutubeImportHistory(
+            msg.jobId,
+            msg.active === true,
+            msg.failed === true,
+            msg.recent === true,
+          );
+          sendResponse({ ok: true, data: updated });
+          break;
+        }
+        case "dreamedia:hideYoutubeImportHistory": {
+          if (!msg.jobId) throw new Error("Missing import job ID");
+          await hideYoutubeImportHistory(msg.jobId);
+          sendResponse({ ok: true, data: true });
           break;
         }
         case "dreamedia:cards":

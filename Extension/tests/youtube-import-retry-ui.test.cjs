@@ -41,7 +41,11 @@ class Element {
   querySelector() { return new Element("use"); }
 }
 
-function setupPopup(initialStorage = {}, firstJobStatus = "partial") {
+function setupPopup(
+  initialStorage = {},
+  firstJobStatus = "partial",
+  { holdImportStatus = false, historyWriteResponses = [] } = {},
+) {
   const elements = new Map();
   const tabs = ["subscribeTab", "playlistTab"].map((id, index) => {
     const tab = new Element(id, "button");
@@ -68,7 +72,50 @@ function setupPopup(initialStorage = {}, firstJobStatus = "partial") {
   };
   const messages = [];
   const openedUrls = [];
-  const sendResponse = (message) => {
+  const storageChangeListeners = [];
+  let pendingImportStatus;
+  const storedIds = (key) => Array.isArray(storage[key]) ? storage[key] : [];
+  const setHistory = (values) => {
+    const changes = Object.fromEntries(Object.entries(values).map(([key, value]) => [
+      key,
+      { oldValue: storage[key], newValue: value },
+    ]));
+    Object.assign(storage, values);
+    storageChangeListeners.forEach((listener) => listener(changes, "local"));
+  };
+  const updateHistory = (message) => {
+    const { jobId } = message;
+    if (storedIds("youtubeHiddenImportJobIds").includes(jobId)) {
+      setHistory({
+        youtubeImportJobIds: storedIds("youtubeImportJobIds").filter((id) => id !== jobId),
+        youtubeFailedImportJobIds: storedIds("youtubeFailedImportJobIds").filter((id) => id !== jobId),
+        youtubeRecentImportJobIds: storedIds("youtubeRecentImportJobIds").filter((id) => id !== jobId),
+      });
+      return { ok: true, data: false };
+    }
+    const updateMembership = (ids, include) => include
+      ? [...new Set([...ids, jobId])]
+      : ids.filter((id) => id !== jobId);
+    const recent = message.recent
+      ? [jobId, ...storedIds("youtubeRecentImportJobIds").filter((id) => id !== jobId)].slice(0, 10)
+      : storedIds("youtubeRecentImportJobIds");
+    setHistory({
+      youtubeImportJobIds: updateMembership(storedIds("youtubeImportJobIds"), message.active === true),
+      youtubeFailedImportJobIds: updateMembership(storedIds("youtubeFailedImportJobIds"), message.failed === true),
+      youtubeRecentImportJobIds: recent,
+    });
+    return { ok: true, data: true };
+  };
+  const hideHistory = (jobId) => {
+    setHistory({
+      youtubeImportJobIds: storedIds("youtubeImportJobIds").filter((id) => id !== jobId),
+      youtubeFailedImportJobIds: storedIds("youtubeFailedImportJobIds").filter((id) => id !== jobId),
+      youtubeRecentImportJobIds: storedIds("youtubeRecentImportJobIds").filter((id) => id !== jobId),
+      youtubeHiddenImportJobIds: [...new Set([...storedIds("youtubeHiddenImportJobIds"), jobId])],
+    });
+    return { ok: true, data: true };
+  };
+  const sendResponse = (message, callback) => {
     messages.push(message);
     switch (message.type) {
       case "dreamedia:connectionStatus":
@@ -93,19 +140,26 @@ function setupPopup(initialStorage = {}, firstJobStatus = "partial") {
         return { ok: true, data: { jobId: "original-job", requested: 2, status: "queued" } };
       case "dreamedia:youtubeImportStatus":
         if (message.jobId === "original-job") {
-          return {
+          const response = {
             ok: true,
             data: {
               jobId: "original-job", status: firstJobStatus, requested: 2,
               processed: firstJobStatus === "running" ? 1 : 2,
               resolved: 1, added: 0, skipped: 0, failed: 1,
-              failedItems: [{
-                link: "https://www.youtube.com/@example",
-                error: "https://www.youtube.com/@example: temporary resolver failure",
-                retryable: true,
-              }],
+              failedItems: [
+                {
+                  link: "https://www.youtube.com/@example",
+                  error: "https://www.youtube.com/@example: temporary resolver failure",
+                  retryable: true,
+                },
+              ],
             },
           };
+          if (holdImportStatus) {
+            pendingImportStatus = () => callback(response);
+            return null;
+          }
+          return response;
         }
         return {
           ok: true,
@@ -113,6 +167,11 @@ function setupPopup(initialStorage = {}, firstJobStatus = "partial") {
         };
       case "dreamedia:retryYoutubeImport":
         return { ok: true, data: { jobId: "retry-job", requested: 1, status: "queued" } };
+      case "dreamedia:updateYoutubeImportHistory":
+        if (historyWriteResponses.length) return historyWriteResponses.shift();
+        return updateHistory(message);
+      case "dreamedia:hideYoutubeImportHistory":
+        return hideHistory(message.jobId);
       case "dreamedia:trackingStatus":
         return { ok: true, data: null };
       default:
@@ -124,7 +183,12 @@ function setupPopup(initialStorage = {}, firstJobStatus = "partial") {
       lastError: null,
       getManifest: () => ({ version: "test" }),
       getURL: (name) => `chrome-extension://test/${name}`,
-      sendMessage(message, callback) { queueMicrotask(() => callback(sendResponse(message))); },
+      sendMessage(message, callback) {
+        queueMicrotask(() => {
+          const response = sendResponse(message, callback);
+          if (response !== null) callback(response);
+        });
+      },
       onMessage: { addListener() {} },
     },
     storage: {
@@ -133,9 +197,12 @@ function setupPopup(initialStorage = {}, firstJobStatus = "partial") {
           const names = Array.isArray(keys) ? keys : [keys];
           return Object.fromEntries(names.map((name) => [name, storage[name]]));
         },
-        async set(values) { Object.assign(storage, values); },
+        async set(values) {
+          setHistory(values);
+        },
         async remove(name) { delete storage[name]; },
       },
+      onChanged: { addListener(listener) { storageChangeListeners.push(listener); } },
     },
     tabs: {
       async query() { return [{ id: 5, url: "https://www.youtube.com/feed/channels" }]; },
@@ -146,13 +213,25 @@ function setupPopup(initialStorage = {}, firstJobStatus = "partial") {
     chrome,
     document,
     URL,
-    setTimeout() { return 1; },
+      setTimeout(callback, delay) {
+        if (delay === 250) queueMicrotask(callback);
+        return 1;
+      },
     setInterval() { return 1; },
     clearTimeout() {},
     console,
   });
   vm.runInContext(popupSource, context, { filename: "popup.js" });
-  return { document, elements, messages, openedUrls, storage };
+  return {
+    document, elements, messages, openedUrls, storage,
+    hideImportJob: (jobId) => new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "dreamedia:hideYoutubeImportHistory", jobId }, resolve);
+    }),
+    releaseImportStatus: () => {
+      pendingImportStatus?.();
+      pendingImportStatus = null;
+    },
+  };
 }
 
 async function flushPopup() {
@@ -184,6 +263,16 @@ test("popup restores the import-table action from stored job IDs", async () => {
   assert.equal(elements.get("importTableMeta").textContent, "1 with failures");
 });
 
+test("popup does not restore a batch removed from import-table history", async () => {
+  const { elements } = setupPopup({
+    youtubeRecentImportJobIds: ["old-job"],
+    youtubeHiddenImportJobIds: ["old-job"],
+  });
+  await flushPopup();
+
+  assert.equal(elements.get("openImportTable").hidden, true);
+});
+
 test("popup offers the import table while a batch is importing without storing it as a failure", async () => {
   const { elements, storage } = setupPopup({}, "running");
   await flushPopup();
@@ -196,4 +285,45 @@ test("popup offers the import table while a batch is importing without storing i
   assert.equal(elements.get("importTableMeta").textContent, "1 active");
   assert.ok(Array.from(storage.youtubeImportJobIds).includes("original-job"));
   assert.ok(!Array.from(storage.youtubeFailedImportJobIds).includes("original-job"));
+});
+
+test("popup retries failed history writes and warns while a batch remains unsaved", async () => {
+  const page = setupPopup({}, "running", {
+    historyWriteResponses: [
+      { ok: false, error: "temporary storage failure" },
+      { ok: false, error: "temporary storage failure" },
+    ],
+  });
+  await flushPopup();
+  await page.elements.get("scanSubscriptions").listeners.get("click")();
+  await page.elements.get("subscribe").listeners.get("click")();
+  await flushPopup();
+
+  const writeAttempts = page.messages.filter(
+    (message) => message.type === "dreamedia:updateYoutubeImportHistory",
+  );
+  assert.equal(writeAttempts.length, 2);
+  assert.match(page.elements.get("importStatus").textContent, /History could not be saved for 1 batch/);
+  assert.ok(!Array.from(page.storage.youtubeImportJobIds).includes("original-job"));
+});
+
+test("popup does not restore a batch when an in-flight poll returns after it is hidden", async () => {
+  const page = setupPopup({}, "partial", { holdImportStatus: true });
+  await flushPopup();
+  await page.elements.get("scanSubscriptions").listeners.get("click")();
+  await page.elements.get("subscribe").listeners.get("click")();
+  await flushPopup();
+
+  assert.ok(page.messages.some((message) =>
+    message.type === "dreamedia:youtubeImportStatus" && message.jobId === "original-job",
+  ));
+  await page.hideImportJob("original-job");
+  page.releaseImportStatus();
+  await flushPopup();
+
+  assert.ok(Array.from(page.storage.youtubeHiddenImportJobIds).includes("original-job"));
+  assert.ok(!Array.from(page.storage.youtubeImportJobIds).includes("original-job"));
+  assert.ok(!Array.from(page.storage.youtubeFailedImportJobIds).includes("original-job"));
+  assert.ok(!Array.from(page.storage.youtubeRecentImportJobIds).includes("original-job"));
+  assert.equal(page.elements.get("openImportTable").hidden, true);
 });

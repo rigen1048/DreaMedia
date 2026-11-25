@@ -115,6 +115,7 @@ BUNDLE_ORDER = {
         "30-anime-anchor.ts",
         "40-blocked-cache.ts",
         "50-youtube-scan.ts",
+        "55-import-history.ts",
         "60-message-router.ts",
         "70-lifecycle.ts",
     ],

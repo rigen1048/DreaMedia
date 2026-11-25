@@ -2,6 +2,7 @@ import { useState } from "react";
 import * as api from "../../app/api";
 import { useApp, useWorkspace } from "../../app/state";
 import { cn } from "@/lib/utils";
+import { parseWordscanTerms } from "@/lib/wordscan";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,16 +21,18 @@ export function AddSourceDialog({ onClose }: { onClose: () => void }) {
   const [domain, setDomain] = useState("");
   const [subdomain, setSubdomain] = useState("");
   const [busy, setBusy] = useState(false);
+  const wordscanTerms = parseWordscanTerms(words);
+  const canSubmit = Boolean(link.trim() && (kind !== "wordscan" || wordscanTerms.length) && !busy);
 
   const submit = async () => {
-    if (!link.trim() || busy) return;
+    if (!canSubmit) return;
     setBusy(true);
     const ok = await act(
       () =>
         api.subscribeYoutube({
           kind,
           link: link.trim(),
-          words: kind === "wordscan" ? words.split(",").map((word) => word.trim()).filter(Boolean) : undefined,
+          words: kind === "wordscan" ? wordscanTerms : undefined,
           rank: kind === "random" ? rank : undefined,
           domain: domain.trim() || undefined,
           subdomain: subdomain.trim() || undefined,
@@ -92,8 +95,19 @@ export function AddSourceDialog({ onClose }: { onClose: () => void }) {
 
           {kind === "wordscan" && (
             <div className="space-y-1.5">
-              <Label>Words to match (comma separated)</Label>
-              <Input value={words} onChange={(event) => setWords(event.target.value)} placeholder="trailer, live, devlog" />
+              <Label htmlFor="source-wordscan-terms">Words to match (comma separated)</Label>
+              <Input
+                id="source-wordscan-terms"
+                value={words}
+                onChange={(event) => setWords(event.target.value)}
+                placeholder="trailer, live, devlog"
+                aria-describedby="source-wordscan-hint"
+              />
+              <p id="source-wordscan-hint" className="text-xs text-muted-foreground">
+                {wordscanTerms.length
+                  ? "Comma-separated non-empty terms are matched against video titles."
+                  : "Enter at least one non-empty term."}
+              </p>
             </div>
           )}
 
@@ -122,7 +136,7 @@ export function AddSourceDialog({ onClose }: { onClose: () => void }) {
         <DialogFooter className="items-center">
           <span className="mr-auto text-xs text-muted-foreground">Missing categories are created automatically.</span>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button disabled={!link.trim() || busy} onClick={() => void submit()}>
+          <Button disabled={!canSubmit} onClick={() => void submit()}>
             {busy ? "Resolving…" : "Add source"}
           </Button>
         </DialogFooter>

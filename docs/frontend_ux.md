@@ -62,6 +62,16 @@ Header counters track sources / categories / anime / muted.
 
 - **Fetch now** nudges every active subscription due immediately (the worker's
   claim discipline is untouched — it's a wake-up, not a second worker).
+- **Channel batch actions** appear as soon as one or more rows are selected:
+  change type/category, mute or unmute, enable or pause, set a label, or delete.
+  The select-all checkbox applies to visible rows; bulk deletion requires a
+  confirmation. Partial non-delete mutations keep the selection for retry;
+  partial deletion reports the changed count and clears the selection so any
+  remaining sources can be reselected without stale IDs.
+  Changing selected channels to WordScan requires at least one comma-separated
+  term, which is applied to every selected source; Playlist is not a valid
+  channel batch target because a playlist subscription must be added from its
+  playlist link.
 - **Add source** dialog: channel/playlist/video link + notification type.
   Missing categories are created automatically. Types:
   - **Track** — every upload

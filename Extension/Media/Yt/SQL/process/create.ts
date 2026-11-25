@@ -13,9 +13,6 @@ import type { ImportJob } from "../../Config/Model/types";
 export const YT_STORAGE_KEYS = {
   DOMAINS: "domains",
   BLOCKED_YT: "blockedYt",
-  IMPORT_JOB_IDS: "youtubeImportJobIds",
-  FAILED_IMPORT_JOB_IDS: "youtubeFailedImportJobIds",
-  RECENT_IMPORT_JOB_IDS: "youtubeRecentImportJobIds",
   IMPORT_TABLE_TAB_ID: "importTableTabId",
 } as const;
 
@@ -29,9 +26,6 @@ export async function createYouTubeStorage(): Promise<void> {
       { id: 0, domain: "youtube.com", media: "yt", enabled: true },
     ],
     [YT_STORAGE_KEYS.BLOCKED_YT]: [],
-    [YT_STORAGE_KEYS.IMPORT_JOB_IDS]: [],
-    [YT_STORAGE_KEYS.FAILED_IMPORT_JOB_IDS]: [],
-    [YT_STORAGE_KEYS.RECENT_IMPORT_JOB_IDS]: [],
   };
 
   const existing = await chrome.storage.local.get(Object.keys(defaults));

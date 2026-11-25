@@ -23,6 +23,8 @@ from Extension.youtube_imports import (
     add_youtube_channel_source,
     enqueue_youtube_import,
     get_youtube_import_status,
+    delete_youtube_import as delete_youtube_import_job,
+    rerun_youtube_import as rerun_youtube_import_job,
     retry_youtube_import as retry_youtube_import_job,
 )
 from Utility.media_executor import run_youtube_network
@@ -374,6 +376,17 @@ class ExtMutation:
         """Queue the valid failed links from a prior import with its saved options."""
         result = await retry_youtube_import_job(await _ext_uid(info), job_id)
         return YoutubeImportStarted(**result)
+
+    @strawberry.field
+    async def rerun_youtube_import(self, info: Info, job_id: str) -> YoutubeImportStarted:
+        """Queue every original link again, preserving its saved source options."""
+        result = await rerun_youtube_import_job(await _ext_uid(info), job_id)
+        return YoutubeImportStarted(**result)
+
+    @strawberry.field
+    async def delete_youtube_import(self, info: Info, job_id: str) -> bool:
+        """Delete only the finished import history; created source rows remain."""
+        return await delete_youtube_import_job(await _ext_uid(info), job_id)
 
     @strawberry.field
     async def create_card(self, info: Info, name: str) -> ExtCard:

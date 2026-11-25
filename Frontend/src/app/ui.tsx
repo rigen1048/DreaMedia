@@ -105,11 +105,13 @@ export function ConfirmButton({
   children,
   label,
   className,
+  disabled = false,
 }: {
   onConfirm: () => void;
   children: ReactNode;
   label: string;
   className?: string;
+  disabled?: boolean;
 }) {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
@@ -123,6 +125,7 @@ export function ConfirmButton({
       variant={armed ? "destructive" : "ghost"}
       size="icon"
       className={className}
+      disabled={disabled}
       aria-label={label}
       title={armed ? "Click again to confirm" : label}
       onClick={() => {

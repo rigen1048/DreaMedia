@@ -10,18 +10,12 @@ import type { ImportJob } from "../../Config/Model/types";
 export const ANI_STORAGE_KEYS = {
   DOMAINS: "domains",
   BLOCKED_ANI: "blockedAni",
-  IMPORT_JOB_IDS: "youtubeImportJobIds",
-  FAILED_IMPORT_JOB_IDS: "youtubeFailedImportJobIds",
-  RECENT_IMPORT_JOB_IDS: "youtubeRecentImportJobIds",
 } as const;
 
 export async function createAnimeStorage(): Promise<void> {
   const defaults: Record<string, unknown> = {
     [ANI_STORAGE_KEYS.DOMAINS]: [],
     [ANI_STORAGE_KEYS.BLOCKED_ANI]: [],
-    [ANI_STORAGE_KEYS.IMPORT_JOB_IDS]: [],
-    [ANI_STORAGE_KEYS.FAILED_IMPORT_JOB_IDS]: [],
-    [ANI_STORAGE_KEYS.RECENT_IMPORT_JOB_IDS]: [],
   };
 
   const existing = await chrome.storage.local.get(Object.keys(defaults));

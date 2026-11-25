@@ -85,6 +85,12 @@ async def test_enqueue_is_fast_encrypted_validated_and_persists_one_batch(monkey
     inserted_items = next(call[2] for call in connection.calls if call[0] == "executemany")
     assert [row[3] for row in inserted_items] == ["queued", "skipped", "failed"]
     assert all(row[2].startswith(b"cipher:") for row in inserted_items)
+    prune = next(
+        call for call in connection.calls
+        if call[0] == "execute" and "DELETE FROM yt_import_jobs" in call[1]
+    )
+    assert "status = ANY($1::text[])" in prune[1]
+    assert prune[2] == (list(youtube_imports.FINISHED_IMPORT_STATUSES),)
     insert_job = next(
         call for call in connection.calls
         if call[0] == "execute" and "INSERT INTO yt_import_jobs" in call[1]
@@ -92,6 +98,14 @@ async def test_enqueue_is_fast_encrypted_validated_and_persists_one_batch(monkey
     assert insert_job[2][2:8] == ("queued", 3, 2, 0, 1, 1)
     assert insert_job[2][8].startswith(b"cipher:")
     assert b'"domain":"Media"' in insert_job[2][8]
+
+
+@pytest.mark.parametrize("payload", ["[]", "null", "{"])
+def test_saved_import_options_reject_invalid_or_non_object_payload(monkeypatch, payload):
+    monkeypatch.setattr(youtube_imports, "decrypt", lambda _key, _value: payload)
+
+    with pytest.raises(ValueError, match="saved import settings could not be read"):
+        youtube_imports._saved_import_options(b"test-vault-key", b"ciphertext")
 
 
 @pytest.mark.asyncio
@@ -513,9 +527,10 @@ async def test_status_returns_owner_scoped_failed_links_and_retryability(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_retry_creates_separate_job_with_only_valid_failed_links_and_original_options(monkeypatch):
+@pytest.mark.parametrize("status", ["partial", "completed"])
+async def test_retry_creates_separate_job_with_only_valid_failed_links_and_original_options(monkeypatch, status):
     connection = FakeConnection(
-        job={"status": "partial", "options_enc": b"options"},
+        job={"status": status, "options_enc": b"options"},
         errors=[
             {"link_enc": b"valid-link", "error_enc": None},
             {"link_enc": b"music-link", "error_enc": None},
@@ -557,6 +572,109 @@ async def test_retry_creates_separate_job_with_only_valid_failed_links_and_origi
         if call[0] == "execute" and "INSERT INTO yt_import_jobs" in call[1]
     )
     assert json.loads(insert_job[2][8].decode().removeprefix("cipher:")) == options
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["partial", "completed"])
+async def test_rerun_creates_separate_job_with_all_links_and_original_options(monkeypatch, status):
+    connection = FakeConnection(
+        job={"status": status, "options_enc": b"options"},
+        errors=[
+            {"ordinal": 0, "link_enc": b"link-one"},
+            {"ordinal": 1, "link_enc": b"link-two"},
+        ],
+    )
+
+    async def get_pool():
+        return FakePool(connection)
+
+    async def vault_key(user_id):
+        assert user_id == 12
+        return b"test-vault-key"
+
+    options = {
+        "kind": "wordscan", "words": ["trailer"], "rank": None,
+        "withhold": None, "domain": "Media", "subdomain": "Animation",
+    }
+    cleartext = {
+        b"options": json.dumps(options),
+        b"link-one": "https://www.youtube.com/@one",
+        b"link-two": "https://youtube.com/@two",
+    }
+    monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
+    monkeypatch.setattr(youtube_imports.vault, "get", vault_key)
+    monkeypatch.setattr(youtube_imports, "decrypt", lambda _key, value: cleartext[value])
+    monkeypatch.setattr(youtube_imports, "encrypt", lambda _key, value: f"cipher:{value}".encode())
+
+    result = await youtube_imports.rerun_youtube_import(12, "job-1")
+
+    assert result["job_id"] and result["job_id"] != "job-1"
+    assert result["requested"] == 2
+    lookup = next(call for call in connection.calls if call[0] == "fetchrow")
+    assert "WHERE job_id = $1 AND user_id = $2" in lookup[1]
+    assert lookup[2] == ("job-1", 12)
+    inserted = next(call for call in connection.calls if call[0] == "executemany")
+    assert [row[2] for row in inserted[2]] == [
+        b"cipher:https://www.youtube.com/@one",
+        b"cipher:https://youtube.com/@two",
+    ]
+    insert_job = next(
+        call for call in connection.calls
+        if call[0] == "execute" and "INSERT INTO yt_import_jobs" in call[1]
+    )
+    assert json.loads(insert_job[2][8].decode().removeprefix("cipher:")) == options
+
+
+@pytest.mark.asyncio
+async def test_rerun_rejects_an_active_job(monkeypatch):
+    connection = FakeConnection(job={"status": "running", "options_enc": b"options"})
+
+    async def get_pool():
+        return FakePool(connection)
+
+    async def vault_key(_user_id):
+        return b"test-vault-key"
+
+    monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
+    monkeypatch.setattr(youtube_imports.vault, "get", vault_key)
+
+    with pytest.raises(ValueError, match="wait for the import to finish"):
+        await youtube_imports.rerun_youtube_import(12, "job-1")
+    assert not any(call[0] == "execute" for call in connection.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["partial", "completed"])
+async def test_delete_finished_import_history_is_owner_scoped(monkeypatch, status):
+    connection = FakeConnection(job={"status": status}, update_result="DELETE 1")
+
+    async def get_pool():
+        return FakePool(connection)
+
+    monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
+
+    assert await youtube_imports.delete_youtube_import(12, "job-1") is True
+    lookup = next(call for call in connection.calls if call[0] == "fetchrow")
+    assert "WHERE job_id = $1 AND user_id = $2 FOR UPDATE" in lookup[1]
+    assert lookup[2] == ("job-1", 12)
+    delete = next(call for call in connection.calls if call[0] == "execute")
+    assert "DELETE FROM yt_import_jobs" in delete[1]
+    assert "status = ANY($3::text[])" in delete[1]
+    assert delete[2] == ("job-1", 12, list(youtube_imports.FINISHED_IMPORT_STATUSES))
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_an_active_import(monkeypatch):
+    connection = FakeConnection(job={"status": "running"})
+
+    async def get_pool():
+        return FakePool(connection)
+
+    monkeypatch.setattr(youtube_imports, "get_pool", get_pool)
+
+    with pytest.raises(ValueError, match="wait for the import to finish"):
+        await youtube_imports.delete_youtube_import(12, "job-1")
+    assert not any(call[0] == "execute" for call in connection.calls)
 
 
 @pytest.mark.asyncio

@@ -562,6 +562,9 @@ const activeImportJobs = new Map<string, { message: string }>();
 const failedImportJobs = new Set<string>();
 const recentImportJobIds = new Set<string>();
 const pollingImportJobs = new Set<string>();
+const hiddenImportJobIds = new Set<string>();
+const importHistoryWriteFailures = new Set<string>();
+const FINISHED_IMPORT_STATUSES = new Set(["completed", "partial"]);
 let importJobsStorageWrite = Promise.resolve();
 let scanStatusMessage = "";
 let scanStatusClass = "";
@@ -580,10 +583,15 @@ function renderImportStatus(): void {
         lastJob?.message ?? ""
       }`
     : lastImportStatus;
-  const messages = [scanStatusMessage, jobMessage].filter(Boolean);
+  const historyWarning = importHistoryWriteFailures.size
+    ? `History could not be saved for ${importHistoryWriteFailures.size} batch${importHistoryWriteFailures.size === 1 ? "" : "es"}; keep this popup open until it is saved.`
+    : "";
+  const messages = [scanStatusMessage, jobMessage, historyWarning].filter(Boolean);
   const cls = scanStatusMessage
     ? scanStatusClass
-    : jobs.length
+    : importHistoryWriteFailures.size
+      ? "err"
+      : jobs.length
       ? "ok"
       : lastImportStatusClass;
   status("importStatus", messages.join(" · "), cls);
@@ -609,33 +617,75 @@ function setImportJobStatus(text: string, cls = ""): void {
   renderImportStatus();
 }
 
-async function persistImportJobIds(): Promise<void> {
-  const jobIds = Array.from(activeImportJobs.keys());
-  const failedJobIds = Array.from(failedImportJobs);
-  const recentJobIds = Array.from(recentImportJobIds)
-    .reverse()
-    .slice(0, 10);
+async function persistImportJobId(jobId: string, promoteRecent = false): Promise<void> {
   importJobsStorageWrite = importJobsStorageWrite
     .catch(() => {})
-    .then(() =>
-      chrome.storage.local.set({
-        youtubeImportJobIds: jobIds,
-        youtubeFailedImportJobIds: failedJobIds,
-        youtubeRecentImportJobIds: recentJobIds,
-      })
-    );
+    .then(async () => {
+      if (hiddenImportJobIds.has(jobId)) return;
+      let lastError = "No response from the extension background worker";
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const response = await send("dreamedia:updateYoutubeImportHistory", {
+            jobId,
+            active: activeImportJobs.has(jobId),
+            failed: failedImportJobs.has(jobId),
+            recent: promoteRecent,
+          });
+          if (response.ok) {
+            importHistoryWriteFailures.delete(jobId);
+            if (response.data === false) {
+              hiddenImportJobIds.add(jobId);
+              forgetImportJob(jobId);
+            }
+            renderImportStatus();
+            return;
+          }
+          lastError = response.error ?? lastError;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : lastError;
+        }
+        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      console.warn(`Could not persist import history for ${jobId}: ${lastError}`);
+      importHistoryWriteFailures.add(jobId);
+      renderImportStatus();
+    });
+  await importJobsStorageWrite;
 }
+
+async function isImportJobHidden(jobId: string): Promise<boolean> {
+  const stored = await chrome.storage.local.get("youtubeHiddenImportJobIds");
+  const hidden = Array.isArray(stored.youtubeHiddenImportJobIds)
+    ? (stored.youtubeHiddenImportJobIds as string[])
+    : [];
+  hidden.forEach((id) => hiddenImportJobIds.add(id));
+  return hiddenImportJobIds.has(jobId);
+}
+
+function forgetImportJob(jobId: string): void {
+  activeImportJobs.delete(jobId);
+  failedImportJobs.delete(jobId);
+  recentImportJobIds.delete(jobId);
+  importHistoryWriteFailures.delete(jobId);
+}
+
+chrome.storage.onChanged?.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes.youtubeHiddenImportJobIds) return;
+  const hidden = changes.youtubeHiddenImportJobIds.newValue;
+  if (!Array.isArray(hidden)) return;
+  for (const jobId of hidden) {
+    if (typeof jobId !== "string") continue;
+    hiddenImportJobIds.add(jobId);
+    forgetImportJob(jobId);
+  }
+  renderImportStatus();
+});
 
 function syncFailedImportJob(
   jobId: string,
   job: { status: string; failed: number; failedItems?: unknown[] }
 ): boolean {
-  if (
-    job.status !== "completed" &&
-    job.status !== "partial" &&
-    job.status !== "failed"
-  )
-    return false;
+  if (!FINISHED_IMPORT_STATUSES.has(job.status)) return false;
   const wasFailed = failedImportJobs.has(jobId);
   if (job.failed > 0) failedImportJobs.add(jobId);
   else failedImportJobs.delete(jobId);
@@ -683,7 +733,7 @@ async function trackImportJob(jobId: string, requested: number): Promise<void> {
     }
   }
   renderImportStatus();
-  await persistImportJobIds();
+  await persistImportJobId(jobId, true);
   void pollImportJob(jobId);
 }
 
@@ -737,6 +787,11 @@ async function pollImportJob(jobId: string): Promise<void> {
   try {
     while (activeImportJobs.has(jobId)) {
       const response = await send("dreamedia:youtubeImportStatus", { jobId });
+      if (await isImportJobHidden(jobId)) {
+        forgetImportJob(jobId);
+        renderImportStatus();
+        break;
+      }
       if (!response.ok) {
         const tracked = activeImportJobs.get(jobId);
         if (tracked) {
@@ -749,7 +804,8 @@ async function pollImportJob(jobId: string): Promise<void> {
       const job = (response as { data?: unknown }).data;
       if (!job) {
         activeImportJobs.delete(jobId);
-        await persistImportJobIds();
+        failedImportJobs.delete(jobId);
+        await persistImportJobId(jobId);
         setImportJobStatus(
           `Import job ${jobId.slice(0, 8)} was not found for this account.`,
           "err"
@@ -768,14 +824,10 @@ async function pollImportJob(jobId: string): Promise<void> {
         failedItems?: unknown[];
       };
       const progress = `${jobObj.resolved}/${jobObj.requested} resolved · ${jobObj.processed}/${jobObj.requested} processed · ${jobObj.added} added · ${jobObj.skipped} already present · ${jobObj.failed} failed`;
-      if (
-        jobObj.status === "completed" ||
-        jobObj.status === "partial" ||
-        jobObj.status === "failed"
-      ) {
+      if (FINISHED_IMPORT_STATUSES.has(jobObj.status)) {
         syncFailedImportJob(jobId, jobObj);
         activeImportJobs.delete(jobId);
-        await persistImportJobIds();
+        await persistImportJobId(jobId);
         const summary = `Import ${
           jobObj.status === "completed" ? "complete" : "finished with errors"
         } (${jobId.slice(0, 8)}): ${progress}.`;
@@ -803,12 +855,18 @@ async function pollImportJob(jobId: string): Promise<void> {
 
 async function refreshFailedImportJob(jobId: string): Promise<void> {
   const response = await send("dreamedia:youtubeImportStatus", { jobId });
+  if (await isImportJobHidden(jobId)) {
+    forgetImportJob(jobId);
+    return;
+  }
   if (!response.ok) return;
   const job = (response as { data?: unknown }).data;
   if (!job) {
-    failedImportJobs.delete(jobId);
+    if (failedImportJobs.delete(jobId)) await persistImportJobId(jobId);
   } else {
-    syncFailedImportJob(jobId, job as { status: string; failed: number });
+    if (syncFailedImportJob(jobId, job as { status: string; failed: number })) {
+      await persistImportJobId(jobId);
+    }
   }
 }
 
@@ -818,28 +876,33 @@ async function resumeImportJobs(): Promise<void> {
     "youtubeImportJobId",
     "youtubeFailedImportJobIds",
     "youtubeRecentImportJobIds",
+    "youtubeHiddenImportJobIds",
   ]);
+  const hiddenIds = new Set(
+    Array.isArray(stored.youtubeHiddenImportJobIds)
+      ? (stored.youtubeHiddenImportJobIds as string[])
+      : []
+  );
+  hiddenIds.forEach((jobId) => hiddenImportJobIds.add(jobId));
+  const visibleId = (jobId: unknown): jobId is string =>
+    typeof jobId === "string" && Boolean(jobId) && !hiddenIds.has(jobId);
   const savedIds = Array.isArray(stored.youtubeImportJobIds)
-    ? stored.youtubeImportJobIds
+    ? stored.youtubeImportJobIds.filter(visibleId)
     : [];
   const savedFailedIds = Array.isArray(stored.youtubeFailedImportJobIds)
-    ? stored.youtubeFailedImportJobIds
+    ? stored.youtubeFailedImportJobIds.filter(visibleId)
     : [];
   const savedRecentIds = Array.isArray(stored.youtubeRecentImportJobIds)
-    ? stored.youtubeRecentImportJobIds
+    ? stored.youtubeRecentImportJobIds.filter(visibleId)
     : [];
   const jobIds = [
     ...new Set(
-      [...savedIds, stored.youtubeImportJobId].filter(
-        (jobId) => typeof jobId === "string" && jobId
-      )
+      [...savedIds, stored.youtubeImportJobId].filter(visibleId)
     ),
   ];
   const failedIds = [
     ...new Set(
-      savedFailedIds.filter(
-        (jobId) => typeof jobId === "string" && jobId
-      )
+      savedFailedIds.filter(visibleId)
     ),
   ];
   for (const jobId of savedRecentIds.slice().reverse()) {
@@ -855,20 +918,15 @@ async function resumeImportJobs(): Promise<void> {
       failedImportJobs.add(jobId);
     }
   }
-  if (
-    stored.youtubeImportJobId ||
-    !Array.isArray(stored.youtubeImportJobIds) ||
-    jobIds.length !== savedIds.length
-  ) {
-    await persistImportJobIds();
-    if (stored.youtubeImportJobId) {
-      await chrome.storage.local.remove("youtubeImportJobId");
-    }
+  if (visibleId(stored.youtubeImportJobId)) {
+    await persistImportJobId(stored.youtubeImportJobId, true);
+  }
+  if (stored.youtubeImportJobId) {
+    await chrome.storage.local.remove("youtubeImportJobId");
   }
   for (const jobId of failedIds) {
     if (typeof jobId === "string") await refreshFailedImportJob(jobId);
   }
-  await persistImportJobIds();
   renderImportStatus();
   for (const jobId of jobIds) {
     if (typeof jobId === "string") void pollImportJob(jobId);
