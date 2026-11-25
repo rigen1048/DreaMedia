@@ -44,7 +44,7 @@ class Element {
 function setupPopup(
   initialStorage = {},
   firstJobStatus = "partial",
-  { holdImportStatus = false, historyWriteResponses = [] } = {},
+  { holdImportStatus = false, historyWriteResponses = [], completionErrors = [], completedProcessed = 2 } = {},
 ) {
   const elements = new Map();
   const tabs = ["subscribeTab", "playlistTab"].map((id, index) => {
@@ -72,6 +72,7 @@ function setupPopup(
   };
   const messages = [];
   const openedUrls = [];
+  const confirmations = [];
   const storageChangeListeners = [];
   let pendingImportStatus;
   const storedIds = (key) => Array.isArray(storage[key]) ? storage[key] : [];
@@ -144,9 +145,13 @@ function setupPopup(
             ok: true,
             data: {
               jobId: "original-job", status: firstJobStatus, requested: 2,
-              processed: firstJobStatus === "running" ? 1 : 2,
-              resolved: 1, added: 0, skipped: 0, failed: 1,
-              failedItems: [
+              processed: firstJobStatus === "running" ? 1 : completedProcessed,
+              resolved: 1,
+              added: firstJobStatus === "completed" ? completedProcessed : 0,
+              skipped: 0,
+              failed: firstJobStatus === "completed" ? 0 : 1,
+              errors: completionErrors,
+              failedItems: firstJobStatus === "completed" ? [] : [
                 {
                   link: "https://www.youtube.com/@example",
                   error: "https://www.youtube.com/@example: temporary resolver failure",
@@ -167,6 +172,8 @@ function setupPopup(
         };
       case "dreamedia:retryYoutubeImport":
         return { ok: true, data: { jobId: "retry-job", requested: 1, status: "queued" } };
+      case "dreamedia:deleteYoutubeImport":
+        return { ok: true, data: true };
       case "dreamedia:updateYoutubeImportHistory":
         if (historyWriteResponses.length) return historyWriteResponses.shift();
         return updateHistory(message);
@@ -213,6 +220,7 @@ function setupPopup(
     chrome,
     document,
     URL,
+    window: { confirm(message) { confirmations.push(message); return true; } },
       setTimeout(callback, delay) {
         if (delay === 250) queueMicrotask(callback);
         return 1;
@@ -223,7 +231,7 @@ function setupPopup(
   });
   vm.runInContext(popupSource, context, { filename: "popup.js" });
   return {
-    document, elements, messages, openedUrls, storage,
+    document, elements, messages, openedUrls, confirmations, storage,
     hideImportJob: (jobId) => new Promise((resolve) => {
       chrome.runtime.sendMessage({ type: "dreamedia:hideYoutubeImportHistory", jobId }, resolve);
     }),
@@ -255,6 +263,64 @@ test("popup opens the import table when a batch finishes with failures", async (
   assert.deepEqual(Array.from(storage.youtubeRecentImportJobIds), ["original-job"]);
 });
 
+test("popup automatically deletes a fully processed successful job from backend and Chrome history", async () => {
+  const page = setupPopup({}, "completed");
+  await flushPopup();
+  await page.elements.get("scanSubscriptions").listeners.get("click")();
+  await page.elements.get("subscribe").listeners.get("click")();
+  await flushPopup();
+
+  assert.ok(page.messages.some((message) =>
+    message.type === "dreamedia:deleteYoutubeImport" && message.jobId === "original-job",
+  ));
+  assert.ok(page.messages.some((message) =>
+    message.type === "dreamedia:hideYoutubeImportHistory" && message.jobId === "original-job",
+  ));
+  assert.ok(Array.from(page.storage.youtubeHiddenImportJobIds).includes("original-job"));
+  assert.ok(!Array.from(page.storage.youtubeImportJobIds).includes("original-job"));
+  assert.ok(!Array.from(page.storage.youtubeRecentImportJobIds).includes("original-job"));
+  assert.equal(page.elements.get("openImportTable").hidden, true);
+});
+
+test("popup keeps completed jobs when errors remain or requested rows are not fully processed", async () => {
+  for (const options of [
+    { completionErrors: ["unexpected backend error"] },
+    { completedProcessed: 1 },
+  ]) {
+    const page = setupPopup({}, "completed", options);
+    await flushPopup();
+    await page.elements.get("scanSubscriptions").listeners.get("click")();
+    await page.elements.get("subscribe").listeners.get("click")();
+    await flushPopup();
+
+    assert.ok(!page.messages.some((message) => message.type === "dreamedia:deleteYoutubeImport"));
+    assert.equal(page.elements.get("openImportTable").hidden, false);
+    assert.equal(page.elements.get("deleteImportTable").disabled, false);
+  }
+});
+
+test("popup X deletes finished import history and leaves imported sources alone", async () => {
+  const page = setupPopup();
+  await flushPopup();
+  await page.elements.get("scanSubscriptions").listeners.get("click")();
+  await page.elements.get("subscribe").listeners.get("click")();
+  await flushPopup();
+
+  const deleteButton = page.elements.get("deleteImportTable");
+  assert.equal(deleteButton.hidden, false);
+  assert.equal(deleteButton.disabled, false);
+  deleteButton.listeners.get("click")();
+  await flushPopup();
+
+  assert.match(page.confirmations[0], /Sources already added to DreaMedia will remain/);
+  assert.ok(page.messages.some((message) =>
+    message.type === "dreamedia:deleteYoutubeImport" && message.jobId === "original-job",
+  ));
+  assert.ok(Array.from(page.storage.youtubeHiddenImportJobIds).includes("original-job"));
+  assert.ok(!Array.from(page.storage.youtubeRecentImportJobIds).includes("original-job"));
+  assert.equal(page.elements.get("openImportTable").hidden, true);
+});
+
 test("popup restores the import-table action from stored job IDs", async () => {
   const { elements } = setupPopup({ youtubeFailedImportJobIds: ["original-job"] });
   await flushPopup();
@@ -283,6 +349,8 @@ test("popup offers the import table while a batch is importing without storing i
   assert.match(elements.get("importStatus").textContent, /Importing/);
   assert.equal(elements.get("openImportTable").hidden, false);
   assert.equal(elements.get("importTableMeta").textContent, "1 active");
+  assert.equal(elements.get("deleteImportTable").hidden, false);
+  assert.equal(elements.get("deleteImportTable").disabled, true);
   assert.ok(Array.from(storage.youtubeImportJobIds).includes("original-job"));
   assert.ok(!Array.from(storage.youtubeFailedImportJobIds).includes("original-job"));
 });

@@ -128,11 +128,14 @@
       </div>
       <ul id="importPreview" class="import-preview" hidden></ul>
       <p id="importStatus" class="status" role="status"></p>
-      <button id="openImportTable" class="import-table-button" type="button" hidden>
-        <svg aria-hidden="true"><use href="#list"/></svg>
-        <span>View import table</span>
-        <span id="importTableMeta" class="import-table-meta"></span>
-      </button>
+      <div id="importTableRow" class="import-table-row" hidden>
+        <button id="openImportTable" class="import-table-button" type="button" hidden>
+          <svg aria-hidden="true"><use href="#list"/></svg>
+          <span>View import table</span>
+          <span id="importTableMeta" class="import-table-meta"></span>
+        </button>
+        <button id="deleteImportTable" class="import-table-delete" type="button" aria-label="Delete finished import history" title="Available after an import batch finishes" hidden>×</button>
+      </div>
       <button id="openScanTable" class="import-table-button" type="button" hidden>
         <svg aria-hidden="true"><use href="#list"/></svg>
         <span>View scan table</span>
