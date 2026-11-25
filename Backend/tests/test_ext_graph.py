@@ -275,8 +275,7 @@ def test_extension_schema_exposes_category_and_withhold_contract():
     assert "failedItems" in schema
     assert "retryable: Boolean!" in schema
     assert "resolved: Int!" in schema
-    assert "payload: JSON" in schema
-    assert "links: [String!]" in schema
+    assert "payload: JSON!" in schema
 
 
 @pytest.mark.asyncio
@@ -324,7 +323,7 @@ async def test_bulk_start_returns_queued_job_without_resolving_channels(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_graphql_start_import_accepts_one_json_scalar_batch(monkeypatch):
+async def test_graphql_start_import_accepts_one_json_source_batch(monkeypatch):
     calls = []
 
     async def user_id(_info):
@@ -354,7 +353,7 @@ async def test_graphql_start_import_accepts_one_json_scalar_batch(monkeypatch):
                     {"link": "https://youtube.com/@one", "label": "first"},
                     {"url": "https://youtube.com/@two", "label": "second"},
                 ],
-                "metadata": {"source": "uploaded-json"},
+                "metadata": {"source": "internal-batch-payload"},
             }
         },
     )
@@ -366,44 +365,6 @@ async def test_graphql_start_import_accepts_one_json_scalar_batch(monkeypatch):
     assert calls == [(
         12,
         ["https://youtube.com/@one", "https://youtube.com/@two"],
-        {
-            "kind": "tracking", "words": None, "rank": None,
-            "withhold": None, "domain": None, "subdomain": None,
-        },
-    )]
-
-
-@pytest.mark.asyncio
-async def test_graphql_start_import_accepts_legacy_links_argument(monkeypatch):
-    calls = []
-
-    async def user_id(_info):
-        return 12
-
-    async def enqueue(user, links, **options):
-        calls.append((user, links, options))
-        return {
-            "job_id": "legacy-job", "status": "queued", "requested": len(links),
-            "processed": 0, "resolved": 0, "added": 0, "skipped": 0, "failed": 0,
-        }
-
-    monkeypatch.setattr(ext_graph, "_ext_uid", user_id)
-    monkeypatch.setattr(ext_graph, "enqueue_youtube_import", enqueue)
-
-    result = await ext_graph.ext_schema.execute(
-        """
-        mutation StartImport($links: [String!]!) {
-          startYoutubeImport(links: $links, kind: "tracking") { jobId requested }
-        }
-        """,
-        variable_values={"links": ["https://youtube.com/@legacy"]},
-    )
-
-    assert result.errors is None
-    assert result.data["startYoutubeImport"] == {"jobId": "legacy-job", "requested": 1}
-    assert calls == [(
-        12,
-        ["https://youtube.com/@legacy"],
         {
             "kind": "tracking", "words": None, "rank": None,
             "withhold": None, "domain": None, "subdomain": None,

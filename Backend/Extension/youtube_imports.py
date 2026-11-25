@@ -277,23 +277,10 @@ def _prepare_items(links: Sequence[str]) -> List[Dict[str, Any]]:
 
 
 def normalize_source_payload(payload: Any) -> List[str]:
-    """Extract source links from a single JSON record, array, or sources wrapper.
-
-    Accepted records are strings or objects with a `link`/`url` string. A
-    wrapper uses `{"sources": [...]}`; the legacy object and array shapes are
-    also accepted. Invalid records fail the whole batch rather than silently
-    dropping a source from the uploaded file.
-    """
-    if isinstance(payload, str):
-        entries = [payload]
-    elif isinstance(payload, list):
-        entries = payload
-    elif isinstance(payload, dict):
-        entries = payload.get("sources") if "sources" in payload else [payload]
-        if not isinstance(entries, list):
-            raise ValueError("JSON 'sources' must be an array")
-    else:
-        raise ValueError("JSON must be a source object, source array, or {sources: [...]} object")
+    """Extract links from the canonical ``{"sources": [...]}`` batch payload."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("sources"), list):
+        raise ValueError("JSON payload must be an object with a 'sources' array")
+    entries = payload["sources"]
 
     if not entries:
         raise ValueError("no sources found in JSON payload")
@@ -302,9 +289,7 @@ def normalize_source_payload(payload: Any) -> List[str]:
 
     links: List[str] = []
     for ordinal, entry in enumerate(entries):
-        if isinstance(entry, str):
-            link = entry
-        elif isinstance(entry, dict):
+        if isinstance(entry, dict):
             link = entry.get("link") or entry.get("url")
         else:
             link = None

@@ -49,7 +49,7 @@ class Element {
   querySelector() { return new Element("use"); }
 }
 
-function setupPopup() {
+function setupPopup(tabUrl = "https://www.youtube.com/feed/channels") {
   const elements = new Map();
   const tabs = ["subscribeTab", "playlistTab"].map((id, index) => {
     const tab = new Element(id, "button");
@@ -77,7 +77,7 @@ function setupPopup() {
   const storageChangeListeners = [];
   let fetchCalls = 0;
   let formDataInstances = 0;
-  let jsonParseCalls = 0;
+  let requestedSources = 2;
   const jobId = "durable-import-job";
   const scanChannels = [
     { name: "First", url: "https://www.youtube.com/@first" },
@@ -87,14 +87,17 @@ function setupPopup() {
   function sendResponse(message) {
     messages.push(message);
     if (message.type === "dreamedia:startYoutubeImport") {
-      return { ok: true, data: { jobId, status: "queued", requested: 2 } };
+      requestedSources = Array.isArray(message.sourcePayload?.sources)
+        ? message.sourcePayload.sources.length
+        : 1;
+      return { ok: true, data: { jobId, status: "queued", requested: requestedSources } };
     }
     if (message.type === "dreamedia:youtubeImportStatus") {
       return {
         ok: true,
         data: {
-          jobId, status: "completed", requested: 2, processed: 2,
-          resolved: 2, added: 2, skipped: 0, failed: 0,
+          jobId, status: "completed", requested: requestedSources, processed: requestedSources,
+          resolved: requestedSources, added: requestedSources, skipped: 0, failed: 0,
         },
       };
     }
@@ -154,7 +157,7 @@ function setupPopup() {
       onChanged: { addListener(listener) { storageChangeListeners.push(listener); } },
     },
     tabs: {
-      async query() { return [{ id: 5, url: "https://www.youtube.com/feed/channels" }]; },
+      async query() { return [{ id: 5, url: tabUrl }]; },
       create() {},
     },
   };
@@ -162,10 +165,7 @@ function setupPopup() {
     chrome,
     document,
     URL,
-    JSON: {
-      parse(text) { jsonParseCalls += 1; return JSON.parse(text); },
-      stringify: JSON.stringify,
-    },
+    JSON,
     fetch() { fetchCalls += 1; throw new Error("Unexpected HTTP request"); },
     FormData: class {
       constructor() { formDataInstances += 1; }
@@ -187,7 +187,6 @@ function setupPopup() {
     scanChannels,
     get fetchCalls() { return fetchCalls; },
     get formDataInstances() { return formDataInstances; },
-    get jsonParseCalls() { return jsonParseCalls; },
   };
 }
 
@@ -195,41 +194,21 @@ async function flushPopup() {
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setImmediate(resolve));
 }
 
-test("one JSON file is parsed once and sent whole in one WebSocket import, then its job enters history", async () => {
-  const popup = setupPopup();
+test("manual single-channel add uses one JSON batch and tracks its import job", async () => {
+  const channelUrl = "https://www.youtube.com/@single";
+  const popup = setupPopup(channelUrl);
   await flushPopup();
-  for (const id of ["words", "domain", "subdomain"]) {
-    popup.elements.set(id, new Element(id));
-  }
-  popup.elements.get("kind").value = "wordscan";
-  popup.elements.get("words").value = "trailer, live";
-  popup.elements.get("domain").value = "Technology";
-  popup.elements.get("subdomain").value = "Video";
-
-  const documentValue = {
-    sources: [{ link: "https://www.youtube.com/@one", title: "One" }],
-    metadata: { creator: "fixture", version: 7 },
-  };
-  let textReads = 0;
-  const file = {
-    name: "sources.json",
-    async text() { textReads += 1; return JSON.stringify(documentValue); },
-  };
-  const input = popup.elements.get("importJsonFile");
-  input.files = [file];
-  await input.listeners.get("change")({ target: input });
+  await popup.elements.get("subscribe").listeners.get("click")();
   await flushPopup();
 
   const imports = popup.messages.filter((message) => message.type === "dreamedia:startYoutubeImport");
-  assert.equal(textReads, 1);
-  assert.equal(popup.jsonParseCalls, 1);
   assert.equal(imports.length, 1);
-  assert.equal(imports[0].kind, "wordscan");
-  assert.deepEqual(Array.from(imports[0].words), ["trailer", "live"]);
-  assert.equal(imports[0].domain, "Technology");
-  assert.equal(imports[0].subdomain, "Video");
-  assert.deepEqual(JSON.parse(JSON.stringify(imports[0].sourcePayload)), documentValue);
+  assert.deepEqual(JSON.parse(JSON.stringify(imports[0].sourcePayload)), {
+    sources: [{ link: channelUrl }],
+  });
+  assert.equal(imports[0].kind, "tracking");
   assert.equal("links" in imports[0], false);
+  assert.equal(popup.messages.filter((message) => message.type === "dreamedia:subscribe").length, 0);
   assert.equal(popup.fetchCalls, 0);
   assert.equal(popup.formDataInstances, 0);
   assert.ok(popup.messages.some((message) =>
@@ -237,7 +216,6 @@ test("one JSON file is parsed once and sent whole in one WebSocket import, then 
     message.jobId === "durable-import-job" && message.recent === true,
   ));
   assert.ok(popup.storage.youtubeRecentImportJobIds.includes("durable-import-job"));
-  assert.equal(input.value, "");
 });
 
 test("scanned channels are wrapped and sent via the same one-start WebSocket path", async () => {
@@ -258,55 +236,33 @@ test("scanned channels are wrapped and sent via the same one-start WebSocket pat
     message.type === "dreamedia:updateYoutubeImportHistory" &&
     message.jobId === "durable-import-job" && message.recent === true,
   ));
+  assert.equal(popup.messages.filter((message) => message.type === "dreamedia:subscribe").length, 0);
   assert.equal(popup.fetchCalls, 0);
   assert.equal(popup.formDataInstances, 0);
 });
 
-test("accessible drop target opens the file picker and imports dropped JSON", async () => {
-  const popup = setupPopup();
-  await flushPopup();
-  const target = popup.elements.get("jsonDropTarget");
-  const input = popup.elements.get("importJsonFile");
-  target.listeners.get("click")();
-  assert.equal(input.clicked, true);
-
-  let prevented = false;
-  let textReads = 0;
-  target.listeners.get("drop")({
-    preventDefault() { prevented = true; },
-    dataTransfer: {
-      files: [{
-        name: "dropped.json",
-        async text() { textReads += 1; return '{"sources":[{"link":"https://youtube.com/@dropped"}]}'; },
-      }],
-    },
-  });
-  await flushPopup();
-
-  assert.equal(prevented, true);
-  assert.equal(textReads, 1);
-  assert.equal(popup.messages.filter((message) => message.type === "dreamedia:startYoutubeImport").length, 1);
-  assert.match(popupHtml, /id="jsonDropTarget"[^>]*aria-describedby="jsonImportHelp"/);
-  assert.match(popupHtml, /id="importJsonFile" type="file" accept="application\/json,\.json" hidden/);
-  assert.doesNotMatch(popupHtml, /Import \.json/);
+test("popup has no user-selected JSON file chooser or file reader feature", () => {
+  assert.doesNotMatch(
+    popupHtml,
+    /id="(?:jsonDropTarget|importJsonFile|jsonImportHelp)"|type="file"|Choose or drop a \.json file/i,
+  );
+  assert.doesNotMatch(
+    popupSource,
+    /jsonDropTarget|importJsonFile|jsonImportInFlight|file\.text\(\)/i,
+  );
 });
 
-test("JSON source batches reject the playlist-only mode before sending", async () => {
+test("subscription scans reject playlist-only mode before starting a batch", async () => {
   const popup = setupPopup();
   await flushPopup();
+  await popup.elements.get("scanSubscriptions").listeners.get("click")();
   popup.elements.get("kind").value = "playlist";
-  let textReads = 0;
-  const input = popup.elements.get("importJsonFile");
-  input.files = [{
-    name: "sources.json",
-    async text() { textReads += 1; return '{"link":"https://youtube.com/@one"}'; },
-  }];
-
-  await input.listeners.get("change")({ target: input });
+  await popup.elements.get("subscribe").listeners.get("click")();
   await flushPopup();
 
-  assert.equal(textReads, 0);
   assert.equal(popup.messages.filter((message) => message.type === "dreamedia:startYoutubeImport").length, 0);
+  assert.equal(popup.messages.filter((message) => message.type === "dreamedia:subscribe").length, 0);
+  assert.match(popup.elements.get("subStatus").textContent, /Choose a channel mode, not Playlist/);
 });
 
 test("background maps sourcePayload to one payload-based authenticated gqlWs mutation", async () => {
@@ -359,5 +315,4 @@ test("background maps sourcePayload to one payload-based authenticated gqlWs mut
 test("popup contains no multipart upload or REST import-status endpoint", () => {
   assert.doesNotMatch(popupSource, /\/extension\/sources\/(?:import|status)/);
   assert.doesNotMatch(popupSource, /pollJsonImportJob|sendHttp/);
-  assert.doesNotMatch(popupSource, /Import \.json/);
 });

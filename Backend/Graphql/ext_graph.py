@@ -355,18 +355,13 @@ class ExtMutation:
 
     @strawberry.field
     async def start_youtube_import(
-        self, info: Info, payload: Optional[JSON] = None,
-        links: Optional[List[str]] = None, kind: str = "tracking",
+        self, info: Info, payload: JSON, kind: str = "tracking",
         words: Optional[List[str]] = None, rank: Optional[str] = None,
         withhold: Optional[int] = None, domain: Optional[str] = None,
         subdomain: Optional[str] = None,
     ) -> YoutubeImportStarted:
-        """Queue JSON imports; accept links for already-released extension clients."""
-        if payload is not None and links is not None:
-            raise ValueError("provide either the JSON payload or legacy links, not both")
-        source_links = normalize_source_payload(payload) if payload is not None else links
-        if source_links is None:
-            raise ValueError("provide a JSON payload or legacy links")
+        """Queue one validated JSON source batch for durable processing."""
+        source_links = normalize_source_payload(payload)
         result = await enqueue_youtube_import(
             await _ext_uid(info),
             source_links,

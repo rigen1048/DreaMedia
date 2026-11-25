@@ -556,21 +556,31 @@ def test_import_workers_are_fixed_at_eight_per_user_with_one_second_break():
 @pytest.mark.parametrize(
     ("payload", "expected"),
     [
-        ({"link": "https://youtube.com/@one"}, ["https://youtube.com/@one"]),
-        ([{"link": "https://youtube.com/@one"}, "https://youtube.com/@two"],
-         ["https://youtube.com/@one", "https://youtube.com/@two"]),
-        ({"sources": [{"url": "https://youtube.com/@one"}]},
+        ({"sources": [{"link": "https://youtube.com/@one"}]},
          ["https://youtube.com/@one"]),
-        ("https://youtube.com/@one", ["https://youtube.com/@one"]),
+        ({"sources": [
+            {"link": "https://youtube.com/@one"},
+            {"url": "https://youtube.com/@two"},
+        ]}, ["https://youtube.com/@one", "https://youtube.com/@two"]),
     ],
 )
-def test_json_source_payload_accepts_one_or_many_records(payload, expected):
+def test_json_source_payload_accepts_canonical_source_batches(payload, expected):
     assert youtube_imports.normalize_source_payload(payload) == expected
 
 
 @pytest.mark.parametrize(
     "payload",
-    [None, {}, {"sources": "not-an-array"}, ["https://youtube.com/@one", {}], 3],
+    [
+        None,
+        {},
+        {"link": "https://youtube.com/@one"},
+        {"sources": "not-an-array"},
+        {"sources": []},
+        {"sources": ["https://youtube.com/@one"]},
+        ["https://youtube.com/@one", {}],
+        "https://youtube.com/@one",
+        3,
+    ],
 )
 def test_json_source_payload_rejects_malformed_or_empty_batches(payload):
     with pytest.raises(ValueError):

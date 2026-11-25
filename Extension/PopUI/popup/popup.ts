@@ -1008,54 +1008,6 @@ action(
     }
   });
 
-// ── JSON file import ──────────────────────────────────────────────────
-const jsonFileInput = $("importJsonFile") as HTMLInputElement;
-const jsonDropTarget = $("jsonDropTarget") as HTMLButtonElement;
-let jsonImportInFlight = false;
-
-async function importJsonFile(file: File): Promise<void> {
-  if (jsonImportInFlight) return;
-  jsonImportInFlight = true;
-  jsonDropTarget.disabled = true;
-  jsonDropTarget.setAttribute("aria-busy", "true");
-  setImportScanStatus("");
-  setImportJobStatus("Reading JSON file…");
-  try {
-    if (!/\.json$/i.test(file.name)) {
-      throw new Error("Choose a .json file.");
-    }
-    const options = selectedSourceOptions(true);
-    const sourcePayload: unknown = JSON.parse(await file.text());
-    await startYoutubeImport(sourcePayload, options, 0);
-  } catch (error) {
-    setImportJobStatus(`Failed: ${(error as Error).message}`, "err");
-  } finally {
-    jsonFileInput.value = "";
-    jsonDropTarget.disabled = false;
-    jsonDropTarget.removeAttribute("aria-busy");
-    jsonImportInFlight = false;
-  }
-}
-
-jsonDropTarget.addEventListener("click", () => jsonFileInput.click());
-jsonDropTarget.addEventListener("dragover", (event) => {
-  event.preventDefault();
-  jsonDropTarget.classList.add("is-dragging");
-});
-jsonDropTarget.addEventListener("dragleave", () => {
-  jsonDropTarget.classList.remove("is-dragging");
-});
-jsonDropTarget.addEventListener("drop", (event) => {
-  event.preventDefault();
-  jsonDropTarget.classList.remove("is-dragging");
-  const file = (event as DragEvent).dataTransfer?.files[0];
-  if (file) void importJsonFile(file);
-});
-jsonFileInput.addEventListener("change", (event) => {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  if (file) void importJsonFile(file);
-});
-
 action(
   "subscribe",
   "subStatus",
@@ -1083,7 +1035,17 @@ action(
     }
     const tab = await currentTab();
     if (!tab?.url) return status("subStatus", "Open a YouTube page first", "err");
-    const body = { ...selectedSourceOptions(), link: tab.url };
+    const options = selectedSourceOptions();
+    if (options.kind !== "playlist") {
+      await startYoutubeImport(
+        { sources: [{ link: tab.url }] },
+        options,
+        1
+      );
+      status("subStatus", "Channel import queued.", "ok");
+      return;
+    }
+    const body = { ...options, link: tab.url };
     status("subStatus", "Subscribing…");
     const r = await send("dreamedia:subscribe", { body });
     const subscribed = (r as { ok: boolean }).ok && (r as { data?: { ok?: boolean } }).data?.ok;
