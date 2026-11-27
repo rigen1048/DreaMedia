@@ -889,19 +889,21 @@ async def _run_claim_with_lease(
 
 
 async def _run_user_import_worker(user_id: int, worker_section: int) -> None:
-    """Drain one globally leased section of a user's durable queue."""
+    """Drain one globally leased section of a user's durable queue.
+
+    Runs forever: polls its section every 1 second when idle, claims and
+    processes items as they appear. Never exits on idle — the manager only
+    needs to ensure all eight exist at startup.
+    """
     store = PgStore()
-    idle_cycles = 0
     consecutive_failures = 0
     while True:
         worker_lease_token: Optional[str] = None
         try:
             key = await vault.get(user_id)
             if key is None:
-                consecutive_failures = 0
-                idle_cycles += 1
-                if idle_cycles >= 30:
-                    return
+                # Vault locked (D9): keep the worker alive, polling for the
+                # key to appear instead of exiting.
                 await _worker_sleep(IMPORT_IDLE_POLL_SECONDS)
                 continue
 
@@ -909,7 +911,7 @@ async def _run_user_import_worker(user_id: int, worker_section: int) -> None:
                 user_id, worker_section
             )
             if worker_lease_token is None:
-                consecutive_failures = 0
+                # Another process owns this section; keep polling.
                 await _worker_sleep(IMPORT_IDLE_POLL_SECONDS)
                 continue
 
@@ -917,10 +919,7 @@ async def _run_user_import_worker(user_id: int, worker_section: int) -> None:
                 user_id, worker_section, worker_lease_token
             )
             if item is None:
-                consecutive_failures = 0
-                idle_cycles += 1
-                if idle_cycles >= 30:
-                    return
+                # Section empty: release lease, keep the worker alive.
                 await _release_worker_section_lease(
                     user_id, worker_section, worker_lease_token
                 )
@@ -928,9 +927,8 @@ async def _run_user_import_worker(user_id: int, worker_section: int) -> None:
                 await _worker_sleep(IMPORT_IDLE_POLL_SECONDS)
                 continue
 
-            idle_cycles = 0
-            resolved = await _run_claim_with_lease(item, key, store)
             consecutive_failures = 0
+            resolved = await _run_claim_with_lease(item, key, store)
             if item["stage"] != "resolve" or not resolved:
                 await _worker_sleep(IMPORT_ITEM_DELAY_SECONDS)
         except asyncio.CancelledError:
