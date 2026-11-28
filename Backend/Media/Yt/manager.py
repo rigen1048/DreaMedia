@@ -23,12 +23,13 @@ from Config.Hardcoded.limits import MANAGER_IDLE_SLEEP_SECONDS, WORKING_STALE_SE
 from Media.Yt.SQL.store import PgStore
 from Media.Yt.pipeline import run_subscription
 from Utility.logs import log
+from Utility.wake import WakeEvent
 
 
 # "Fetch now" (UI): the store nudges due timestamps, then the mutation rings
 # this bell so the pass happens immediately instead of at the next tick.
 # Still a single manager — no second worker, no duplicate claims.
-_WAKE = asyncio.Event()
+_WAKE = WakeEvent()
 
 
 def wake() -> None:
@@ -38,15 +39,7 @@ def wake() -> None:
 
 async def _nap(seconds: float) -> None:
     """Sleep for `seconds`, returning early when wake() is called."""
-    if _WAKE.is_set():
-        _WAKE.clear()
-        return
-    try:
-        await asyncio.wait_for(_WAKE.wait(), timeout=max(0.0, seconds))
-    except asyncio.TimeoutError:
-        pass
-    finally:
-        _WAKE.clear()
+    await _WAKE.nap(seconds)
 
 
 async def run_once(store: PgStore) -> int:

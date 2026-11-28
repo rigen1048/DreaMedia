@@ -26,6 +26,7 @@ from Media.Yt.SQL.import_leases import (
 from Media.Yt.SQL.store import PgStore
 from Utility.logs import log
 from Utility.media_executor import run_youtube_network
+from Utility.wake import WakeEvent
 
 MAX_IMPORT_CHANNELS = 2000
 MAX_STATUS_ERRORS = 10
@@ -39,7 +40,7 @@ IMPORT_ERROR_BACKOFF_BASE_SECONDS = 2.0
 IMPORT_ERROR_BACKOFF_MAX_SECONDS = 60.0
 _USER_IMPORT_WORKERS: Dict[int, List[asyncio.Task]] = {}
 _USER_IMPORT_WORKERS_LOOP: asyncio.AbstractEventLoop | None = None
-_IMPORT_WORKER_WAKE: asyncio.Event | None = None
+_IMPORT_WORKER_WAKE: WakeEvent | None = None
 _CHANNEL_PATH = re.compile(r"^/(?:@[^/]+|channel/UC[A-Za-z0-9_-]{22})(?:/|$)", re.I)
 _CHANNEL_KINDS = {"tracking", "wordscan", "random", "withhold"}
 
@@ -997,7 +998,7 @@ async def stop_youtube_import_workers() -> None:
 async def run_youtube_import_worker_manager() -> None:
     """Start eight async section workers for each authenticated user with work."""
     global _IMPORT_WORKER_WAKE
-    _IMPORT_WORKER_WAKE = asyncio.Event()
+    _IMPORT_WORKER_WAKE = WakeEvent()
     consecutive_failures = 0
     try:
         while True:
@@ -1018,13 +1019,7 @@ async def run_youtube_import_worker_manager() -> None:
                 )
                 await _worker_sleep(delay)
 
-            try:
-                await asyncio.wait_for(
-                    _IMPORT_WORKER_WAKE.wait(), timeout=IMPORT_IDLE_POLL_SECONDS
-                )
-            except asyncio.TimeoutError:
-                pass
-            _IMPORT_WORKER_WAKE.clear()
+            await _IMPORT_WORKER_WAKE.nap(IMPORT_IDLE_POLL_SECONDS)
     finally:
         _IMPORT_WORKER_WAKE = None
         await stop_youtube_import_workers()
