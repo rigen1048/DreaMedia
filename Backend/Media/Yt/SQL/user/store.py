@@ -105,6 +105,128 @@ class YtUserSQL:
                 )
         return Success(channel_id)
 
+    # ── add_extension_subscription decomposition ──────────────────────
+    # Each helper is independently testable; the public method orchestrates
+    # them inside a single transaction.
+
+    def _validate_source_options(
+        self,
+        *,
+        kind: str,
+        rss_id: Optional[str],
+        playlist_id: Optional[str],
+        withhold: Optional[int],
+        domain: Optional[str],
+        subdomain: Optional[str],
+        worker_section: Optional[int],
+        worker_lease_token: Optional[str],
+    ) -> Optional[str]:
+        """Pure validation; returns an error string or None."""
+        if kind not in ("tracking", "wordscan", "withhold", "random", "playlist"):
+            return "kind must be tracking|wordscan|withhold|random|playlist"
+        if kind == "withhold" and (withhold is None or withhold < 1):
+            return "withhold threshold must be >= 1"
+        if kind in ("tracking", "wordscan", "withhold") and not rss_id:
+            return "RSS source is required for tracking subscriptions"
+        if kind == "playlist" and not playlist_id:
+            return "playlist id is required for playlist subscriptions"
+        clean_domain = domain.strip() if domain and domain.strip() else None
+        clean_subdomain = subdomain.strip() if subdomain and subdomain.strip() else None
+        if bool(clean_domain) != bool(clean_subdomain):
+            return "choose both a domain and subdomain, or leave both empty"
+        if (worker_section is None) != (worker_lease_token is None):
+            return "worker section and lease token must be supplied together"
+        return None
+
+    async def _ensure_channel_for_source(
+        self, con, key: bytes, user_id: int,
+        channel_name: str, channel_url: str, logo: Optional[str],
+        skip_existing: bool,
+    ) -> tuple[int, bool]:
+        """Get-or-create the channel row; returns (channel_id, created)."""
+        if skip_existing:
+            channel_hash = index_hash(key, channel_url)
+            channel_id = await con.fetchval(
+                "INSERT INTO yt_channels (user_id, name_enc, url_enc, url_hash, logo_enc) "
+                "VALUES ($1, $2, $3, $4, $5) "
+                "ON CONFLICT (user_id, url_hash) DO NOTHING RETURNING id",
+                user_id, encrypt(key, channel_name), encrypt(key, channel_url),
+                channel_hash, encrypt(key, logo) if logo else None,
+            )
+            if channel_id is None:
+                existing_id = await con.fetchval(
+                    "SELECT id FROM yt_channels WHERE user_id = $1 AND url_hash = $2",
+                    user_id, channel_hash,
+                )
+                if existing_id is not None:
+                    return existing_id, False
+                # Conflict was a race; fall through to normal path.
+        channel_id = await self._get_or_create_channel(
+            con, key, user_id, channel_name, channel_url, logo
+        )
+        return channel_id, True
+
+    async def _assign_source_category(
+        self, con, key: bytes, user_id: int, channel_id: int,
+        domain: Optional[str], subdomain: Optional[str],
+    ) -> None:
+        """Attach the channel to a domain/subdomain category (if provided)."""
+        clean_domain = domain.strip() if domain and domain.strip() else None
+        clean_subdomain = subdomain.strip() if subdomain and subdomain.strip() else None
+        if clean_domain and clean_subdomain:
+            subdomain_id = await self._get_or_create_category(
+                con, key, user_id, clean_domain, clean_subdomain
+            )
+            await con.execute(
+                "UPDATE yt_channels SET subdomain_id = $3 "
+                "WHERE id = $1 AND user_id = $2",
+                channel_id, user_id, subdomain_id,
+            )
+
+    async def _set_subscription_mode(
+        self, con, key: bytes, user_id: int, channel_id: int,
+        kind: str,
+        rss_id: Optional[str] = None,
+        words: Optional[List[str]] = None,
+        rank: Optional[str] = None,
+        withhold: Optional[int] = None,
+        playlist_id: Optional[str] = None,
+    ) -> None:
+        """Delete old mode rows and insert the new one (mutually exclusive)."""
+        if kind in ("tracking", "wordscan", "withhold"):
+            actual_kind = "wordscan" if kind == "wordscan" else "tracking"
+            threshold = withhold if kind == "withhold" else None
+            await con.execute("DELETE FROM yt_playlists WHERE channel_id = $1", channel_id)
+            await con.execute("DELETE FROM yt_randomsubs WHERE channel_id = $1", channel_id)
+            await con.execute(
+                "INSERT INTO yt_tracking "
+                "(channel_id, rss_id_enc, rss_hash, kind, word_enc, withhold_threshold, ts) "
+                "VALUES ($1, $2, $3, $4, $5, $6, 0) "
+                "ON CONFLICT (channel_id) DO UPDATE SET "
+                "rss_id_enc = EXCLUDED.rss_id_enc, rss_hash = EXCLUDED.rss_hash, "
+                "kind = EXCLUDED.kind, word_enc = EXCLUDED.word_enc, "
+                "withhold_threshold = EXCLUDED.withhold_threshold, ts = 0",
+                channel_id, encrypt(key, rss_id), index_hash(key, rss_id),
+                actual_kind, encrypt(key, ",".join(words)) if words else None,
+                threshold,
+            )
+        elif kind == "playlist":
+            await con.execute("DELETE FROM yt_tracking WHERE channel_id = $1", channel_id)
+            await con.execute("DELETE FROM yt_randomsubs WHERE channel_id = $1", channel_id)
+            await con.execute(
+                "INSERT INTO yt_playlists (channel_id, playlist_id, ts) VALUES ($1, $2, 0) "
+                "ON CONFLICT (channel_id) DO UPDATE SET playlist_id = EXCLUDED.playlist_id, ts = 0",
+                channel_id, playlist_id,
+            )
+        else:  # random
+            await con.execute("DELETE FROM yt_tracking WHERE channel_id = $1", channel_id)
+            await con.execute("DELETE FROM yt_playlists WHERE channel_id = $1", channel_id)
+            await con.execute(
+                "INSERT INTO yt_randomsubs (channel_id, rank, ts) VALUES ($1, $2, 0) "
+                "ON CONFLICT (channel_id) DO UPDATE SET rank = EXCLUDED.rank, ts = 0",
+                channel_id, rank or "week",
+            )
+
     async def add_extension_subscription(
         self,
         user_id: int,
@@ -129,20 +251,13 @@ class YtUserSQL:
         The channel, mutually-exclusive subscription mode, withhold threshold,
         and optional category either commit together or are all rolled back.
         """
-        if kind not in ("tracking", "wordscan", "withhold", "random", "playlist"):
-            return Failure("kind must be tracking|wordscan|withhold|random|playlist")
-        if kind == "withhold" and (withhold is None or withhold < 1):
-            return Failure("withhold threshold must be >= 1")
-        if kind in ("tracking", "wordscan", "withhold") and not rss_id:
-            return Failure("RSS source is required for tracking subscriptions")
-        if kind == "playlist" and not playlist_id:
-            return Failure("playlist id is required for playlist subscriptions")
-        domain = domain.strip() if domain and domain.strip() else None
-        subdomain = subdomain.strip() if subdomain and subdomain.strip() else None
-        if bool(domain) != bool(subdomain):
-            return Failure("choose both a domain and subdomain, or leave both empty")
-        if (worker_section is None) != (worker_lease_token is None):
-            return Failure("worker section and lease token must be supplied together")
+        error = self._validate_source_options(
+            kind=kind, rss_id=rss_id, playlist_id=playlist_id, withhold=withhold,
+            domain=domain, subdomain=subdomain,
+            worker_section=worker_section, worker_lease_token=worker_lease_token,
+        )
+        if error is not None:
+            return Failure(error)
 
         key = await vault.get(user_id)
         if key is None:
@@ -156,70 +271,19 @@ class YtUserSQL:
                     raise ImportWorkerLeaseLost(
                         "lost the durable YouTube import section lease"
                     )
-                channel_id = None
-                if skip_existing:
-                    channel_hash = index_hash(key, channel_url)
-                    channel_id = await con.fetchval(
-                        "INSERT INTO yt_channels (user_id, name_enc, url_enc, url_hash, logo_enc) "
-                        "VALUES ($1, $2, $3, $4, $5) "
-                        "ON CONFLICT (user_id, url_hash) DO NOTHING RETURNING id",
-                        user_id, encrypt(key, channel_name), encrypt(key, channel_url),
-                        channel_hash, encrypt(key, logo) if logo else None,
-                    )
-                    if channel_id is None:
-                        existing_id = await con.fetchval(
-                            "SELECT id FROM yt_channels WHERE user_id = $1 AND url_hash = $2",
-                            user_id, channel_hash,
-                        )
-                        if existing_id is not None:
-                            return Success({"channel_id": existing_id, "created": False})
-                if channel_id is None:
-                    channel_id = await self._get_or_create_channel(
-                        con, key, user_id, channel_name, channel_url, logo
-                    )
-                if domain and subdomain:
-                    subdomain_id = await self._get_or_create_category(
-                        con, key, user_id, domain, subdomain
-                    )
-                    await con.execute(
-                        "UPDATE yt_channels SET subdomain_id = $3 "
-                        "WHERE id = $1 AND user_id = $2",
-                        channel_id, user_id, subdomain_id,
-                    )
-
-                if kind in ("tracking", "wordscan", "withhold"):
-                    actual_kind = "wordscan" if kind == "wordscan" else "tracking"
-                    threshold = withhold if kind == "withhold" else None
-                    await con.execute("DELETE FROM yt_playlists WHERE channel_id = $1", channel_id)
-                    await con.execute("DELETE FROM yt_randomsubs WHERE channel_id = $1", channel_id)
-                    await con.execute(
-                        "INSERT INTO yt_tracking "
-                        "(channel_id, rss_id_enc, rss_hash, kind, word_enc, withhold_threshold, ts) "
-                        "VALUES ($1, $2, $3, $4, $5, $6, 0) "
-                        "ON CONFLICT (channel_id) DO UPDATE SET "
-                        "rss_id_enc = EXCLUDED.rss_id_enc, rss_hash = EXCLUDED.rss_hash, "
-                        "kind = EXCLUDED.kind, word_enc = EXCLUDED.word_enc, "
-                        "withhold_threshold = EXCLUDED.withhold_threshold, ts = 0",
-                        channel_id, encrypt(key, rss_id), index_hash(key, rss_id),
-                        actual_kind, encrypt(key, ",".join(words)) if words else None,
-                        threshold,
-                    )
-                elif kind == "playlist":
-                    await con.execute("DELETE FROM yt_tracking WHERE channel_id = $1", channel_id)
-                    await con.execute("DELETE FROM yt_randomsubs WHERE channel_id = $1", channel_id)
-                    await con.execute(
-                        "INSERT INTO yt_playlists (channel_id, playlist_id, ts) VALUES ($1, $2, 0) "
-                        "ON CONFLICT (channel_id) DO UPDATE SET playlist_id = EXCLUDED.playlist_id, ts = 0",
-                        channel_id, playlist_id,
-                    )
-                else:  # random
-                    await con.execute("DELETE FROM yt_tracking WHERE channel_id = $1", channel_id)
-                    await con.execute("DELETE FROM yt_playlists WHERE channel_id = $1", channel_id)
-                    await con.execute(
-                        "INSERT INTO yt_randomsubs (channel_id, rank, ts) VALUES ($1, $2, 0) "
-                        "ON CONFLICT (channel_id) DO UPDATE SET rank = EXCLUDED.rank, ts = 0",
-                        channel_id, rank or "week",
-                    )
+                channel_id, created = await self._ensure_channel_for_source(
+                    con, key, user_id, channel_name, channel_url, logo, skip_existing
+                )
+                if not created:
+                    return Success({"channel_id": channel_id, "created": False})
+                await self._assign_source_category(
+                    con, key, user_id, channel_id, domain, subdomain
+                )
+                await self._set_subscription_mode(
+                    con, key, user_id, channel_id, kind,
+                    rss_id=rss_id, words=words, rank=rank,
+                    withhold=withhold, playlist_id=playlist_id,
+                )
         from Media.Yt.manager import wake
 
         wake()
