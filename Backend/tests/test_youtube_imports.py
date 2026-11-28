@@ -1043,3 +1043,174 @@ async def test_user_worker_awaits_one_second_after_a_completed_source(monkeypatc
         await youtube_imports._run_user_import_worker(12, 0)
 
     assert sleeps == [1.0]
+
+
+# ── Unified single-loop worker flow (d781b50) ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_worker_processes_resolve_then_process_in_one_loop(monkeypatch):
+    """One worker loop: claim 'queued' → resolve → claim 'resolved' → process."""
+    claims = []
+    processed = []
+
+    async def vault_key(_user_id):
+        return b"key"
+
+    async def acquire(_user_id, _section):
+        return "section-owner"
+
+    async def release(_user_id, _section, token):
+        assert token == "section-owner"
+
+    resolve_item = {
+        "id": 1, "job_id": "job-1", "user_id": 12, "status": "queued",
+        "worker_section": 0, "worker_lease_token": "section-owner",
+        "claim_token": "claim-1", "stage": "resolve",
+    }
+    process_item = {
+        "id": 1, "job_id": "job-1", "user_id": 12, "status": "resolved",
+        "worker_section": 0, "worker_lease_token": "section-owner",
+        "claim_token": "claim-2", "stage": "process",
+    }
+    call_count = 0
+
+    async def claim(_user_id, _section, token):
+        nonlocal call_count
+        call_count += 1
+        claims.append(call_count)
+        if call_count == 1:
+            return resolve_item
+        if call_count == 2:
+            return process_item
+        raise asyncio.CancelledError()
+
+    async def run_claim(item, _key, _store):
+        if item["stage"] == "resolve":
+            processed.append(("resolve", item["id"]))
+            return True
+        processed.append(("process", item["id"]))
+        return True
+
+    async def sleep(seconds):
+        pass  # Don't sleep; let the loop continue
+
+    monkeypatch.setattr(youtube_imports.vault, "get", vault_key)
+    monkeypatch.setattr(youtube_imports, "_acquire_worker_section_lease", acquire)
+    monkeypatch.setattr(youtube_imports, "_release_worker_section_lease", release)
+    monkeypatch.setattr(youtube_imports, "_claim_user_import_item", claim)
+    monkeypatch.setattr(youtube_imports, "_run_claim_with_lease", run_claim)
+    monkeypatch.setattr(youtube_imports, "_worker_sleep", sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await youtube_imports._run_user_import_worker(12, 0)
+
+    assert processed == [("resolve", 1), ("process", 1)]
+
+
+@pytest.mark.asyncio
+async def test_worker_marks_already_existing_channel_as_skipped(monkeypatch):
+    """Worker claims a channel that already exists → status = 'skipped'."""
+    completions = []
+
+    async def vault_key(_user_id):
+        return b"key"
+
+    async def acquire(_user_id, _section):
+        return "section-owner"
+
+    async def release(_user_id, _section, token):
+        assert token == "section-owner"
+
+    item = {
+        "id": 1, "job_id": "job-1", "user_id": 12, "status": "resolved",
+        "worker_section": 0, "worker_lease_token": "section-owner",
+        "claim_token": "claim-1", "stage": "process",
+    }
+
+    async def claim(_user_id, _section, token):
+        return item
+
+    async def run_claim(item, _key, _store):
+        # Simulate _process_claim calling add_resolved_youtube_channel_source
+        # which returns created=False (channel already exists)
+        from Extension.youtube_imports import _complete_processing
+        await _complete_processing(item, b"key", "skipped", None)
+        completions.append("skipped")
+        return True
+
+    async def sleep(_seconds):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(youtube_imports.vault, "get", vault_key)
+    monkeypatch.setattr(youtube_imports, "_acquire_worker_section_lease", acquire)
+    monkeypatch.setattr(youtube_imports, "_release_worker_section_lease", release)
+    monkeypatch.setattr(youtube_imports, "_claim_user_import_item", claim)
+    monkeypatch.setattr(youtube_imports, "_run_claim_with_lease", run_claim)
+    monkeypatch.setattr(youtube_imports, "_worker_sleep", sleep)
+    monkeypatch.setattr(
+        youtube_imports, "add_resolved_youtube_channel_source",
+        lambda *a, **kw: {"channel_id": 7, "created": False},
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await youtube_imports._run_user_import_worker(12, 0)
+
+    assert completions == ["skipped"]
+
+
+@pytest.mark.asyncio
+async def test_worker_never_exits_on_idle_queue(monkeypatch):
+    """Worker keeps polling forever when its section is empty (no exit after N cycles)."""
+    polls = []
+
+    async def vault_key(_user_id):
+        return b"key"
+
+    async def acquire(_user_id, _section):
+        return "section-owner"
+
+    async def release(_user_id, _section, token):
+        assert token == "section-owner"
+
+    async def claim(_user_id, _section, token):
+        polls.append(1)
+        if len(polls) >= 5:
+            raise asyncio.CancelledError()
+        return None  # Empty section
+
+    async def sleep(_seconds):
+        pass  # Don't sleep
+
+    monkeypatch.setattr(youtube_imports.vault, "get", vault_key)
+    monkeypatch.setattr(youtube_imports, "_acquire_worker_section_lease", acquire)
+    monkeypatch.setattr(youtube_imports, "_release_worker_section_lease", release)
+    monkeypatch.setattr(youtube_imports, "_claim_user_import_item", claim)
+    monkeypatch.setattr(youtube_imports, "_worker_sleep", sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await youtube_imports._run_user_import_worker(12, 0)
+
+    assert len(polls) == 5  # Worker polled 5 times before being cancelled; never exited
+
+
+@pytest.mark.asyncio
+async def test_worker_keeps_polling_when_vault_is_locked(monkeypatch):
+    """Worker doesn't exit when the vault is locked (D9); it keeps polling."""
+    polls = []
+
+    async def vault_key(_user_id):
+        return None  # Vault locked
+
+    async def sleep(_seconds):
+        polls.append(1)
+        if len(polls) >= 5:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(youtube_imports.vault, "get", vault_key)
+    monkeypatch.setattr(youtube_imports, "_worker_sleep", sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await youtube_imports._run_user_import_worker(12, 0)
+
+    assert len(polls) == 5  # Worker polled 5 times before being cancelled; never exited
